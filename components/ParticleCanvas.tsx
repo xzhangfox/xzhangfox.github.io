@@ -15,7 +15,7 @@ interface Particle {
 export default function ParticleCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const mouseRef = useRef({ x: -9999, y: -9999 })
-  const rafRef = useRef<number>()
+  const rafRef = useRef<number>(undefined)
   const particlesRef = useRef<Particle[]>([])
 
   useEffect(() => {

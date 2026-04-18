@@ -12,7 +12,11 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Repo:', d['full_name']\\); print\\('Default branch:', d['default_branch']\\); print\\('Empty:', d['size']==0\\); print\\('URL:', d['html_url']\\)\")",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(f['path']\\) for f in d.get\\('tree',[]\\)]\")",
       "Bash(python3 -c \"import sys,json; [print\\(f['name']\\) for f in json.load\\(sys.stdin\\)]\")",
-      "Bash(git remote *)"
+      "Bash(git remote *)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Default branch:', d['default_branch']\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Build type:', d.get\\('build_type'\\)\\); print\\('URL:', d.get\\('html_url'\\)\\); print\\('Status:', d.get\\('status'\\)\\)\")",
+      "Bash(gh workflow *)",
+      "Bash(gh run *)"
     ]
   }
 }
