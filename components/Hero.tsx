@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import ParticleCanvas from './ParticleCanvas'
 
 const TITLES = ['Full-Stack Data Scientist', 'AI Systems Engineer', 'LLM Platform Architect', 'Full-Stack Data Scientist']
 
@@ -39,8 +38,6 @@ export default function Hero() {
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
       {/* Particle background */}
-      <ParticleCanvas />
-
       {/* Radial gold glow at center */}
       <div
         className="absolute inset-0 pointer-events-none"
