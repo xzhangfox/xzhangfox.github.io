@@ -5,20 +5,15 @@ import { motion } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { personalInfo } from '@/lib/data'
 
-interface GitHubStats {
-  followers: number
-  public_repos: number
-}
-
-function useGitHubStats(username: string) {
-  const [stats, setStats] = useState<GitHubStats | null>(null)
+function useVisitCount() {
+  const [count, setCount] = useState<number | null>(null)
   useEffect(() => {
-    fetch(`https://api.github.com/users/${username}`)
+    fetch('https://api.counterapi.dev/v1/xzhangfox-github-io/visits/up')
       .then((r) => r.json())
-      .then((d) => setStats({ followers: d.followers, public_repos: d.public_repos }))
+      .then((d) => setCount(d.count))
       .catch(() => {})
-  }, [username])
-  return stats
+  }, [])
+  return count
 }
 
 const socials = [
@@ -44,7 +39,7 @@ const socials = [
 
 export default function Contact() {
   const [copied, setCopied] = useState(false)
-  const ghStats = useGitHubStats('xzhangfox')
+  const visits = useVisitCount()
 
   const copyEmail = () => {
     navigator.clipboard.writeText(personalInfo.email)
@@ -126,67 +121,10 @@ export default function Contact() {
 
       {/* Footer */}
       <FadeIn delay={0.5}>
-        <div className="mt-24 max-w-6xl mx-auto border-t border-white/5 pt-8 space-y-5">
-
-          {/* Stats row */}
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            {/* Page visit counter via hits.seeyoufarm.com */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-card border border-gold/15">
-              <span className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse-gold" />
-              <span className="text-white/30 text-xs font-mono">Visits</span>
-              <img
-                src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fxzhangfox.github.io&count_bg=%23C9A84C&title_bg=%23141414&icon=&icon_color=%23C9A84C&title=&edge_flat=true"
-                alt="visit count"
-                className="h-4 opacity-80"
-                style={{ imageRendering: 'crisp-edges' }}
-              />
-            </div>
-
-            {/* GitHub followers */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-card border border-white/8">
-              <svg viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3 text-white/30">
-                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
-              </svg>
-              <span className="text-white/30 text-xs font-mono">
-                {ghStats ? (
-                  <motion.span
-                    key={ghStats.followers}
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="text-gold/70"
-                  >
-                    {ghStats.followers}
-                  </motion.span>
-                ) : '—'}
-                <span className="text-white/20 ml-1">followers</span>
-              </span>
-            </div>
-
-            {/* GitHub repos */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-card border border-white/8">
-              <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 text-white/30">
-                <path d="M2 2.5A2.5 2.5 0 014.5 0h8.75a.75.75 0 01.75.75v12.5a.75.75 0 01-.75.75h-2.5a.75.75 0 110-1.5h1.75v-2h-8a1 1 0 00-.714 1.7.75.75 0 01-1.072 1.05A2.495 2.495 0 012 11.5v-9zm10.5-1V9h-8c-.356 0-.694.074-1 .208V2.5a1 1 0 011-1h8zM5 12.25v3.25a.25.25 0 00.4.2l1.45-1.087a.25.25 0 01.3 0L8.6 15.7a.25.25 0 00.4-.2v-3.25a.25.25 0 00-.25-.25h-3.5a.25.25 0 00-.25.25z"/>
-              </svg>
-              <span className="text-white/30 text-xs font-mono">
-                {ghStats ? (
-                  <motion.span
-                    key={ghStats.public_repos}
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="text-gold/70"
-                  >
-                    {ghStats.public_repos}
-                  </motion.span>
-                ) : '—'}
-                <span className="text-white/20 ml-1">repos</span>
-              </span>
-            </div>
-          </div>
-
-          {/* Bottom bar */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="mt-24 max-w-6xl mx-auto border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-white/20 text-xs font-mono">
             © 2026 Xi Zhang · Built with Next.js
+            {visits !== null && <> · Visits {visits.toLocaleString()}</>}
           </span>
           <div className="flex items-center gap-4">
             <a
@@ -206,8 +144,6 @@ export default function Contact() {
               GitHub
             </a>
           </div>
-          </div>
-
         </div>
       </FadeIn>
     </section>
