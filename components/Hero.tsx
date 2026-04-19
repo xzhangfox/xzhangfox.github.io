@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
+import LiquidEther from './LiquidEther'
 
 const TITLES = ['Full-Stack Data Scientist', 'AI Systems Engineer', 'LLM Platform Architect', 'Full-Stack Data Scientist']
 
@@ -13,23 +14,19 @@ export default function Hero() {
 
   useEffect(() => {
     const current = TITLES[titleIndex]
-
     if (!isDeleting && displayText === current) {
       timerRef.current = setTimeout(() => setIsDeleting(true), 2400)
       return
     }
-
     if (isDeleting && displayText === '') {
       setIsDeleting(false)
       setTitleIndex((i) => (i + 1) % (TITLES.length - 1))
       return
     }
-
     const speed = isDeleting ? 35 : 65
     timerRef.current = setTimeout(() => {
       setDisplayText(isDeleting ? current.slice(0, displayText.length - 1) : current.slice(0, displayText.length + 1))
     }, speed)
-
     return () => clearTimeout(timerRef.current)
   }, [displayText, isDeleting, titleIndex])
 
@@ -37,18 +34,58 @@ export default function Hero() {
 
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
-      {/* Particle background */}
-      {/* Radial gold glow at center */}
+
+      {/* Layer 1 — Video background */}
+      <video
+        autoPlay
+        loop
+        muted
+        playsInline
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{ zIndex: 1 }}
+      >
+        <source src="/videos/hero-bg.mp4" type="video/mp4" />
+      </video>
+
+      {/* Layer 2 — Gradient overlay: preserve cinematic center, darken edges + bottom */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: 'radial-gradient(ellipse 60% 50% at 50% 50%, rgba(201,168,76,0.06) 0%, transparent 70%)',
+          zIndex: 2,
+          background: [
+            'linear-gradient(to bottom,',
+            '  rgba(10,10,10,0.55) 0%,',
+            '  rgba(10,10,10,0.08) 35%,',
+            '  rgba(10,10,10,0.08) 60%,',
+            '  rgba(10,10,10,0.92) 88%,',
+            '  rgba(10,10,10,1.00) 100%',
+            ')',
+          ].join(' '),
         }}
       />
 
-      {/* Content */}
-      <div className="relative z-10 text-center px-6 max-w-5xl mx-auto">
-        {/* Label */}
+      {/* Layer 3 — LiquidEther gold fluid (absolute, scoped to hero) */}
+      <LiquidEther
+        colors={['#C9A84C', '#D4A843', '#E8C15A', '#F0D080', '#C9A84C']}
+        mouseForce={22}
+        cursorSize={110}
+        resolution={0.45}
+        autoDemo={true}
+        autoSpeed={0.38}
+        autoIntensity={1.6}
+        autoRampDuration={0.8}
+        autoResumeDelay={1200}
+        style={{
+          position: 'absolute',
+          zIndex: 3,
+          opacity: 0.55,
+          mixBlendMode: 'screen',
+        }}
+      />
+
+      {/* Layer 4 — Content */}
+      <div className="relative text-center px-6 max-w-5xl mx-auto" style={{ zIndex: 10 }}>
+        {/* Location label */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
@@ -67,11 +104,7 @@ export default function Hero() {
               key={i}
               initial={{ opacity: 0, y: 40 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{
-                duration: 0.7,
-                delay: 0.4 + i * 0.045,
-                ease: [0.22, 1, 0.36, 1],
-              }}
+              transition={{ duration: 0.7, delay: 0.4 + i * 0.045, ease: [0.22, 1, 0.36, 1] }}
               className={char === ' ' ? 'inline-block w-8' : 'inline-block gold-gradient'}
             >
               {char}
@@ -79,14 +112,14 @@ export default function Hero() {
           ))}
         </h1>
 
-        {/* Typewriter title */}
+        {/* Typewriter */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4, delay: 1.0 }}
           className="h-8 flex items-center justify-center mb-8"
         >
-          <span className="text-lg md:text-xl text-white/70 font-mono tracking-wide">
+          <span className="text-lg md:text-xl text-white/80 font-mono tracking-wide drop-shadow-lg">
             {displayText}
             <span className="inline-block w-0.5 h-5 bg-gold ml-0.5 animate-pulse-gold" />
           </span>
@@ -97,7 +130,7 @@ export default function Hero() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 1.1, ease: [0.22, 1, 0.36, 1] }}
-          className="text-base md:text-lg text-white/45 max-w-xl mx-auto leading-relaxed mb-12"
+          className="text-base md:text-lg text-white/55 max-w-xl mx-auto leading-relaxed mb-12 drop-shadow-md"
         >
           Building AI systems that bridge intelligence with enterprise-grade platforms —
           from RAG pipelines to full-stack products that scale.
@@ -118,7 +151,7 @@ export default function Hero() {
           </button>
           <button
             onClick={() => document.querySelector('#contact')?.scrollIntoView({ behavior: 'smooth' })}
-            className="px-7 py-3 border border-gold/40 text-gold font-semibold text-sm rounded-xl hover:bg-gold/10 hover:border-gold/70 transition-all duration-200"
+            className="px-7 py-3 border border-gold/40 text-gold font-semibold text-sm rounded-xl hover:bg-gold/10 hover:border-gold/70 transition-all duration-200 backdrop-blur-sm"
           >
             Get In Touch
           </button>
@@ -131,8 +164,9 @@ export default function Hero() {
         animate={{ opacity: 1 }}
         transition={{ duration: 0.6, delay: 2.0 }}
         className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
+        style={{ zIndex: 10 }}
       >
-        <span className="section-label text-white/25">scroll</span>
+        <span className="section-label text-white/30">scroll</span>
         <div className="w-px h-12 bg-gradient-to-b from-gold/50 to-transparent" />
       </motion.div>
     </section>
