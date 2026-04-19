@@ -1,17 +1,225 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { personalInfo } from '@/lib/data'
+
+interface DayData {
+  date: string
+  count: number
+}
+
+function getDateStr(daysAgo: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() - daysAgo)
+  return d.toISOString().slice(0, 10)
+}
+
+async function fetchDayCount(date: string): Promise<number> {
+  try {
+    const r = await fetch(`https://api.counterapi.dev/v1/xzhangfox-github-io/day-${date}`)
+    const d = await r.json()
+    return d.count ?? 0
+  } catch {
+    return 0
+  }
+}
+
+function BarChart({ data }: { data: DayData[] }) {
+  const [hovered, setHovered] = useState<number | null>(null)
+  const max = Math.max(...data.map((d) => d.count), 1)
+  const BAR_MAX_H = 100 // px
+
+  return (
+    <div className="w-full select-none">
+      {/* Bars */}
+      <div className="flex items-end gap-[3px] h-[100px]">
+        {data.map((d, i) => {
+          const h = Math.max((d.count / max) * BAR_MAX_H, d.count > 0 ? 5 : 1.5)
+          const isToday = i === data.length - 1
+          const isHov = hovered === i
+          return (
+            <div
+              key={d.date}
+              className="relative flex-1 flex flex-col items-center justify-end h-full cursor-default"
+              onMouseEnter={() => setHovered(i)}
+              onMouseLeave={() => setHovered(null)}
+            >
+              {/* Tooltip */}
+              <AnimatePresence>
+                {isHov && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 4 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 whitespace-nowrap z-20 pointer-events-none"
+                  >
+                    <div className="bg-[#1A1A1A] border border-gold/30 rounded-lg px-2.5 py-1.5 text-center">
+                      <div className="text-gold font-mono text-xs font-semibold">{d.count}</div>
+                      <div className="text-white/35 font-mono text-[10px]">
+                        {new Date(d.date + 'T12:00:00').toLocaleDateString('en', { month: 'short', day: 'numeric' })}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+              {/* Bar */}
+              <motion.div
+                className="w-full rounded-t-[3px] transition-colors duration-150"
+                style={{
+                  background: isToday
+                    ? 'linear-gradient(to top, #C9A84C, #F0D080)'
+                    : isHov
+                    ? 'rgba(201,168,76,0.65)'
+                    : 'rgba(201,168,76,0.28)',
+                }}
+                initial={{ height: 0 }}
+                animate={{ height: h }}
+                transition={{ duration: 0.5, delay: i * 0.022, ease: [0.22, 1, 0.36, 1] }}
+              />
+            </div>
+          )
+        })}
+      </div>
+
+      {/* X-axis */}
+      <div className="flex gap-[3px] mt-2.5 border-t border-white/6 pt-2">
+        {data.map((d, i) => {
+          const show = i === 0 || i === 6 || i === 13
+          const isToday = i === data.length - 1
+          return (
+            <div key={d.date} className="flex-1 text-center">
+              {(show || isToday) && (
+                <span className={`text-[9px] font-mono ${isToday ? 'text-gold/60' : 'text-white/25'}`}>
+                  {isToday
+                    ? 'today'
+                    : new Date(d.date + 'T12:00:00').toLocaleDateString('en', { month: 'numeric', day: 'numeric' })}
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function VisitModal({ onClose, totalVisits }: { onClose: () => void; totalVisits: number | null }) {
+  const [data, setData] = useState<DayData[] | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const days = Array.from({ length: 14 }, (_, i) => getDateStr(13 - i))
+    Promise.all(days.map(async (date) => ({ date, count: await fetchDayCount(date) }))).then((results) => {
+      setData(results)
+      setLoading(false)
+    })
+  }, [])
+
+  const totalInRange = data ? data.reduce((s, d) => s + d.count, 0) : null
+  const todayCount = data ? data[data.length - 1].count : null
+  const avgCount = totalInRange != null ? Math.round(totalInRange / 14) : null
+
+  return (
+    <motion.div
+      className="fixed inset-0 flex items-center justify-center z-[200] px-4"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      onClick={onClose}
+    >
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+
+      {/* Panel */}
+      <motion.div
+        className="relative w-full max-w-md bg-[#0E0E0E] border border-white/8 rounded-2xl p-6 overflow-hidden"
+        initial={{ opacity: 0, scale: 0.94, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.94, y: 12 }}
+        transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Gold glow */}
+        <div
+          className="absolute inset-0 pointer-events-none rounded-2xl"
+          style={{ background: 'radial-gradient(ellipse 80% 50% at 50% 100%, rgba(201,168,76,0.06) 0%, transparent 70%)' }}
+        />
+
+        {/* Header */}
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="w-4 h-px bg-gold/50" />
+              <span className="section-label text-gold/60 text-[10px]">Analytics</span>
+            </div>
+            <h3 className="text-white/90 font-semibold text-base tracking-tight">Visit History</h3>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-lg border border-white/8 text-white/30 hover:text-white/70 hover:border-white/20 transition-all duration-200 text-sm"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Stats row */}
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          {[
+            { label: 'Total', value: totalVisits?.toLocaleString() ?? '—' },
+            { label: 'Today', value: todayCount != null ? String(todayCount) : '—' },
+            { label: 'Daily avg', value: avgCount != null ? String(avgCount) : '—' },
+          ].map(({ label, value }) => (
+            <div key={label} className="bg-white/[0.03] border border-white/6 rounded-xl px-3 py-2.5 text-center">
+              <div className="text-gold font-mono text-base font-semibold">{loading ? '—' : value}</div>
+              <div className="text-white/30 font-mono text-[10px] mt-0.5">{label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Chart */}
+        <div className="mb-1">
+          <div className="text-white/25 font-mono text-[10px] mb-3">Last 14 days</div>
+          {loading ? (
+            <div className="h-[100px] flex items-center justify-center">
+              <div className="flex gap-1">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <motion.div
+                    key={i}
+                    className="w-1 h-1 rounded-full bg-gold/40"
+                    animate={{ opacity: [0.3, 1, 0.3] }}
+                    transition={{ duration: 1, delay: i * 0.2, repeat: Infinity }}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            data && <BarChart data={data} />
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
 
 function useVisitCount() {
   const [count, setCount] = useState<number | null>(null)
   useEffect(() => {
+    // Increment total counter
     fetch('https://api.counterapi.dev/v1/xzhangfox-github-io/visits/up')
       .then((r) => r.json())
       .then((d) => setCount(d.count))
       .catch(() => {})
+
+    // Increment today's daily counter (once per session)
+    if (!sessionStorage.getItem('daily-tracked')) {
+      sessionStorage.setItem('daily-tracked', '1')
+      const today = new Date().toISOString().slice(0, 10)
+      fetch(`https://api.counterapi.dev/v1/xzhangfox-github-io/day-${today}/up`).catch(() => {})
+    }
   }, [])
   return count
 }
@@ -39,6 +247,7 @@ const socials = [
 
 export default function Contact() {
   const [copied, setCopied] = useState(false)
+  const [showChart, setShowChart] = useState(false)
   const visits = useVisitCount()
 
   const copyEmail = () => {
@@ -90,7 +299,6 @@ export default function Contact() {
             <span className="text-gold/50 text-xs font-mono">
               {copied ? '✓ Copied!' : 'Copy'}
             </span>
-            {/* Glow effect */}
             <motion.div
               className="absolute inset-0 rounded-2xl pointer-events-none"
               animate={{ boxShadow: copied ? '0 0 30px rgba(201,168,76,0.2)' : '0 0 0px rgba(201,168,76,0)' }}
@@ -124,7 +332,17 @@ export default function Contact() {
         <div className="mt-24 max-w-6xl mx-auto border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-white/20 text-xs font-mono">
             © 2026 Xi Zhang · Built with Next.js
-            {visits !== null && <> · Visits {visits.toLocaleString()}</>}
+            {visits !== null && (
+              <>
+                {' · '}
+                <button
+                  onClick={() => setShowChart(true)}
+                  className="text-white/20 hover:text-gold/50 transition-colors duration-200 underline-offset-2 hover:underline cursor-pointer"
+                >
+                  Visits {visits.toLocaleString()}
+                </button>
+              </>
+            )}
           </span>
           <div className="flex items-center gap-4">
             <a
@@ -146,6 +364,11 @@ export default function Contact() {
           </div>
         </div>
       </FadeIn>
+
+      {/* Visit chart modal */}
+      <AnimatePresence>
+        {showChart && <VisitModal onClose={() => setShowChart(false)} totalVisits={visits} />}
+      </AnimatePresence>
     </section>
   )
 }
