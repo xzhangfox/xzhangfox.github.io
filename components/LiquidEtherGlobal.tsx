@@ -16,8 +16,8 @@ export default function LiquidEtherGlobal() {
       autoResumeDelay={1200}
       style={{
         position: 'fixed',
-        zIndex: 2,
-        opacity: 0.55,
+        zIndex: 50,
+        opacity: 0.45,
         mixBlendMode: 'screen',
       }}
     />
