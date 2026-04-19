@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import LiquidEther from './LiquidEther'
 
 const TITLES = ['Full-Stack Data Scientist', 'AI Systems Engineer', 'LLM Platform Architect', 'Full-Stack Data Scientist']
 
@@ -35,56 +34,25 @@ export default function Hero() {
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
 
-      {/* Layer 1 — Video background */}
-      <video
-        autoPlay
-        loop
-        muted
-        playsInline
-        className="absolute inset-0 w-full h-full object-cover"
-        style={{ zIndex: 1 }}
-      >
-        <source src="/videos/hero-bg.mp4" type="video/mp4" />
-      </video>
-
-      {/* Layer 2 — Gradient overlay: preserve cinematic center, darken edges + bottom */}
+      {/* Bottom gradient fade into bg-bg for the sections below */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          zIndex: 2,
+          zIndex: 1,
           background: [
             'linear-gradient(to bottom,',
-            '  rgba(10,10,10,0.55) 0%,',
-            '  rgba(10,10,10,0.08) 35%,',
-            '  rgba(10,10,10,0.08) 60%,',
-            '  rgba(10,10,10,0.92) 88%,',
+            '  rgba(10,10,10,0.45) 0%,',
+            '  rgba(10,10,10,0.05) 30%,',
+            '  rgba(10,10,10,0.05) 65%,',
+            '  rgba(10,10,10,0.92) 90%,',
             '  rgba(10,10,10,1.00) 100%',
             ')',
           ].join(' '),
         }}
       />
 
-      {/* Layer 3 — LiquidEther gold fluid (absolute, scoped to hero) */}
-      <LiquidEther
-        colors={['#C9A84C', '#D4A843', '#E8C15A', '#F0D080', '#C9A84C']}
-        mouseForce={22}
-        cursorSize={110}
-        resolution={0.45}
-        autoDemo={true}
-        autoSpeed={0.38}
-        autoIntensity={1.6}
-        autoRampDuration={0.8}
-        autoResumeDelay={1200}
-        style={{
-          position: 'absolute',
-          zIndex: 3,
-          opacity: 0.55,
-          mixBlendMode: 'screen',
-        }}
-      />
-
-      {/* Layer 4 — Content */}
-      <div className="relative text-center px-6 max-w-5xl mx-auto" style={{ zIndex: 10 }}>
+      {/* Content */}
+      <div className="relative text-center px-6 max-w-5xl mx-auto" style={{ zIndex: 2 }}>
         {/* Location label */}
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -164,7 +132,7 @@ export default function Hero() {
         animate={{ opacity: 1 }}
         transition={{ duration: 0.6, delay: 2.0 }}
         className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
-        style={{ zIndex: 10 }}
+        style={{ zIndex: 2 }}
       >
         <span className="section-label text-white/30">scroll</span>
         <div className="w-px h-12 bg-gradient-to-b from-gold/50 to-transparent" />
