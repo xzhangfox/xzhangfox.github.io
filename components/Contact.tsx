@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { personalInfo } from '@/lib/data'
+import { useLanguage } from '@/lib/i18n'
 
 interface DayData {
   date: string
@@ -108,6 +109,8 @@ function BarChart({ data }: { data: DayData[] }) {
 }
 
 function VisitModal({ onClose, totalVisits }: { onClose: () => void; totalVisits: number | null }) {
+  const { t } = useLanguage()
+  const m = t.contact.modal
   const [data, setData] = useState<DayData[] | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -155,9 +158,9 @@ function VisitModal({ onClose, totalVisits }: { onClose: () => void; totalVisits
           <div>
             <div className="flex items-center gap-2 mb-0.5">
               <span className="w-4 h-px bg-gold/50" />
-              <span className="section-label text-gold/60 text-[10px]">Analytics</span>
+              <span className="section-label text-gold/60 text-[10px]">{m.analyticsLabel}</span>
             </div>
-            <h3 className="text-white/90 font-semibold text-base tracking-tight">Visit History</h3>
+            <h3 className="text-white/90 font-semibold text-base tracking-tight">{m.title}</h3>
           </div>
           <button
             onClick={onClose}
@@ -170,9 +173,9 @@ function VisitModal({ onClose, totalVisits }: { onClose: () => void; totalVisits
         {/* Stats row */}
         <div className="grid grid-cols-3 gap-3 mb-5">
           {[
-            { label: 'Total', value: totalVisits?.toLocaleString() ?? '—' },
-            { label: 'Today', value: todayCount != null ? String(todayCount) : '—' },
-            { label: 'Daily avg', value: avgCount != null ? String(avgCount) : '—' },
+            { label: m.total, value: totalVisits?.toLocaleString() ?? '—' },
+            { label: m.today, value: todayCount != null ? String(todayCount) : '—' },
+            { label: m.dailyAvg, value: avgCount != null ? String(avgCount) : '—' },
           ].map(({ label, value }) => (
             <div key={label} className="bg-white/[0.03] border border-white/6 rounded-xl px-3 py-2.5 text-center">
               <div className="text-gold font-mono text-base font-semibold">{loading ? '—' : value}</div>
@@ -183,7 +186,7 @@ function VisitModal({ onClose, totalVisits }: { onClose: () => void; totalVisits
 
         {/* Chart */}
         <div className="mb-1">
-          <div className="text-white/25 font-mono text-[10px] mb-3">Last 14 days</div>
+          <div className="text-white/25 font-mono text-[10px] mb-3">{m.last14Days}</div>
           {loading ? (
             <div className="h-[100px] flex items-center justify-center">
               <div className="flex gap-1">
@@ -249,6 +252,7 @@ const socials = [
 ]
 
 export default function Contact() {
+  const { t } = useLanguage()
   const [copied, setCopied] = useState(false)
   const [showChart, setShowChart] = useState(false)
   const visits = useVisitCount()
@@ -273,20 +277,20 @@ export default function Contact() {
         <FadeIn>
           <div className="flex items-center justify-center gap-3 mb-8">
             <span className="w-8 h-px bg-gold/40" />
-            <span className="section-label text-gold/70">06 · Contact</span>
+            <span className="section-label text-gold/70">{t.contact.sectionLabel}</span>
             <span className="w-8 h-px bg-gold/40" />
           </div>
         </FadeIn>
 
         <FadeIn delay={0.1}>
           <h2 className="text-4xl md:text-6xl font-bold mb-4 leading-tight">
-            Let&apos;s <span className="gold-gradient">Connect</span>
+            {t.contact.heading1} <span className="gold-gradient">{t.contact.headingGold}</span>
           </h2>
         </FadeIn>
 
         <FadeIn delay={0.2}>
           <p className="text-white/40 text-base max-w-lg mx-auto leading-relaxed mb-12">
-            Open to new opportunities, collaborations, and interesting conversations about AI, data, and products.
+            {t.contact.description}
           </p>
         </FadeIn>
 
@@ -300,7 +304,7 @@ export default function Contact() {
           >
             <span className="text-base font-mono">{personalInfo.email}</span>
             <span className="text-gold/50 text-xs font-mono">
-              {copied ? '✓ Copied!' : 'Copy'}
+              {copied ? t.contact.copiedLabel : t.contact.copyLabel}
             </span>
             <motion.div
               className="absolute inset-0 rounded-2xl pointer-events-none"
@@ -334,7 +338,7 @@ export default function Contact() {
       <FadeIn delay={0.5}>
         <div className="mt-24 max-w-6xl mx-auto border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-white/20 text-xs font-mono">
-            © 2026 Xi Zhang · Built with Next.js
+            © 2026 Xi Zhang · {t.contact.builtWith}
             {visits !== null && (
               <>
                 {' · '}
@@ -342,7 +346,7 @@ export default function Contact() {
                   onClick={() => setShowChart(true)}
                   className="text-white/20 hover:text-gold/50 transition-colors duration-200 underline-offset-2 hover:underline cursor-pointer"
                 >
-                  Visits {visits?.toLocaleString() ?? '—'}
+                  {t.contact.visitsLabel} {visits?.toLocaleString() ?? '—'}
                 </button>
               </>
             )}

@@ -2,17 +2,19 @@
 
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-
-const links = [
-  { label: 'About', href: '#about' },
-  { label: 'Experience', href: '#experience' },
-  { label: 'Projects', href: '#projects' },
-  { label: 'Contact', href: '#contact' },
-]
+import { useLanguage } from '@/lib/i18n'
 
 export default function Navigation() {
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const { t, toggleLanguage } = useLanguage()
+
+  const links = [
+    { label: t.nav.about, href: '#about' },
+    { label: t.nav.experience, href: '#experience' },
+    { label: t.nav.projects, href: '#projects' },
+    { label: t.nav.contact, href: '#contact' },
+  ]
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40)
@@ -72,20 +74,31 @@ export default function Navigation() {
             rel="noopener noreferrer"
             className="px-4 py-1.5 text-xs font-mono tracking-widest uppercase border border-gold/40 text-gold rounded-md hover:bg-gold/10 hover:border-gold/70 transition-all duration-200"
           >
-            Resume
+            {t.nav.resume}
           </a>
         </div>
 
-        {/* Mobile hamburger */}
-        <button
-          className="md:hidden flex flex-col gap-1.5 p-2"
-          onClick={() => setMenuOpen(!menuOpen)}
-          aria-label="Toggle menu"
-        >
-          <span className={`w-5 h-px bg-gold transition-all duration-300 ${menuOpen ? 'rotate-45 translate-y-2' : ''}`} />
-          <span className={`w-5 h-px bg-gold/60 transition-all duration-300 ${menuOpen ? 'opacity-0' : ''}`} />
-          <span className={`w-5 h-px bg-gold transition-all duration-300 ${menuOpen ? '-rotate-45 -translate-y-2' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Language toggle */}
+          <button
+            onClick={toggleLanguage}
+            aria-label="Switch language"
+            className="px-3 py-1.5 text-xs font-mono tracking-widest border border-gold/30 text-gold/80 rounded-md hover:bg-gold/10 hover:border-gold/60 hover:text-gold transition-all duration-200 active:scale-95"
+          >
+            {t.nav.langToggle}
+          </button>
+
+          {/* Mobile hamburger */}
+          <button
+            className="md:hidden flex flex-col gap-1.5 p-2"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label="Toggle menu"
+          >
+            <span className={`w-5 h-px bg-gold transition-all duration-300 ${menuOpen ? 'rotate-45 translate-y-2' : ''}`} />
+            <span className={`w-5 h-px bg-gold/60 transition-all duration-300 ${menuOpen ? 'opacity-0' : ''}`} />
+            <span className={`w-5 h-px bg-gold transition-all duration-300 ${menuOpen ? '-rotate-45 -translate-y-2' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {/* Mobile menu */}
@@ -114,7 +127,7 @@ export default function Navigation() {
                 rel="noopener noreferrer"
                 className="mt-2 py-2.5 text-center text-xs font-mono tracking-widest uppercase border border-gold/40 text-gold rounded-md"
               >
-                Resume
+                {t.nav.resume}
               </a>
             </div>
           </motion.div>

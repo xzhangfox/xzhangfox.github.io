@@ -3,21 +3,18 @@
 import { motion } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { personalInfo } from '@/lib/data'
-
-const stats = [
-  { value: '5+', label: 'Years Experience', sub: 'at Stout' },
-  { value: '3', label: 'AI Platforms', sub: 'Built & Shipped' },
-  { value: '∞', label: 'Tokens Processed', sub: 'in production' },
-]
+import { useLanguage } from '@/lib/i18n'
 
 export default function About() {
+  const { t } = useLanguage()
+  const stats = t.about.stats
   return (
     <section id="about" className="relative py-32 px-6">
       <div className="max-w-6xl mx-auto">
         {/* Section header */}
         <FadeIn>
           <div className="section-divider">
-            <span className="section-label">01 · About</span>
+            <span className="section-label">{t.about.sectionLabel}</span>
           </div>
         </FadeIn>
 
@@ -74,7 +71,7 @@ export default function About() {
               {/* Name card */}
               <div className="mt-6 p-4 rounded-xl bg-surface-card border border-gold/15 w-full max-w-xs">
                 <p className="text-white font-semibold">{personalInfo.name}</p>
-                <p className="text-gold text-sm font-mono mt-0.5">{personalInfo.title}</p>
+                <p className="text-gold text-sm font-mono mt-0.5">{t.about.title}</p>
                 <div className="mt-2 flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
                   <span className="text-white/40 text-xs font-mono">{personalInfo.location}</span>
@@ -87,26 +84,24 @@ export default function About() {
           <div className="space-y-8">
             <FadeIn delay={0.2}>
               <h2 className="text-3xl md:text-4xl font-bold leading-snug">
-                Where{' '}
-                <span className="gold-gradient">artificial intelligence</span>
-                {' '}meets{' '}
-                <span className="text-white">scalable engineering.</span>
+                {t.about.headingPre}
+                <span className="gold-gradient">{t.about.headingGold}</span>
+                {t.about.headingMid}
+                <span className="text-white">{t.about.headingWhite}</span>
               </h2>
             </FadeIn>
 
             <FadeIn delay={0.3}>
               <p className="text-white/55 text-base leading-relaxed">
-                {personalInfo.summary}
+                {t.about.summary}
               </p>
             </FadeIn>
 
             <FadeIn delay={0.35}>
               <p className="text-white/45 text-sm leading-relaxed">
-                At Stout, I've architected enterprise AI platforms that process thousands of governed
-                LLM interactions daily — blending RAG pipelines, graph databases, and full-stack
-                delivery. Outside of work, I ship the{' '}
-                <span className="text-gold font-medium">Flux</span> product suite: AI-powered platforms
-                for career intelligence, financial management, and metabolic tracking.
+                {t.about.bioPre}{' '}
+                <span className="text-gold font-medium">{t.about.bioFlux}</span>{' '}
+                {t.about.bioSuffix}
               </p>
             </FadeIn>
 

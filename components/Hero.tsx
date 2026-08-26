@@ -2,14 +2,21 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-
-const TITLES = ['Full-Stack Data Scientist', 'AI Systems Engineer', 'LLM Platform Architect', 'Full-Stack Data Scientist']
+import { useLanguage } from '@/lib/i18n'
 
 export default function Hero() {
+  const { t, language } = useLanguage()
+  const TITLES = t.hero.titles
   const [titleIndex, setTitleIndex] = useState(0)
   const [displayText, setDisplayText] = useState('')
   const [isDeleting, setIsDeleting] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+
+  useEffect(() => {
+    setTitleIndex(0)
+    setDisplayText('')
+    setIsDeleting(false)
+  }, [language])
 
   useEffect(() => {
     const current = TITLES[titleIndex]
@@ -27,7 +34,7 @@ export default function Hero() {
       setDisplayText(isDeleting ? current.slice(0, displayText.length - 1) : current.slice(0, displayText.length + 1))
     }, speed)
     return () => clearTimeout(timerRef.current)
-  }, [displayText, isDeleting, titleIndex])
+  }, [displayText, isDeleting, titleIndex, TITLES])
 
   const nameChars = 'XI ZHANG'.split('')
 
@@ -69,7 +76,7 @@ export default function Hero() {
           className="flex items-center justify-center gap-3 mb-8"
         >
           <span className="w-8 h-px bg-gold/60" />
-          <span className="section-label text-gold/80">Irvine, CA · Available for opportunities</span>
+          <span className="section-label text-gold/80">{t.hero.badge}</span>
           <span className="w-8 h-px bg-gold/60" />
         </motion.div>
 
@@ -112,8 +119,7 @@ export default function Hero() {
           className="text-base md:text-lg text-white/75 max-w-xl mx-auto leading-relaxed mb-12"
           style={{ textShadow: '0 2px 16px rgba(0,0,0,0.9)' }}
         >
-          Building AI systems that bridge intelligence with enterprise-grade platforms —
-          from RAG pipelines to full-stack products that scale.
+          {t.hero.description}
         </motion.p>
 
         {/* CTAs */}
@@ -127,13 +133,13 @@ export default function Hero() {
             onClick={() => document.querySelector('#projects')?.scrollIntoView({ behavior: 'smooth' })}
             className="px-7 py-3 bg-gold text-black font-semibold text-sm rounded-xl hover:bg-gold-light transition-all duration-200 hover:scale-105 active:scale-95"
           >
-            View Projects
+            {t.hero.viewProjects}
           </button>
           <button
             onClick={() => document.querySelector('#contact')?.scrollIntoView({ behavior: 'smooth' })}
             className="px-7 py-3 border border-gold/40 text-gold font-semibold text-sm rounded-xl hover:bg-gold/10 hover:border-gold/70 transition-all duration-200 backdrop-blur-sm"
           >
-            Get In Touch
+            {t.hero.getInTouch}
           </button>
         </motion.div>
       </div>
@@ -146,7 +152,7 @@ export default function Hero() {
         className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
         style={{ zIndex: 2 }}
       >
-        <span className="section-label text-white/30">scroll</span>
+        <span className="section-label text-white/30">{t.hero.scroll}</span>
         <div className="w-px h-12 bg-gradient-to-b from-gold/50 to-transparent" />
       </motion.div>
     </section>

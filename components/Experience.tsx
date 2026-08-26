@@ -4,9 +4,12 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { experience } from '@/lib/data'
+import { useLanguage } from '@/lib/i18n'
 
 export default function Experience() {
   const [expanded, setExpanded] = useState<number | null>(null)
+  const { t } = useLanguage()
+  const bullets = experience.bullets.map((b, i) => ({ ...b, ...t.experience.bullets[i] }))
 
   return (
     <section id="experience" className="relative py-32 px-6">
@@ -16,7 +19,7 @@ export default function Experience() {
       <div className="max-w-6xl mx-auto">
         <FadeIn>
           <div className="section-divider">
-            <span className="section-label">02 · Experience</span>
+            <span className="section-label">{t.experience.sectionLabel}</span>
           </div>
         </FadeIn>
 
@@ -24,12 +27,11 @@ export default function Experience() {
           {/* Left — heading */}
           <FadeIn direction="left" delay={0.1} className="md:col-span-2">
             <h2 className="text-3xl md:text-4xl font-bold leading-tight mb-6">
-              Professional<br />
-              <span className="gold-gradient">Experience</span>
+              {t.experience.headingLine1}<br />
+              <span className="gold-gradient">{t.experience.headingGold}</span>
             </h2>
             <p className="text-white/40 text-sm leading-relaxed">
-              5+ years of enterprise AI development, data science, and full-stack engineering in fast-moving,
-              high-impact environments.
+              {t.experience.subDesc}
             </p>
 
             {/* Company badge */}
@@ -48,7 +50,7 @@ export default function Experience() {
                 {experience.location}
               </span>
               <span className="px-2.5 py-1 rounded-md bg-green-500/10 text-green-400 text-xs font-mono border border-green-500/20">
-                Current
+                {t.experience.currentBadge}
               </span>
             </div>
           </FadeIn>
@@ -56,10 +58,10 @@ export default function Experience() {
           {/* Right — bullet cards */}
           <div className="md:col-span-3 space-y-3">
             <FadeIn delay={0.1}>
-              <p className="text-white/60 text-sm mb-5 font-mono">{experience.role}</p>
+              <p className="text-white/60 text-sm mb-5 font-mono">{t.experience.role}</p>
             </FadeIn>
 
-            {experience.bullets.map((bullet, i) => (
+            {bullets.map((bullet, i) => (
               <FadeIn key={bullet.title} delay={0.1 + i * 0.07}>
                 <motion.div
                   layout

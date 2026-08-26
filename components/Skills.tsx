@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { skillCategories } from '@/lib/data'
+import { useLanguage } from '@/lib/i18n'
 
 const categoryIcons: Record<string, string> = {
   'Languages': '{ }',
@@ -13,6 +14,7 @@ const categoryIcons: Record<string, string> = {
 }
 
 export default function Skills() {
+  const { t } = useLanguage()
   return (
     <section id="skills" className="relative py-32 px-6">
       <div
@@ -25,19 +27,19 @@ export default function Skills() {
       <div className="max-w-6xl mx-auto">
         <FadeIn>
           <div className="section-divider">
-            <span className="section-label">03 · Technical Skills</span>
+            <span className="section-label">{t.skills.sectionLabel}</span>
           </div>
         </FadeIn>
 
         <div className="grid md:grid-cols-2 gap-8 items-start mb-12">
           <FadeIn delay={0.1}>
             <h2 className="text-3xl md:text-4xl font-bold">
-              Tech <span className="gold-gradient">Stack</span>
+              {t.skills.headingPre} <span className="gold-gradient">{t.skills.headingGold}</span>
             </h2>
           </FadeIn>
           <FadeIn delay={0.2}>
             <p className="text-white/40 text-sm leading-relaxed md:text-right">
-              A deep toolkit spanning AI/ML research, production systems, full-stack development, and cloud infrastructure.
+              {t.skills.subDesc}
             </p>
           </FadeIn>
         </div>
@@ -48,7 +50,7 @@ export default function Skills() {
               <div className="rounded-2xl bg-surface-card border border-white/5 p-6 gold-glow-hover">
                 <div className="flex items-center gap-3 mb-4">
                   <span className="text-gold font-mono text-sm w-6 text-center">{categoryIcons[cat.label] || '·'}</span>
-                  <span className="section-label text-white/60">{cat.label}</span>
+                  <span className="section-label text-white/60">{t.skills.categoryLabels[cat.label] || cat.label}</span>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {cat.skills.map((skill, si) => (

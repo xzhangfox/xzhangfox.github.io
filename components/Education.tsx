@@ -3,25 +3,28 @@
 import { motion } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { education } from '@/lib/data'
+import { useLanguage } from '@/lib/i18n'
 
 export default function Education() {
+  const { t } = useLanguage()
+  const items = education.map((edu, i) => ({ ...edu, ...t.education.items[i] }))
   return (
     <section id="education" className="relative py-32 px-6">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
           <div className="section-divider">
-            <span className="section-label">05 · Education</span>
+            <span className="section-label">{t.education.sectionLabel}</span>
           </div>
         </FadeIn>
 
         <FadeIn delay={0.1}>
           <h2 className="text-3xl md:text-4xl font-bold mb-12">
-            Academic <span className="gold-gradient">Background</span>
+            {t.education.headingPre} <span className="gold-gradient">{t.education.headingGold}</span>
           </h2>
         </FadeIn>
 
         <div className="grid sm:grid-cols-2 gap-5">
-          {education.map((edu, i) => (
+          {items.map((edu, i) => (
             <FadeIn key={edu.school} delay={0.1 + i * 0.1}>
               <motion.div
                 className="group rounded-2xl bg-surface-card border border-white/5 p-6 gold-glow-hover relative overflow-hidden"

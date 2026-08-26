@@ -4,8 +4,9 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { projects } from '@/lib/data'
+import { useLanguage } from '@/lib/i18n'
 
-function ProjectCard({ project, index }: { project: typeof projects[0]; index: number }) {
+function ProjectCard({ project, index }: { project: typeof projects[0] & { subtitle: string; description: string; highlights: string[] }; index: number }) {
   const [imgError, setImgError] = useState(false)
 
   return (
@@ -109,35 +110,37 @@ function ProjectCard({ project, index }: { project: typeof projects[0]; index: n
 }
 
 export default function Projects() {
+  const { t } = useLanguage()
+  const items = projects.map((p, i) => ({ ...p, ...t.projects.items[i] }))
   return (
     <section id="projects" className="relative py-32 px-6">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
           <div className="section-divider">
-            <span className="section-label">04 · Projects</span>
+            <span className="section-label">{t.projects.sectionLabel}</span>
           </div>
         </FadeIn>
 
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-12">
           <FadeIn delay={0.1}>
             <h2 className="text-3xl md:text-4xl font-bold">
-              The <span className="gold-gradient">Flux</span> Suite
+              {t.projects.headingPre} <span className="gold-gradient">{t.projects.headingGold}</span>{t.projects.headingPost}
             </h2>
             <p className="text-white/40 text-sm mt-2 max-w-md leading-relaxed">
-              Three AI-powered platforms built from scratch — each solving a different domain with the same design language and engineering standard.
+              {t.projects.subDesc}
             </p>
           </FadeIn>
 
           <FadeIn delay={0.2}>
             <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface-card border border-gold/15">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-white/40 text-xs font-mono">All platforms live</span>
+              <span className="text-white/40 text-xs font-mono">{t.projects.liveBadge}</span>
             </div>
           </FadeIn>
         </div>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {projects.map((project, i) => (
+          {items.map((project, i) => (
             <ProjectCard key={project.id} project={project} index={i} />
           ))}
         </div>
