@@ -19,8 +19,9 @@ function getDateStr(daysAgo: number): string {
 async function fetchDayCount(date: string): Promise<number> {
   try {
     const r = await fetch(`https://api.counterapi.dev/v1/xzhangfox-github-io/day-${date}`)
+    if (!r.ok) return 0
     const d = await r.json()
-    return d.count ?? 0
+    return typeof d.count === 'number' ? d.count : 0
   } catch {
     return 0
   }
@@ -210,8 +211,10 @@ function useVisitCount() {
   useEffect(() => {
     // Increment total counter
     fetch('https://api.counterapi.dev/v1/xzhangfox-github-io/visits/up')
-      .then((r) => r.json())
-      .then((d) => setCount(d.count))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (typeof d?.count === 'number') setCount(d.count)
+      })
       .catch(() => {})
 
     // Increment today's daily counter (once per session)
@@ -339,7 +342,7 @@ export default function Contact() {
                   onClick={() => setShowChart(true)}
                   className="text-white/20 hover:text-gold/50 transition-colors duration-200 underline-offset-2 hover:underline cursor-pointer"
                 >
-                  Visits {visits.toLocaleString()}
+                  Visits {visits?.toLocaleString() ?? '—'}
                 </button>
               </>
             )}
