@@ -177,6 +177,18 @@ export const translations: Record<Language, Dict> = {
       liveBadge: 'All platforms live',
       items: [
         {
+          subtitle: 'AI Dietary & Metabolic Tracker',
+          description:
+            'Multimodal Vision AI food logging with bounding box analytics, mathematical metabolic modeling (TDEE/PSMF), and 60fps data dashboards.',
+          highlights: ['Real-time Vision AI logging', 'Custom metabolic engines', '60fps on data dashboards'],
+        },
+        {
+          subtitle: 'Bazi & Ziwei Astrology Engine',
+          description:
+            'Deterministic Bazi (Four Pillars) and Ziwei Doushu charting engine with real-time 3D celestial visualization and an AI assistant for interpretation — no LLM guesswork on the math.',
+          highlights: ['Deterministic Bazi + Ziwei calculations', '3D interactive star chart', 'AI-powered chart interpretation'],
+        },
+        {
           subtitle: 'AI Career Intelligence Platform',
           description:
             'Multi-model AI system with smart fallback routing, ATS match-scoring via NLP entity extraction, and geospatial job market visualization.',
@@ -187,12 +199,6 @@ export const translations: Record<Language, Dict> = {
           description:
             'Vision AI receipt intelligence pipeline, real-time equity dashboard with Google Search Grounding, and optimized Recharts data visualization.',
           highlights: ['90% reduction in manual entry', 'Sub-second market data', '40% render speed gain'],
-        },
-        {
-          subtitle: 'AI Dietary & Metabolic Tracker',
-          description:
-            'Multimodal Vision AI food logging with bounding box analytics, mathematical metabolic modeling (TDEE/PSMF), and 60fps data dashboards.',
-          highlights: ['Real-time Vision AI logging', 'Custom metabolic engines', '60fps on data dashboards'],
         },
       ],
     },
@@ -315,6 +321,16 @@ export const translations: Record<Language, Dict> = {
       liveBadge: '全部平台已上线',
       items: [
         {
+          subtitle: 'AI 饮食与代谢追踪应用',
+          description: '多模态视觉 AI 食物记录，具备目标检测分析、TDEE/PSMF 代谢数学建模，以及 60fps 流畅数据仪表盘。',
+          highlights: ['实时视觉 AI 记录', '自定义代谢计算引擎', '仪表盘 60fps 流畅体验'],
+        },
+        {
+          subtitle: '八字与紫微命理引擎',
+          description: '确定性的八字与紫微斗数排盘引擎，结合实时 3D 星图可视化与 AI 智能解读助手 —— 命理计算全部基于传统公式，而非 AI 猜测。',
+          highlights: ['确定性八字 + 紫微排盘', '3D 交互式星图', 'AI 智能命盘解读'],
+        },
+        {
           subtitle: 'AI 求职智能平台',
           description: '多模型 AI 系统，具备智能故障转移路由、基于 NLP 实体抽取的 ATS 匹配评分，以及地理空间职位市场可视化。',
           highlights: ['AI 延迟降低 40%', 'PDF/DOCX 简历 NLP 解析', 'D3.js 地理空间地图'],
@@ -323,11 +339,6 @@ export const translations: Record<Language, Dict> = {
           subtitle: 'AI 财务管理平台',
           description: '基于视觉 AI 的收据智能识别管道、结合 Google 搜索实时数据的股票仪表盘，以及优化的 Recharts 数据可视化。',
           highlights: ['人工录入减少 90%', '秒级以内的市场数据', '渲染速度提升 40%'],
-        },
-        {
-          subtitle: 'AI 饮食与代谢追踪应用',
-          description: '多模态视觉 AI 食物记录，具备目标检测分析、TDEE/PSMF 代谢数学建模，以及 60fps 流畅数据仪表盘。',
-          highlights: ['实时视觉 AI 记录', '自定义代谢计算引擎', '仪表盘 60fps 流畅体验'],
         },
       ],
     },

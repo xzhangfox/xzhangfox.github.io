@@ -12,6 +12,32 @@ export const personalInfo = {
 
 export const projects = [
   {
+    id: 'flux-nutrition',
+    title: 'Flux Nutrition',
+    subtitle: 'AI Dietary & Metabolic Tracker',
+    description:
+      'Multimodal Vision AI food logging with bounding box analytics, mathematical metabolic modeling (TDEE/PSMF), and 60fps data dashboards.',
+    tech: ['React 19', 'Gemini Vision', 'Tailwind CSS 4', 'TDEE Modeling', 'Mifflin-St Jeor'],
+    link: 'https://flux-nutrition-61764787893.us-west1.run.app/#/dashboard',
+    image: '/images/flux-nutrition.png',
+    video: '/videos/flux-nutrition.mp4',
+    highlights: ['Real-time Vision AI logging', 'Custom metabolic engines', '60fps on data dashboards'],
+    color: '#B8973E',
+  },
+  {
+    id: 'flux-path',
+    title: 'Flux Path',
+    subtitle: 'Bazi & Ziwei Astrology Engine',
+    description:
+      'Deterministic Bazi (Four Pillars) and Ziwei Doushu charting engine with real-time 3D celestial visualization and an AI assistant for interpretation — no LLM guesswork on the math.',
+    tech: ['Next.js', 'React Three Fiber', 'Astronomy Engine', 'Claude API', 'Gemini AI', 'Zustand'],
+    link: 'https://parallax-nine-taupe.vercel.app/',
+    image: '/images/flux-path.png',
+    video: '/videos/flux-path.mp4',
+    highlights: ['Deterministic Bazi + Ziwei calculations', '3D interactive star chart', 'AI-powered chart interpretation'],
+    color: '#8B7FD1',
+  },
+  {
     id: 'flux-career',
     title: 'Flux Career',
     subtitle: 'AI Career Intelligence Platform',
@@ -20,6 +46,7 @@ export const projects = [
     tech: ['React 19', 'Gemini AI', 'D3.js', 'Supabase', 'Express', 'NLP'],
     link: 'https://flux-career-367989884274.us-west1.run.app/',
     image: '/images/flux-career.png',
+    video: '/videos/flux-career.mp4',
     highlights: ['40% reduction in AI latency', 'PDF/DOCX NLP extraction', 'D3.js geospatial maps'],
     color: '#C9A84C',
   },
@@ -32,20 +59,9 @@ export const projects = [
     tech: ['React 19', 'Gemini Flash', 'Recharts', 'Google Search API', 'Supabase'],
     link: 'https://flux-finance-1093821759886.us-west1.run.app/',
     image: '/images/flux-finance.png',
+    video: '/videos/flux-finance.mp4',
     highlights: ['90% reduction in manual entry', 'Sub-second market data', '40% render speed gain'],
     color: '#D4A843',
-  },
-  {
-    id: 'flux-nutrition',
-    title: 'Flux Nutrition',
-    subtitle: 'AI Dietary & Metabolic Tracker',
-    description:
-      'Multimodal Vision AI food logging with bounding box analytics, mathematical metabolic modeling (TDEE/PSMF), and 60fps data dashboards.',
-    tech: ['React 19', 'Gemini Vision', 'Tailwind CSS 4', 'TDEE Modeling', 'Mifflin-St Jeor'],
-    link: 'https://flux-nutrition-61764787893.us-west1.run.app/#/dashboard',
-    image: '/images/flux-nutrition.png',
-    highlights: ['Real-time Vision AI logging', 'Custom metabolic engines', '60fps on data dashboards'],
-    color: '#B8973E',
   },
 ]
 

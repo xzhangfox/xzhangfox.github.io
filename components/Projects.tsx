@@ -1,13 +1,28 @@
 'use client'
 
-import { useState } from 'react'
-import { motion } from 'framer-motion'
+import { useEffect, useRef, useState } from 'react'
+import { motion, useScroll, useSpring, useTransform, useVelocity } from 'framer-motion'
 import FadeIn from './FadeIn'
 import { projects } from '@/lib/data'
 import { useLanguage } from '@/lib/i18n'
 
 function ProjectCard({ project, index }: { project: typeof projects[0] & { subtitle: string; description: string; highlights: string[] }; index: number }) {
   const [imgError, setImgError] = useState(false)
+  const [videoReady, setVideoReady] = useState(false)
+  const [hovering, setHovering] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const showVideo = videoReady && hovering
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    if (showVideo) {
+      video.currentTime = 0
+      video.play().catch(() => {})
+    } else {
+      video.pause()
+    }
+  }, [showVideo])
 
   return (
     <FadeIn delay={0.1 + index * 0.12}>
@@ -19,13 +34,17 @@ function ProjectCard({ project, index }: { project: typeof projects[0] & { subti
           boxShadow: '0 0 0 1px rgba(255,255,255,0.04)',
         }}
       >
-        {/* Screenshot */}
-        <div className="relative w-full aspect-video overflow-hidden bg-surface-elevated">
+        {/* Screenshot / video preview */}
+        <div
+          className="relative w-full aspect-video overflow-hidden bg-surface-elevated"
+          onMouseEnter={() => setHovering(true)}
+          onMouseLeave={() => setHovering(false)}
+        >
           {!imgError ? (
             <img
               src={project.image}
               alt={project.title}
-              className="w-full h-full object-cover object-top transition-transform duration-700 group-hover:scale-105"
+              className={`w-full h-full object-cover object-top transition-opacity duration-300 ${showVideo ? 'opacity-0' : 'opacity-100 group-hover:scale-105'} transition-transform duration-700`}
               onError={() => setImgError(true)}
             />
           ) : (
@@ -36,6 +55,20 @@ function ProjectCard({ project, index }: { project: typeof projects[0] & { subti
               </div>
               <span className="section-label text-white/20">{project.title}</span>
             </div>
+          )}
+
+          {project.video && (
+            <video
+              ref={videoRef}
+              src={project.video}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onLoadedData={() => setVideoReady(true)}
+              onError={() => setVideoReady(false)}
+              className={`absolute inset-0 w-full h-full object-cover object-top transition-opacity duration-300 ${showVideo ? 'opacity-100' : 'opacity-0'}`}
+            />
           )}
 
           {/* Gradient overlay */}
@@ -112,8 +145,16 @@ function ProjectCard({ project, index }: { project: typeof projects[0] & { subti
 export default function Projects() {
   const { t } = useLanguage()
   const items = projects.map((p, i) => ({ ...p, ...t.projects.items[i] }))
+
+  const sectionRef = useRef<HTMLElement>(null)
+  const { scrollYProgress } = useScroll({ target: sectionRef, offset: ['start end', 'end start'] })
+  const rawVelocity = useVelocity(scrollYProgress)
+  const smoothVelocity = useSpring(rawVelocity, { stiffness: 320, damping: 34, mass: 0.3 })
+  const skewY = useTransform(smoothVelocity, [-1.2, 1.2], [9, -9], { clamp: true })
+  const scaleY = useTransform(smoothVelocity, [-1.2, 0, 1.2], [0.95, 1, 0.95], { clamp: true })
+
   return (
-    <section id="projects" className="relative py-32 px-6">
+    <section id="projects" ref={sectionRef} className="relative py-32 px-6">
       <div className="max-w-6xl mx-auto">
         <FadeIn>
           <div className="section-divider">
@@ -139,11 +180,11 @@ export default function Projects() {
           </FadeIn>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <motion.div className="grid sm:grid-cols-2 gap-5" style={{ skewY, scaleY }}>
           {items.map((project, i) => (
             <ProjectCard key={project.id} project={project} index={i} />
           ))}
-        </div>
+        </motion.div>
       </div>
     </section>
   )
