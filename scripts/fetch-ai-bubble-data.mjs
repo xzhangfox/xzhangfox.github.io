@@ -38,6 +38,7 @@ const MIN_WARMUP_DAYS = MOMENTUM_LOOKBACK + 30 // extra buffer before an indicat
 
 const RETRIES = 3
 const RETRY_DELAY_MS = 2000
+const FETCH_TIMEOUT_MS = 20000
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -48,6 +49,7 @@ async function fetchText(url) {
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     try {
       const res = await fetch(url, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
         headers: {
           'User-Agent':
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
