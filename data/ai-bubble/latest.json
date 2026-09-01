@@ -1,6 +1,6 @@
 {
   "asOf": "2026-08-31",
-  "generatedAt": "2026-09-01T07:25:50.335Z",
+  "generatedAt": "2026-09-01T07:35:22.208Z",
   "compositeScore": 36.6,
   "category": "Moderate",
   "categoryColor": "#C9A84C",
@@ -56,8 +56,8 @@
       "framework": "Dalio",
       "description": "Inverted 10-year Treasury yield. Lower long-term rates ease the discount-rate math that justifies speculative valuations — Dalio's hallmark that \"stimulative monetary policy threatens to inflate the bubble further.\"",
       "score": 0.7,
-      "rawValue": -0.4757999897003174,
-      "rawFormatted": "10Y 0.48%"
+      "rawValue": -4.757999897003174,
+      "rawFormatted": "10Y 4.76%"
     },
     {
       "id": "volumeSurge",
