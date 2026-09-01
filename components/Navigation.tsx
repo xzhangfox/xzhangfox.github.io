@@ -64,6 +64,12 @@ export default function Navigation() {
               {link.label}
             </button>
           ))}
+          <a
+            href="/ai-bubble-monitor/"
+            className="px-4 py-2 text-sm text-gold/70 hover:text-gold transition-colors duration-200 font-mono tracking-wider uppercase text-xs"
+          >
+            {t.nav.aiBubble}
+          </a>
         </nav>
 
         {/* Resume CTA */}
@@ -121,6 +127,12 @@ export default function Navigation() {
                   {link.label}
                 </button>
               ))}
+              <a
+                href="/ai-bubble-monitor/"
+                className="py-2.5 text-left text-sm text-gold/70 hover:text-gold font-mono tracking-widest uppercase transition-colors"
+              >
+                {t.nav.aiBubble}
+              </a>
               <a
                 href="/Resume.pdf"
                 target="_blank"
