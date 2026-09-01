@@ -6,9 +6,9 @@
   "categoryColor": null,
   "indicators": [],
   "basket": ["NVDA", "MSFT", "GOOGL", "AMZN", "META", "AVGO", "ORCL"],
-  "methodologyNote": "Data has not been generated yet. The daily GitHub Actions workflow (.github/workflows/ai-bubble-data.yml) populates this file from live Stooq and FRED data on its next run.",
+  "methodologyNote": "Data has not been generated yet. The daily GitHub Actions workflow (.github/workflows/ai-bubble-data.yml) populates this file from live Yahoo Finance and FRED data on its next run.",
   "dataSources": [
-    "Stooq.com daily equity & index prices (NVDA, MSFT, GOOGL, AMZN, META, AVGO, ORCL, VIX, Russell 2000)",
+    "Yahoo Finance daily equity & index prices (NVDA, MSFT, GOOGL, AMZN, META, AVGO, ORCL, VIX, Russell 2000)",
     "FRED: ICE BofA US High Yield Index Option-Adjusted Spread (BAMLH0A0HYM2)",
     "FRED: 10-Year Treasury Constant Maturity Rate (DGS10)"
   ]

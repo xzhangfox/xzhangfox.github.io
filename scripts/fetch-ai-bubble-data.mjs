@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 /**
- * Fetches free, no-key daily market data (Stooq equity/index prices, FRED
- * credit-spread and rate series) and computes the AI Bubble Monitor's
+ * Fetches free, no-key daily market data (Yahoo Finance equity/index prices,
+ * FRED credit-spread and rate series) and computes the AI Bubble Monitor's
  * composite indicator set. Writes data/ai-bubble/latest.json (today's
  * snapshot) and data/ai-bubble/history.json (trailing time series for the
  * trend chart). Designed to run daily from GitHub Actions.
  *
  * No lookahead: every historical percentile is computed against an
  * expanding window of only the data available up to and including that day.
+ *
+ * Note: an earlier version of this script used Stooq for equity/index
+ * prices, but Stooq silently returns a non-CSV "hits limit" style response
+ * (HTTP 200, no thrown error, zero parseable rows) to cloud/datacenter IPs
+ * including GitHub-hosted runners — Yahoo Finance's chart endpoint does not
+ * have this problem.
  */
 
 import fs from 'node:fs/promises'
@@ -18,9 +24,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = process.env.AI_BUBBLE_DATA_DIR || path.join(__dirname, '..', 'data', 'ai-bubble')
 const HISTORY_MAX_DAYS = 1095 // ~3 years kept for the chart
 
-const AI_BASKET = ['nvda.us', 'msft.us', 'googl.us', 'amzn.us', 'meta.us', 'avgo.us', 'orcl.us']
-const STOOQ_SYMBOLS = { vix: '^vix', rut: '^rut' }
+const AI_BASKET = ['NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'AVGO', 'ORCL']
+const YAHOO_SYMBOLS = { vix: '^VIX', rut: '^RUT' }
 const FRED_SERIES = { hySpread: 'BAMLH0A0HYM2', dgs10: 'DGS10' }
+const MIN_USABLE_ROWS = 500
 
 const MOMENTUM_LOOKBACK = 252 // ~1 trading year
 const TREND_WINDOW = 200
@@ -41,7 +48,10 @@ async function fetchText(url) {
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     try {
       const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ai-bubble-monitor/1.0; +https://xzhangfox.github.io)' },
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
       })
       if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`)
       const text = await res.text()
@@ -55,18 +65,34 @@ async function fetchText(url) {
   throw new Error(`Failed to fetch ${url} after ${RETRIES} attempts: ${lastErr?.message}`)
 }
 
-function parseStooqCsv(csv) {
-  const lines = csv.trim().split('\n').slice(1)
+async function fetchYahooChart(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=10y&interval=1d`
+  const text = await fetchText(url)
+  let json
+  try {
+    json = JSON.parse(text)
+  } catch {
+    throw new Error(`Non-JSON response for ${symbol} from Yahoo Finance`)
+  }
+  const result = json?.chart?.result?.[0]
+  if (!result) {
+    throw new Error(`No chart result for ${symbol}: ${json?.chart?.error?.description ?? 'unknown error'}`)
+  }
+  const timestamps = result.timestamp ?? []
+  const quote = result.indicators?.quote?.[0] ?? {}
+  const closes = quote.close ?? []
+  const volumes = quote.volume ?? []
   const rows = []
-  for (const line of lines) {
-    const parts = line.split(',')
-    const [date, , , , close, volume] = parts
-    const c = Number(close)
-    if (!date || !Number.isFinite(c)) continue
-    const v = Number(volume)
+  for (let i = 0; i < timestamps.length; i++) {
+    const c = closes[i]
+    if (c === null || c === undefined || !Number.isFinite(c)) continue
+    const date = new Date(timestamps[i] * 1000).toISOString().slice(0, 10)
+    const v = volumes[i]
     rows.push({ date, close: c, volume: Number.isFinite(v) ? v : null })
   }
-  rows.sort((a, b) => (a.date < b.date ? -1 : 1))
+  if (rows.length < MIN_USABLE_ROWS) {
+    throw new Error(`Only ${rows.length} usable rows for ${symbol} — Yahoo Finance response may be degraded`)
+  }
   return rows
 }
 
@@ -203,14 +229,14 @@ function categoryFor(score) {
 }
 
 async function main() {
-  console.log('Fetching Stooq series...')
-  const stooqEntries = await Promise.all(
-    [...AI_BASKET, ...Object.values(STOOQ_SYMBOLS)].map(async (symbol) => {
-      const csv = await fetchText(`https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol)}&i=d`)
-      return [symbol, parseStooqCsv(csv)]
+  console.log('Fetching Yahoo Finance series...')
+  const yahooEntries = await Promise.all(
+    [...AI_BASKET, ...Object.values(YAHOO_SYMBOLS)].map(async (symbol) => {
+      const rows = await fetchYahooChart(symbol)
+      return [symbol, rows]
     })
   )
-  const stooq = Object.fromEntries(stooqEntries)
+  const yahoo = Object.fromEntries(yahooEntries)
 
   console.log('Fetching FRED series...')
   const fredEntries = await Promise.all(
@@ -222,8 +248,8 @@ async function main() {
   const fred = Object.fromEntries(fredEntries)
 
   // Canonical trading-day calendar: dates present for every basket ticker.
-  const calendarSets = AI_BASKET.map((sym) => new Set(stooq[sym].map((r) => r.date)))
-  const referenceDates = stooq[AI_BASKET[0]].map((r) => r.date)
+  const calendarSets = AI_BASKET.map((sym) => new Set(yahoo[sym].map((r) => r.date)))
+  const referenceDates = yahoo[AI_BASKET[0]].map((r) => r.date)
   const dates = referenceDates.filter((d) => calendarSets.every((s) => s.has(d)))
 
   if (dates.length < MIN_WARMUP_DAYS + HISTORY_MAX_DAYS / 2) {
@@ -232,14 +258,14 @@ async function main() {
 
   // Equal-weighted AI basket index, rebased to 100 at the first common date.
   const basketPerTicker = AI_BASKET.map((sym) => {
-    const map = toSeriesMap(stooq[sym], 'close')
+    const map = toSeriesMap(yahoo[sym], 'close')
     const base = map.get(dates[0])
     return dates.map((d) => (map.get(d) / base) * 100)
   })
   const basketIndex = dates.map((_, i) => basketPerTicker.reduce((sum, series) => sum + series[i], 0) / AI_BASKET.length)
 
   const volumePerTicker = AI_BASKET.map((sym) => {
-    const map = toSeriesMap(stooq[sym], 'volume')
+    const map = toSeriesMap(yahoo[sym], 'volume')
     return dates.map((d) => map.get(d) ?? null)
   })
   const basketVolume = dates.map((_, i) => {
@@ -247,9 +273,9 @@ async function main() {
     return vals.length ? vals.reduce((a, b) => a + b, 0) : null
   })
 
-  const rutMap = toSeriesMap(stooq[STOOQ_SYMBOLS.rut], 'close')
+  const rutMap = toSeriesMap(yahoo[YAHOO_SYMBOLS.rut], 'close')
   const rutAligned = alignToCalendar(dates, rutMap)
-  const vixMap = toSeriesMap(stooq[STOOQ_SYMBOLS.vix], 'close')
+  const vixMap = toSeriesMap(yahoo[YAHOO_SYMBOLS.vix], 'close')
   const vixAligned = alignToCalendar(dates, vixMap)
   const hySpreadAligned = alignToCalendar(dates, toSeriesMap(fred.hySpread, 'value'))
   const dgs10Aligned = alignToCalendar(dates, toSeriesMap(fred.dgs10, 'value'))
@@ -319,11 +345,11 @@ async function main() {
     category: category?.label ?? null,
     categoryColor: category?.color ?? null,
     indicators: latestIndicators,
-    basket: AI_BASKET.map((s) => s.replace('.us', '').toUpperCase()),
+    basket: AI_BASKET,
     methodologyNote:
       "Composite score is the equal-weighted average of the percentile ranks below, each computed against its own trailing history up to that day (no lookahead). It is a simplified, transparent proxy inspired by Ray Dalio's six classic bubble hallmarks, Robert Shiller's work on valuation extremes and market narratives, and Hyman Minsky's financial instability hypothesis — it is not Dalio's proprietary bubble gauge, not a trading signal, and not investment advice. One hallmark Dalio names — buyers making unusually extended forward purchases for speculation or hedging, e.g. hyperscaler AI-capex commitments running far ahead of current revenue — has no free daily data feed and is intentionally left out of the composite; track it via quarterly hyperscaler earnings instead.",
     dataSources: [
-      'Stooq.com daily equity & index prices (NVDA, MSFT, GOOGL, AMZN, META, AVGO, ORCL, VIX, Russell 2000)',
+      'Yahoo Finance daily equity & index prices (NVDA, MSFT, GOOGL, AMZN, META, AVGO, ORCL, VIX, Russell 2000)',
       'FRED: ICE BofA US High Yield Index Option-Adjusted Spread (BAMLH0A0HYM2)',
       'FRED: 10-Year Treasury Constant Maturity Rate (DGS10)',
     ],
