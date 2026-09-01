@@ -27,7 +27,8 @@ const DATA_DIR = process.env.AI_BUBBLE_DATA_DIR || path.join(__dirname, '..', 'd
 const HISTORY_MAX_DAYS = 1095 // ~3 years kept for the chart
 
 const AI_BASKET = ['NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'AVGO', 'ORCL']
-// ^TNX quotes the 10-year Treasury yield x10 (e.g. 45.0 = 4.50%).
+// ^TNX's chart API "close" field is the 10-year Treasury yield directly
+// (e.g. 4.50 = 4.50%) — unlike its historical x10 quote-page display.
 // HYG/IEF (high-yield vs 7-10yr Treasury bond ETFs) proxy credit spread direction.
 const YAHOO_SYMBOLS = { vix: '^VIX', rut: '^RUT', tnx: '^TNX', hyg: 'HYG', ief: 'IEF' }
 const MIN_USABLE_ROWS = 500
@@ -289,7 +290,7 @@ async function main() {
       const iefRet = iefAligned[i] / iefAligned[i - CREDIT_LOOKBACK] - 1
       rawSeries.creditAppetite[i] = hygRet - iefRet
     }
-    if (tnxAligned[i] !== null) rawSeries.monetaryStimulus[i] = -(tnxAligned[i] / 10)
+    if (tnxAligned[i] !== null) rawSeries.monetaryStimulus[i] = -tnxAligned[i]
     const volShort = sma(basketVolume, VOLUME_SHORT, i)
     const volLong = sma(basketVolume, VOLUME_LONG, i)
     if (volShort && volLong) rawSeries.volumeSurge[i] = volShort / volLong
