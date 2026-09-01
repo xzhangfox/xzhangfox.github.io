@@ -1,19 +1,21 @@
 #!/usr/bin/env node
 /**
- * Fetches free, no-key daily market data (Yahoo Finance equity/index prices,
- * FRED credit-spread and rate series) and computes the AI Bubble Monitor's
- * composite indicator set. Writes data/ai-bubble/latest.json (today's
- * snapshot) and data/ai-bubble/history.json (trailing time series for the
- * trend chart). Designed to run daily from GitHub Actions.
+ * Fetches free, no-key daily market data (Yahoo Finance equity, index, rate,
+ * and bond-ETF prices) and computes the AI Bubble Monitor's composite
+ * indicator set. Writes data/ai-bubble/latest.json (today's snapshot) and
+ * data/ai-bubble/history.json (trailing time series for the trend chart).
+ * Designed to run daily from GitHub Actions.
  *
  * No lookahead: every historical percentile is computed against an
  * expanding window of only the data available up to and including that day.
  *
- * Note: an earlier version of this script used Stooq for equity/index
- * prices, but Stooq silently returns a non-CSV "hits limit" style response
- * (HTTP 200, no thrown error, zero parseable rows) to cloud/datacenter IPs
- * including GitHub-hosted runners — Yahoo Finance's chart endpoint does not
- * have this problem.
+ * Note: earlier versions of this script used Stooq for equity/index prices
+ * and FRED for the credit spread and 10Y yield. Both were dropped after
+ * live runs on GitHub-hosted runners either got a non-CSV "hits limit"
+ * response with HTTP 200 (Stooq) or hung until timeout on every attempt
+ * (FRED's fredgraph.csv) — both read as anti-automation throttling of
+ * cloud/datacenter IPs. Everything now comes from Yahoo Finance's chart
+ * endpoint, which has been reliable from this infrastructure.
  */
 
 import fs from 'node:fs/promises'
@@ -25,13 +27,15 @@ const DATA_DIR = process.env.AI_BUBBLE_DATA_DIR || path.join(__dirname, '..', 'd
 const HISTORY_MAX_DAYS = 1095 // ~3 years kept for the chart
 
 const AI_BASKET = ['NVDA', 'MSFT', 'GOOGL', 'AMZN', 'META', 'AVGO', 'ORCL']
-const YAHOO_SYMBOLS = { vix: '^VIX', rut: '^RUT' }
-const FRED_SERIES = { hySpread: 'BAMLH0A0HYM2', dgs10: 'DGS10' }
+// ^TNX quotes the 10-year Treasury yield x10 (e.g. 45.0 = 4.50%).
+// HYG/IEF (high-yield vs 7-10yr Treasury bond ETFs) proxy credit spread direction.
+const YAHOO_SYMBOLS = { vix: '^VIX', rut: '^RUT', tnx: '^TNX', hyg: 'HYG', ief: 'IEF' }
 const MIN_USABLE_ROWS = 500
 
 const MOMENTUM_LOOKBACK = 252 // ~1 trading year
 const TREND_WINDOW = 200
 const BREADTH_LOOKBACK = 126 // ~6 trading months
+const CREDIT_LOOKBACK = 63 // ~3 trading months
 const VOLUME_SHORT = 20
 const VOLUME_LONG = 252
 const MIN_WARMUP_DAYS = MOMENTUM_LOOKBACK + 30 // extra buffer before an indicator is trusted
@@ -95,20 +99,6 @@ async function fetchYahooChart(symbol) {
   if (rows.length < MIN_USABLE_ROWS) {
     throw new Error(`Only ${rows.length} usable rows for ${symbol} — Yahoo Finance response may be degraded`)
   }
-  return rows
-}
-
-function parseFredCsv(csv) {
-  const lines = csv.trim().split('\n').slice(1)
-  const rows = []
-  for (const line of lines) {
-    const [date, val] = line.split(',')
-    if (!date || val === undefined || val === '.' || val === '') continue
-    const v = Number(val)
-    if (!Number.isFinite(v)) continue
-    rows.push({ date, value: v })
-  }
-  rows.sort((a, b) => (a.date < b.date ? -1 : 1))
   return rows
 }
 
@@ -194,11 +184,11 @@ const INDICATOR_DEFS = [
   },
   {
     id: 'creditAppetite',
-    name: 'Credit Risk Appetite (HY Spread)',
+    name: 'Credit Risk Appetite (HY vs Treasuries)',
     framework: 'Dalio',
     description:
-      'Inverted ICE BofA US High-Yield Option-Adjusted Spread. Historically tight spreads mean risk premia are compressed and leverage is cheap — Dalio\'s fourth hallmark, "purchases financed by high leverage."',
-    format: (v) => `OAS ${(-v).toFixed(2)}%`,
+      'Trailing 3-month return of a high-yield corporate bond ETF (HYG) minus a duration-matched Treasury ETF (IEF), a market-based proxy for credit spread direction. Junk debt outperforming Treasuries means credit spreads are tightening and risk premia are compressed — Dalio\'s fourth hallmark, "purchases financed by high leverage."',
+    format: (v) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)} pts (HYG vs IEF, 3mo)`,
   },
   {
     id: 'monetaryStimulus',
@@ -240,15 +230,6 @@ async function main() {
   )
   const yahoo = Object.fromEntries(yahooEntries)
 
-  console.log('Fetching FRED series...')
-  const fredEntries = await Promise.all(
-    Object.entries(FRED_SERIES).map(async ([key, id]) => {
-      const csv = await fetchText(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${id}`)
-      return [key, parseFredCsv(csv)]
-    })
-  )
-  const fred = Object.fromEntries(fredEntries)
-
   // Canonical trading-day calendar: dates present for every basket ticker.
   const calendarSets = AI_BASKET.map((sym) => new Set(yahoo[sym].map((r) => r.date)))
   const referenceDates = yahoo[AI_BASKET[0]].map((r) => r.date)
@@ -279,8 +260,9 @@ async function main() {
   const rutAligned = alignToCalendar(dates, rutMap)
   const vixMap = toSeriesMap(yahoo[YAHOO_SYMBOLS.vix], 'close')
   const vixAligned = alignToCalendar(dates, vixMap)
-  const hySpreadAligned = alignToCalendar(dates, toSeriesMap(fred.hySpread, 'value'))
-  const dgs10Aligned = alignToCalendar(dates, toSeriesMap(fred.dgs10, 'value'))
+  const tnxAligned = alignToCalendar(dates, toSeriesMap(yahoo[YAHOO_SYMBOLS.tnx], 'close'))
+  const hygAligned = alignToCalendar(dates, toSeriesMap(yahoo[YAHOO_SYMBOLS.hyg], 'close'))
+  const iefAligned = alignToCalendar(dates, toSeriesMap(yahoo[YAHOO_SYMBOLS.ief], 'close'))
 
   const rutBase = rutAligned.find((v) => v !== null)
   const rutIndex = rutAligned.map((v) => (v !== null && rutBase ? (v / rutBase) * 100 : null))
@@ -302,8 +284,12 @@ async function main() {
       rawSeries.concentration[i] = aiRet - rutRet
     }
     if (vixAligned[i] !== null) rawSeries.complacency[i] = -vixAligned[i]
-    if (hySpreadAligned[i] !== null) rawSeries.creditAppetite[i] = -hySpreadAligned[i]
-    if (dgs10Aligned[i] !== null) rawSeries.monetaryStimulus[i] = -dgs10Aligned[i]
+    if (i >= CREDIT_LOOKBACK && hygAligned[i] !== null && hygAligned[i - CREDIT_LOOKBACK] !== null && iefAligned[i] !== null && iefAligned[i - CREDIT_LOOKBACK] !== null) {
+      const hygRet = hygAligned[i] / hygAligned[i - CREDIT_LOOKBACK] - 1
+      const iefRet = iefAligned[i] / iefAligned[i - CREDIT_LOOKBACK] - 1
+      rawSeries.creditAppetite[i] = hygRet - iefRet
+    }
+    if (tnxAligned[i] !== null) rawSeries.monetaryStimulus[i] = -(tnxAligned[i] / 10)
     const volShort = sma(basketVolume, VOLUME_SHORT, i)
     const volLong = sma(basketVolume, VOLUME_LONG, i)
     if (volShort && volLong) rawSeries.volumeSurge[i] = volShort / volLong
@@ -351,9 +337,9 @@ async function main() {
     methodologyNote:
       "Composite score is the equal-weighted average of the percentile ranks below, each computed against its own trailing history up to that day (no lookahead). It is a simplified, transparent proxy inspired by Ray Dalio's six classic bubble hallmarks, Robert Shiller's work on valuation extremes and market narratives, and Hyman Minsky's financial instability hypothesis — it is not Dalio's proprietary bubble gauge, not a trading signal, and not investment advice. One hallmark Dalio names — buyers making unusually extended forward purchases for speculation or hedging, e.g. hyperscaler AI-capex commitments running far ahead of current revenue — has no free daily data feed and is intentionally left out of the composite; track it via quarterly hyperscaler earnings instead.",
     dataSources: [
-      'Yahoo Finance daily equity & index prices (NVDA, MSFT, GOOGL, AMZN, META, AVGO, ORCL, VIX, Russell 2000)',
-      'FRED: ICE BofA US High Yield Index Option-Adjusted Spread (BAMLH0A0HYM2)',
-      'FRED: 10-Year Treasury Constant Maturity Rate (DGS10)',
+      'Yahoo Finance daily prices: NVDA, MSFT, GOOGL, AMZN, META, AVGO, ORCL (AI basket)',
+      'Yahoo Finance daily levels: VIX, Russell 2000 (^RUT), 10-Year Treasury Yield Index (^TNX)',
+      'Yahoo Finance daily prices: HYG / IEF (high-yield vs Treasury bond ETFs, credit spread proxy)',
     ],
   }
 

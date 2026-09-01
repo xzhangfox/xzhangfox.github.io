@@ -6,10 +6,10 @@
   "categoryColor": null,
   "indicators": [],
   "basket": ["NVDA", "MSFT", "GOOGL", "AMZN", "META", "AVGO", "ORCL"],
-  "methodologyNote": "Data has not been generated yet. The daily GitHub Actions workflow (.github/workflows/ai-bubble-data.yml) populates this file from live Yahoo Finance and FRED data on its next run.",
+  "methodologyNote": "Data has not been generated yet. The daily GitHub Actions workflow (.github/workflows/ai-bubble-data.yml) populates this file from live Yahoo Finance data on its next run.",
   "dataSources": [
-    "Yahoo Finance daily equity & index prices (NVDA, MSFT, GOOGL, AMZN, META, AVGO, ORCL, VIX, Russell 2000)",
-    "FRED: ICE BofA US High Yield Index Option-Adjusted Spread (BAMLH0A0HYM2)",
-    "FRED: 10-Year Treasury Constant Maturity Rate (DGS10)"
+    "Yahoo Finance daily prices: NVDA, MSFT, GOOGL, AMZN, META, AVGO, ORCL (AI basket)",
+    "Yahoo Finance daily levels: VIX, Russell 2000 (^RUT), 10-Year Treasury Yield Index (^TNX)",
+    "Yahoo Finance daily prices: HYG / IEF (high-yield vs Treasury bond ETFs, credit spread proxy)"
   ]
 }
