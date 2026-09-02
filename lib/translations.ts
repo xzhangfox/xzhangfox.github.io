@@ -6,7 +6,6 @@ export interface Dict {
     experience: string
     projects: string
     contact: string
-    aiBubble: string
     resume: string
     langToggle: string
   }
@@ -89,7 +88,6 @@ export const translations: Record<Language, Dict> = {
       experience: 'Experience',
       projects: 'Projects',
       contact: 'Contact',
-      aiBubble: 'AI Bubble Monitor',
       resume: 'Resume',
       langToggle: '中文',
     },
@@ -238,7 +236,6 @@ export const translations: Record<Language, Dict> = {
       experience: '工作经历',
       projects: '项目作品',
       contact: '联系方式',
-      aiBubble: 'AI 泡沫监测',
       resume: '简历',
       langToggle: 'EN',
     },
