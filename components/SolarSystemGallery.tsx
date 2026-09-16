@@ -395,6 +395,16 @@ class PlanetInstance {
    *  planet — before that, every craft just idles on the ring. */
   anySelected = false
   activeIndex = -1
+  /** The item `goTo()` last targeted — the one that should read as "open
+   *  and stable," independent of which side of the ring-position wraparound
+   *  its `t` value happens to converge on (see `activeUpdate`'s use of it:
+   *  the geometric approach/depart split isn't reliable as an "is this open
+   *  or closing" signal, since which side a settled item lands on depends
+   *  on incidental navigation direction, not actual open/close intent —
+   *  most visible on a single-item planet, where it was always the same
+   *  side, causing the hologram to read as permanently mid-close). -1 =
+   *  nothing targeted. */
+  openIndex = -1
 
   // Scratch objects reused every frame to avoid per-item GC churn.
   _ringPos = new THREE.Vector3()
@@ -623,6 +633,7 @@ class PlanetInstance {
   goTo(index: number) {
     if (this.count < 1) return
     this.anySelected = true
+    this.openIndex = index
     const step = 1 / this.count
     const targetFrac = wrap01(index * step)
     const currentFrac = wrap01(this.progress.target)
@@ -642,6 +653,7 @@ class PlanetInstance {
   resetSelection() {
     this.anySelected = false
     this.activeIndex = -1
+    this.openIndex = -1
     this.progress.current = 0.5 / Math.max(this.count, 1)
     this.progress.target = this.progress.current
     this.goToEaseActive = false
@@ -726,8 +738,24 @@ class PlanetInstance {
       const halo = this.crewHalos[i]
       ;(halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - craftMoveK)
 
-      const laserGrow = approaching ? smoothstep(0.3, 0.38, lift) : 0
-      const laserVisibility = approaching ? smoothstep(0.3, 0.34, lift) * (1 - smoothstep(0.66, 0.74, lift)) : 0
+      // Whether THIS item's screen/laser should run the "opening" (laser
+      // fire, point→line→plane formation, static-then-reveal) choreography
+      // versus the "closing" collapse. This is deliberately NOT the same as
+      // the geometric `approaching` (which side of the ring-position wrap
+      // the craft physically arrives from) — which side a SETTLED item
+      // lands on depends on incidental navigation direction, not actual
+      // open/close intent, and using it directly here meant a planet whose
+      // only-ever selection happened to converge on the "depart" side (any
+      // single-item planet, always) would permanently render its hologram
+      // as if mid-close: laser never fires, plane never forms, and the
+      // close-flicker uniform stays live forever. `openIndex` is the actual
+      // semantic signal — this item is either the one the user just
+      // targeted (opening) or a previously-open one now being vacated
+      // (closing).
+      const opening = i === this.openIndex
+
+      const laserGrow = opening ? smoothstep(0.3, 0.38, lift) : 0
+      const laserVisibility = opening ? smoothstep(0.3, 0.34, lift) * (1 - smoothstep(0.66, 0.74, lift)) : 0
       const laser = this.lasers[i]
       const focusWorld = this._focusWorldScratch.copy(this.group.position).add(this.focusOffset())
       if (laserVisibility > 0.01) {
@@ -754,7 +782,7 @@ class PlanetInstance {
       let scaleX: number
       let scaleY: number
       let glow: number
-      if (approaching) {
+      if (opening) {
         scaleX = laserGrow
         scaleY = smoothstep(0.4, 0.5, lift)
         glow = 1 - smoothstep(0.5, 0.54, lift)
@@ -777,7 +805,7 @@ class PlanetInstance {
       } else {
         this.revealTimer[i] = Math.min(1, this.revealTimer[i] + REVEAL_TIMER_STEP)
       }
-      const reveal = approaching ? this.revealTimer[i] : smoothstep(0.62, 0.82, lift)
+      const reveal = opening ? this.revealTimer[i] : smoothstep(0.62, 0.82, lift)
 
       const focusScaleAdjust = this._focusScaleAdjustRef!.value
       screen.visible = true
@@ -794,7 +822,7 @@ class PlanetInstance {
       if (glow < 0.5 && reveal < 0.999) {
         const screenFlickerNoise = Math.sin(time * 39 + i * 3) * Math.sin(time * 17 + i)
         flicker = screenFlickerNoise > -0.3 ? 1 : 0.35
-      } else if (!approaching && reveal > 0.5) {
+      } else if (!opening && reveal > 0.5) {
         const closeFlickerNoise = Math.sin(time * 53 + i * 4) * Math.sin(time * 21 + i)
         flicker = closeFlickerNoise > 0.1 ? 1 : 0.4
       }
