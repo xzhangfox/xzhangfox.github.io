@@ -1001,7 +1001,13 @@ class App {
   _overviewExtent = 60
 
   computeOverviewQuat(): THREE.Quaternion {
-    const scratch = new THREE.Object3D()
+    // Object3D.lookAt() computes rotation differently for a plain Object3D
+    // than for a Camera (it swaps the eye/target order internally) — using
+    // a plain Object3D here silently pointed the camera the wrong way
+    // (up and away from the scene rather than down at it), which is why
+    // the overview rendered nothing at all. A throwaway camera instance
+    // gets the camera-specific (correct) branch.
+    const scratch = new THREE.PerspectiveCamera()
     scratch.up.copy(OVERVIEW_UP)
     scratch.position.copy(this.overviewCameraPos)
     scratch.lookAt(0, 0, 0)
