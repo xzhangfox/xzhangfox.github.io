@@ -59,7 +59,7 @@ export const projects: Project[] = [
     gallery: [
       { src: '/images/projects/flux-path/tarot-ask.png', caption: 'The Diviner — ask the cards your question' },
       { src: '/images/projects/flux-path/tarot-draw.png', caption: 'Past · Present · Future — draw your spread' },
-      { src: '/images/projects/flux-path/birth-form.png', caption: 'Birth details, with true-solar-time correction' },
+      { src: '/images/projects/flux-path/face-analysis.png', caption: 'Face Reading — Twelve Palaces mapped onto your own photo' },
       { src: '/images/projects/flux-path/ai-verdict.png', caption: 'AI cross-verification of Bazi against Ziwei' },
     ],
     highlights: ['Deterministic Bazi + Ziwei calculations', '3D interactive star chart', 'AI-powered chart interpretation'],

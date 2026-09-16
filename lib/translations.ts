@@ -53,6 +53,7 @@ export interface Dict {
     headingPost: string
     subDesc: string
     liveBadge: string
+    hudLabel: string
     comingSoon: string
     moreSoonTitle: string
     moreSoonDesc: string
@@ -178,6 +179,7 @@ export const translations: Record<Language, Dict> = {
       subDesc:
         'AI-powered platforms built from scratch — each solving a different domain with the same design language and engineering standard.',
       liveBadge: 'All platforms live',
+      hudLabel: 'Project Intel',
       comingSoon: 'Coming soon',
       moreSoonTitle: 'More in the works',
       moreSoonDesc: 'New builds land here as they ship.',
@@ -331,6 +333,7 @@ export const translations: Record<Language, Dict> = {
       headingPost: ' 套件',
       subDesc: '从零构建的 AI 驱动平台 —— 各自解决不同领域的问题，却共享同一套设计语言与工程标准。',
       liveBadge: '全部平台已上线',
+      hudLabel: '项目情报',
       comingSoon: '即将上线',
       moreSoonTitle: '更多项目开发中',
       moreSoonDesc: '新项目上线后会陆续加入这里。',
