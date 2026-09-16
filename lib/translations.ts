@@ -53,6 +53,9 @@ export interface Dict {
     headingPost: string
     subDesc: string
     liveBadge: string
+    comingSoon: string
+    moreSoonTitle: string
+    moreSoonDesc: string
     items: { subtitle: string; description: string; highlights: string[] }[]
   }
   education: {
@@ -173,8 +176,11 @@ export const translations: Record<Language, Dict> = {
       headingGold: 'Flux',
       headingPost: ' Suite',
       subDesc:
-        'Three AI-powered platforms built from scratch — each solving a different domain with the same design language and engineering standard.',
+        'AI-powered platforms built from scratch — each solving a different domain with the same design language and engineering standard.',
       liveBadge: 'All platforms live',
+      comingSoon: 'Coming soon',
+      moreSoonTitle: 'More in the works',
+      moreSoonDesc: 'New builds land here as they ship.',
       items: [
         {
           subtitle: 'AI Dietary & Metabolic Tracker',
@@ -199,6 +205,12 @@ export const translations: Record<Language, Dict> = {
           description:
             'Vision AI receipt intelligence pipeline, real-time equity dashboard with Google Search Grounding, and optimized Recharts data visualization.',
           highlights: ['90% reduction in manual entry', 'Sub-second market data', '40% render speed gain'],
+        },
+        {
+          subtitle: 'AI Bubble Monitor',
+          description:
+            'A daily, rules-based read on whether AI-linked markets show classic speculative-bubble warning signs — built on Dalio, Shiller, and Minsky’s frameworks, scored as percentile ranks with no lookahead.',
+          highlights: ['7 percentile-ranked bubble indicators', 'Zero-lookahead daily scoring', 'Fully automated data pipeline'],
         },
       ],
     },
@@ -317,8 +329,11 @@ export const translations: Record<Language, Dict> = {
       headingPre: '',
       headingGold: 'Flux',
       headingPost: ' 套件',
-      subDesc: '三款从零构建的 AI 驱动平台 —— 各自解决不同领域的问题，却共享同一套设计语言与工程标准。',
+      subDesc: '从零构建的 AI 驱动平台 —— 各自解决不同领域的问题，却共享同一套设计语言与工程标准。',
       liveBadge: '全部平台已上线',
+      comingSoon: '即将上线',
+      moreSoonTitle: '更多项目开发中',
+      moreSoonDesc: '新项目上线后会陆续加入这里。',
       items: [
         {
           subtitle: 'AI 饮食与代谢追踪应用',
@@ -339,6 +354,12 @@ export const translations: Record<Language, Dict> = {
           subtitle: 'AI 财务管理平台',
           description: '基于视觉 AI 的收据智能识别管道、结合 Google 搜索实时数据的股票仪表盘，以及优化的 Recharts 数据可视化。',
           highlights: ['人工录入减少 90%', '秒级以内的市场数据', '渲染速度提升 40%'],
+        },
+        {
+          subtitle: 'AI 泡沫监测仪',
+          description:
+            '一套每日更新、基于规则的指标体系，用来判断 AI 相关市场是否出现典型投机泡沫信号 —— 构建依据为达里欧、席勒与明斯基的框架，按百分位排名打分，不使用未来数据。',
+          highlights: ['7 项百分位排名泡沫指标', '零前瞻每日评分', '全自动数据流水线'],
         },
       ],
     },
