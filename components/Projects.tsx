@@ -74,6 +74,27 @@ export default function Projects() {
           onActiveIndexChange={setActiveIndex}
         />
 
+        <button
+          type="button"
+          onClick={() => galleryRef.current?.goTo((activeIndex - 1 + GALLERY_ITEMS.length) % GALLERY_ITEMS.length)}
+          aria-label="Previous project"
+          className="absolute left-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/15 text-white/35 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:bg-black/40 hover:text-gold sm:left-6 sm:h-11 sm:w-11"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => galleryRef.current?.goTo((activeIndex + 1) % GALLERY_ITEMS.length)}
+          aria-label="Next project"
+          className="absolute right-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/15 text-white/35 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:bg-black/40 hover:text-gold sm:right-6 sm:h-11 sm:w-11"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+
         <div className="pointer-events-none absolute inset-x-0 bottom-8 z-10 flex items-center justify-center gap-2">
           {GALLERY_ITEMS.map((_, i) => {
             const source = projects[i]
