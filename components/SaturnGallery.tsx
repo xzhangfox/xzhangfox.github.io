@@ -69,17 +69,22 @@ const FOCUS_WORLD = new THREE.Vector3(0, 0, 8)
 // to the screen — this gap is what the laser visually bridges.
 const CRAFT_FOCUS_WORLD = new THREE.Vector3(0, 0, 6.6)
 const UNIT_Z = new THREE.Vector3(0, 0, 1)
-// Shared by the laser material and the screen's edge glow/static tint so the
-// beam and the hologram it projects read as one continuous piece of light.
-const ACCENT_COLOR = new THREE.Color(0x8fe3ff)
+// Shared by the laser material and the screen's glow/edge/static tint so the
+// beam and the hologram it projects read as one continuous piece of light —
+// "laser white."
+const LASER_WHITE = new THREE.Color(0xeaf6ff)
 
 const ITEM_ORBIT_RADIUS = (RING_INNER + RING_OUTER) / 2
 const CRAFT_SPIN_SPEED = 0.01
 
 // Approach is slow and deliberate; departure ("quickly flies back behind
-// Saturn") uses a much narrower window so it snaps away fast.
-const APPROACH_WINDOW = 0.2
-const DEPART_WINDOW = 0.055
+// Saturn") uses a much narrower window so it snaps away fast. Both are
+// tuned to stay well under 1/count of the loop (five projects → 0.2
+// spacing) so two crafts are never near the shared parking spot at once.
+// Numerically verified against all 5 items' timing to guarantee no two
+// crafts are ever both near the shared parking spot at once.
+const APPROACH_WINDOW = 0.15
+const DEPART_WINDOW = 0.06
 
 const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.35
@@ -104,12 +109,15 @@ const SCREEN_FRAGMENT = `
   uniform vec2 uImageSize;
   uniform vec2 uPlaneSize;
   uniform float uBorderRadius;
-  // 0 while the screen is still forming/static — the real image is never
-  // sampled at all during this — 1 once fully revealed.
+  // 1 while the point/line/plane is still forming — solid laser-white,
+  // no noise, no image, so the shape it draws reads as pure light.
+  uniform float uGlow;
+  // 0 while showing hologram static (the real image is never sampled at
+  // all during this) — 1 once fully revealed.
   uniform float uReveal;
   uniform float uFlicker;
   uniform float uTime;
-  uniform vec3 uAccentColor;
+  uniform vec3 uLaserWhite;
   varying vec2 vUv;
 
   float roundedBoxSDF(vec2 p, vec2 b, float r) {
@@ -124,32 +132,39 @@ const SCREEN_FRAGMENT = `
     float d = roundedBoxSDF(vUv - 0.5, vec2(0.5 - uBorderRadius), uBorderRadius);
     if (d > 0.02) discard;
 
-    float reveal = clamp(uReveal, 0.0, 1.0);
-    vec3 color = vec3(0.0);
-    if (reveal < 0.999) {
-      // Pure noise/scanline hologram static — the preview image is never
-      // sampled here, so nothing of it can leak through before the reveal.
-      float noise = hash(floor(vUv * vec2(160.0, 100.0)) + floor(uTime * 22.0));
-      float scan = 0.6 + 0.4 * sin(vUv.y * 380.0 - uTime * 46.0);
-      vec3 staticColor = uAccentColor * (noise * 0.7 + 0.3) * scan * uFlicker;
-      color = staticColor;
-    }
-    if (reveal > 0.001) {
-      vec2 ratio = vec2(
-        min((uPlaneSize.x / uPlaneSize.y) / (uImageSize.x / uImageSize.y), 1.0),
-        min((uPlaneSize.y / uPlaneSize.x) / (uImageSize.y / uImageSize.x), 1.0)
-      );
-      vec2 uv = vec2(
-        vUv.x * ratio.x + (1.0 - ratio.x) * 0.5,
-        vUv.y * ratio.y + (1.0 - ratio.y) * 0.5
-      );
-      vec3 base = texture2D(uMap, uv).rgb;
-      float scan = 0.96 + 0.04 * sin(vUv.y * 420.0 - uTime * 40.0);
-      color = mix(color, base * scan, reveal);
+    vec3 color;
+    if (uGlow > 0.5) {
+      // Forming: the point/line/plane itself is made of laser light,
+      // nothing else — no noise, no image.
+      float pulse = 0.88 + 0.12 * sin(uTime * 34.0);
+      color = uLaserWhite * pulse;
+    } else {
+      float reveal = clamp(uReveal, 0.0, 1.0);
+      color = vec3(0.0);
+      if (reveal < 0.999) {
+        // Pure noise/scanline hologram static — the preview image is never
+        // sampled here, so nothing of it can leak through before reveal.
+        float noise = hash(floor(vUv * vec2(160.0, 100.0)) + floor(uTime * 22.0));
+        float scan = 0.6 + 0.4 * sin(vUv.y * 380.0 - uTime * 46.0);
+        color = uLaserWhite * (noise * 0.7 + 0.3) * scan * uFlicker;
+      }
+      if (reveal > 0.001) {
+        vec2 ratio = vec2(
+          min((uPlaneSize.x / uPlaneSize.y) / (uImageSize.x / uImageSize.y), 1.0),
+          min((uPlaneSize.y / uPlaneSize.x) / (uImageSize.y / uImageSize.x), 1.0)
+        );
+        vec2 uv = vec2(
+          vUv.x * ratio.x + (1.0 - ratio.x) * 0.5,
+          vUv.y * ratio.y + (1.0 - ratio.y) * 0.5
+        );
+        vec3 base = texture2D(uMap, uv).rgb;
+        float scan = 0.96 + 0.04 * sin(vUv.y * 420.0 - uTime * 40.0);
+        color = mix(color, base * scan * uFlicker, reveal);
+      }
     }
 
     float edge = smoothstep(-0.045, -0.01, d);
-    color = mix(color, uAccentColor, edge * 0.55);
+    color = mix(color, uLaserWhite, edge * 0.55);
 
     gl_FragColor = vec4(color, 1.0);
   }
@@ -220,7 +235,7 @@ function createLaser(): THREE.Mesh {
   geometry.translate(0, 0.5, 0)
   geometry.rotateX(Math.PI / 2)
   const material = new THREE.MeshBasicMaterial({
-    color: ACCENT_COLOR,
+    color: LASER_WHITE,
     transparent: true,
     opacity: 0.85,
     blending: THREE.AdditiveBlending,
@@ -420,10 +435,11 @@ class App {
           uImageSize: { value: new THREE.Vector2(1, 1) },
           uPlaneSize: { value: new THREE.Vector2(width, height) },
           uBorderRadius: { value: borderRadius },
+          uGlow: { value: 0 },
           uReveal: { value: 0 },
           uFlicker: { value: 1 },
           uTime: { value: 0 },
-          uAccentColor: { value: new THREE.Vector3(ACCENT_COLOR.r, ACCENT_COLOR.g, ACCENT_COLOR.b) },
+          uLaserWhite: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
         },
       })
       const screen = new THREE.Mesh(screenGeometry, screenMaterial)
@@ -613,24 +629,30 @@ class App {
       this._ringEuler.set(-Math.PI / 2, -theta + this.craftSpin[i], 0)
       this._ringQuat.setFromEuler(this._ringEuler)
 
-      this._localPos.copy(this._ringPos).lerp(this._craftFocusLocal, lift)
-      this._itemQuat.slerpQuaternions(this._ringQuat, this._focusQuat, lift)
+      // The craft's own arrival is quick and finishes early in the approach
+      // window — it reaches its parking spot and holds completely still
+      // well before the laser/screen sequence (below) begins, matching
+      // "arrives at the fixed point, THEN starts firing" rather than firing
+      // while still moving.
+      const craftMoveK = approaching ? smoothstep(0.04, 0.22, lift) : lift
+      this._localPos.copy(this._ringPos).lerp(this._craftFocusLocal, craftMoveK)
+      this._itemQuat.slerpQuaternions(this._ringQuat, this._focusQuat, craftMoveK)
 
       const craft = this.crafts[i]
       craft.position.copy(this._localPos)
       craft.quaternion.copy(this._itemQuat)
-      craft.scale.setScalar(CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * lift)
+      craft.scale.setScalar(CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * craftMoveK)
 
       // Laser: a real beam from the craft's current WORLD position to the
       // screen's fixed WORLD position — recomputed every frame since the
-      // craft is always moving relative to the (stationary) screen. It
-      // extends from a point at the craft out to full length (this same
-      // growth also drives the screen's horizontal unfurl below, so the
-      // beam visibly "draws" the line the screen starts as), then holds
-      // through the screen's formation and static before fading. Only
-      // fires while approaching; closing is a silent collapse, no laser.
-      const laserGrow = approaching ? smoothstep(0.26, 0.38, lift) : 0
-      const laserVisibility = approaching ? smoothstep(0.26, 0.3, lift) * (1 - smoothstep(0.68, 0.78, lift)) : 0
+      // craft is always moving relative to the (stationary) screen. It only
+      // starts once the craft has fully parked (craftMoveK already at 1),
+      // extending from a point out to full length; that same growth also
+      // drives the screen's horizontal unfurl below, so the beam visibly
+      // "draws" the line the screen starts as. Only fires while
+      // approaching; closing is a silent collapse, no laser.
+      const laserGrow = approaching ? smoothstep(0.3, 0.38, lift) : 0
+      const laserVisibility = approaching ? smoothstep(0.3, 0.34, lift) * (1 - smoothstep(0.66, 0.74, lift)) : 0
       const laser = this.lasers[i]
       if (laserVisibility > 0.01) {
         this._craftWorldPos.copy(this._localPos).applyMatrix4(this.saturnGroup.matrixWorld)
@@ -654,35 +676,49 @@ class App {
         laser.visible = false
       }
 
-      // Screen: fixed in place, no movement of its own. Opens point →
-      // horizontal line (X, synced to the laser's own extension above) →
-      // full plane (Y unfurls next); the real preview image is never
-      // sampled until fully revealed — until then the screen shows only
-      // flickering hologram static, well after the plane has finished
-      // forming. Closes plane → line → point while departing (Y collapses
-      // first, then X), through a much narrower window so it's fast.
+      // Screen: fixed in place, no movement of its own. A laser-white point
+      // at the beam's tip expands — SAME thickness, both directions at
+      // once — into a horizontal line exactly as wide as the beam's own
+      // extension (X, synced to laserGrow above); once that line reaches
+      // full preview width it unfurls up and down into a full plane (Y),
+      // still solid laser-white throughout — no noise, no image yet. Only
+      // once the plane has fully formed does it flicker into hologram
+      // static, and only after that does the real image get sampled at
+      // all. Closing reverses the order: a quick flicker of the image,
+      // then it drops to static, and only then collapses — plane → line →
+      // point — through a much narrower window so it's fast.
       const screen = this.screens[i]
       const screenMat = screen.material as THREE.ShaderMaterial
 
       let scaleX: number
       let scaleY: number
+      let glow: number
       let reveal: number
       if (approaching) {
         scaleX = laserGrow
-        scaleY = smoothstep(0.38, 0.56, lift)
+        scaleY = smoothstep(0.4, 0.5, lift)
+        glow = 1 - smoothstep(0.5, 0.54, lift)
         reveal = smoothstep(0.74, 0.88, lift)
       } else {
-        scaleY = smoothstep(0, 1, lift)
-        scaleX = smoothstep(0, 0.45, lift)
-        reveal = 1
+        scaleY = smoothstep(0, 0.62, lift)
+        scaleX = smoothstep(0, 0.3, lift)
+        glow = 0
+        reveal = smoothstep(0.62, 0.82, lift)
       }
       screen.scale.set(Math.max(scaleX, 0.0001) * this.focusScaleAdjust, Math.max(scaleY, 0.0001) * this.focusScaleAdjust, 1)
+      screenMat.uniforms.uGlow.value = glow
       screenMat.uniforms.uReveal.value = reveal
       screenMat.uniforms.uTime.value = this.time
-      if (reveal < 0.999) {
+      let flicker = 1
+      if (glow < 0.5 && reveal < 0.999) {
         const screenFlickerNoise = Math.sin(this.time * 39 + i * 3) * Math.sin(this.time * 17 + i)
-        screenMat.uniforms.uFlicker.value = screenFlickerNoise > -0.3 ? 1 : 0.35
+        flicker = screenFlickerNoise > -0.3 ? 1 : 0.35
+      } else if (!approaching && reveal > 0.5) {
+        // The brief pre-close flicker of the still-clean image.
+        const closeFlickerNoise = Math.sin(this.time * 53 + i * 4) * Math.sin(this.time * 21 + i)
+        flicker = closeFlickerNoise > 0.1 ? 1 : 0.4
       }
+      screenMat.uniforms.uFlicker.value = flicker
     }
 
     if (bestIndex !== this.activeIndex) {
