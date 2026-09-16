@@ -157,14 +157,25 @@ const SCREEN_FRAGMENT = `
           vUv.x * ratio.x + (1.0 - ratio.x) * 0.5,
           vUv.y * ratio.y + (1.0 - ratio.y) * 0.5
         );
+        // Clean and stable once revealed — no per-frame animated ripple
+        // here. uFlicker still dims it during the brief pre-close flicker,
+        // but otherwise this holds rock-steady.
         vec3 base = texture2D(uMap, uv).rgb;
-        float scan = 0.96 + 0.04 * sin(vUv.y * 420.0 - uTime * 40.0);
-        color = mix(color, base * scan * uFlicker, reveal);
+        color = mix(color, base * uFlicker, reveal);
       }
     }
 
     float edge = smoothstep(-0.045, -0.01, d);
-    color = mix(color, uLaserWhite, edge * 0.55);
+
+    // Ambient "unstable projection" glitch — independent of open/close
+    // state, lives entirely on the edge glow so the image itself never
+    // flickers at rest. Rare, brief bursts, not a constant shimmer.
+    float glitchSlot = hash(vec2(floor(uTime * 2.2), 7.0));
+    float glitchActive = step(0.9, glitchSlot) * (0.5 + 0.5 * sin(uTime * 70.0));
+    vec3 edgeNoise = vec3(hash(vUv * 300.0 + uTime * 5.0));
+    vec3 edgeColor = mix(uLaserWhite, edgeNoise, glitchActive * 0.7);
+    float edgeStrength = edge * 0.55 * (1.0 + glitchActive * 0.6);
+    color = mix(color, edgeColor, clamp(edgeStrength, 0.0, 1.0));
 
     gl_FragColor = vec4(color, 1.0);
   }
