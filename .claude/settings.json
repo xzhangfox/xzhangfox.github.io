@@ -18,7 +18,17 @@
       "Bash(gh workflow *)",
       "Bash(gh run *)",
       "Bash(ffmpeg -version)",
-      "Bash(ffmpeg -i '/Users/xzhangfox/Desktop/Project/Portfolio WebSite/public/videos/hero-bg.mp4' -vf scale=1920:-2 -c:v libx264 -crf 28 -preset slow -c:a copy -movflags +faststart '/Users/xzhangfox/Desktop/Project/Portfolio WebSite/public/videos/hero-bg-opt.mp4' -y)"
+      "Bash(ffmpeg -i '/Users/xzhangfox/Desktop/Project/Portfolio WebSite/public/videos/hero-bg.mp4' -vf scale=1920:-2 -c:v libx264 -crf 28 -preset slow -c:a copy -movflags +faststart '/Users/xzhangfox/Desktop/Project/Portfolio WebSite/public/videos/hero-bg-opt.mp4' -y)",
+      "Read(//Users/xzhangfox/Desktop/Project/**)",
+      "Bash(python3 -c \"import PIL\")",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import PIL; print\\('ok'\\)\")",
+      "Bash(python3)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ],
+    "additionalDirectories": [
+      "/Users/xzhangfox/Desktop/Project/JobFiller"
     ]
   }
 }
