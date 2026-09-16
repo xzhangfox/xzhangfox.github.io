@@ -8,16 +8,18 @@ export interface GalleryItem {
 }
 
 export interface SaturnGalleryHandle {
-  setProgress: (progress: number) => void
+  /** Spin the ring so `index` becomes the focused, unfolded item. */
+  goTo: (index: number) => void
 }
 
 interface SaturnGalleryProps {
   items: GalleryItem[]
-  /** width / height, e.g. 16/9 for a normal screen. */
+  /** width / height of the unfolded card, e.g. 16/9 for a normal screen. */
   aspect?: number
   borderRadius?: number
-  scrollEase?: number
+  swipeEase?: number
   onItemClick?: (index: number) => void
+  onActiveIndexChange?: (index: number) => void
 }
 
 function clamp(v: number, min: number, max: number) {
@@ -34,12 +36,13 @@ function smoothstep(edge0: number, edge1: number, x: number) {
 }
 
 // --- Scene layout --------------------------------------------------------
-// Saturn sits deep in the scene, tilted like the reference photo. Cards ride
-// literally ON the tilted ring plane, as children of the same group the ring
-// itself belongs to — so for most of their loop they spin WITH the ring
-// (real orbital motion, not a hand-faked path), sweeping behind the planet
-// at the far side, then peel off toward the camera to become the focused
-// card only near the front, and settle back onto the ring afterward.
+// Saturn sits deep in the scene, tilted like the reference photo. Each
+// project is a lumpy meteorite that rides the tilted ring plane as a child
+// of the same group the ring belongs to — genuinely spinning with it, not
+// faking a path — sweeping behind the planet at the far side. Near the
+// front it unfolds into a flat preview card and lifts toward the camera,
+// then folds back into a rock and settles onto the ring afterward. Purely
+// swipe-driven: no scroll linkage at all.
 const PLANET_RADIUS = 3.2
 const PLANET_POS = new THREE.Vector3(0, -1, -10)
 const RING_INNER = PLANET_RADIUS * 1.35
@@ -47,18 +50,18 @@ const RING_OUTER = PLANET_RADIUS * 2.4
 const GROUP_TILT = THREE.MathUtils.degToRad(-20)
 const GROUP_SPIN_SPEED = 0.0006
 const CAMERA_Z = 14
+const CAMERA_FOV = 45
 const FOCUS_WORLD = new THREE.Vector3(0, 0, 5.2)
 
-// Radius (within the ring band) cards orbit at, and how much of the loop
-// (as a fraction, wrapped distance from the front) is spent lifting off the
-// ring toward the camera vs. riding flat with it.
-const CARD_ORBIT_RADIUS = (RING_INNER + RING_OUTER) / 2
+const ITEM_ORBIT_RADIUS = (RING_INNER + RING_OUTER) / 2
 const LIFT_WINDOW = 0.17
-const RING_RIDE_SCALE = 0.2
-const FOCUS_SCALE = 1.05
+const ROCK_SPIN_SPEED = 0.01
 const CARD_HEIGHT = 3.4
-const CLICKABLE_FOCUS = 0.15
-const CARD_SPIN_SPEED = 0.01
+const FOCUS_SCALE = 1.05
+// Keep the unfolded card's projected width within this fraction of the
+// viewport, shrinking it on narrow/portrait (mobile) screens so it's never
+// cropped — recomputed on resize.
+const MAX_VIEWPORT_WIDTH_FRACTION = 0.84
 
 const CARD_VERTEX = `
   varying vec2 vUv;
@@ -116,32 +119,60 @@ const RING_FRAGMENT = `
   }
 `
 
-interface CardMesh extends THREE.Mesh {
-  material: THREE.ShaderMaterial
+type IndexedMesh = THREE.Mesh
+
+// A continuous noise field over the unit sphere (not per-vertex random) so
+// shared corners on the icosahedron displace identically — no seams — while
+// still giving each seed a distinct, irregular, rocky silhouette.
+function createRockGeometry(seed: number, size: number): THREE.BufferGeometry {
+  const geometry = new THREE.IcosahedronGeometry(size, 1)
+  const position = geometry.attributes.position
+  const v = new THREE.Vector3()
+  const n = new THREE.Vector3()
+  for (let i = 0; i < position.count; i++) {
+    v.fromBufferAttribute(position, i)
+    n.copy(v).normalize()
+    const noise =
+      Math.sin(n.x * 3.1 + seed) * Math.cos(n.y * 2.6 + seed * 1.4) * 0.5 +
+      Math.sin(n.z * 4.3 + seed * 0.6) * Math.cos(n.x * 1.9 - seed) * 0.5
+    const s = size * (1 + noise * 0.32)
+    v.copy(n).multiplyScalar(s)
+    position.setXYZ(i, v.x, v.y, v.z)
+  }
+  position.needsUpdate = true
+  geometry.computeVertexNormals()
+  return geometry
 }
 
 class App {
   container: HTMLElement
   aspect: number
   onItemClick?: (index: number) => void
-  progress = { current: 0, target: 0, ease: 0.065 }
+  onActiveIndexChange?: (index: number) => void
+  progress = { current: 0, target: 0, ease: 0.08 }
   count: number
+  focusScaleAdjust = FOCUS_SCALE
+  activeIndex = -1
 
   renderer: THREE.WebGLRenderer
   scene = new THREE.Scene()
   camera: THREE.PerspectiveCamera
   saturnGroup = new THREE.Group()
-  cards: CardMesh[] = []
-  cardSpin: number[] = []
+  planetMesh!: THREE.Mesh
+  rocks: IndexedMesh[] = []
+  cards: IndexedMesh[] = []
+  rockSpin: number[] = []
   focusFactors: number[] = []
   debris: { mesh: THREE.Mesh; spin: THREE.Vector3 }[] = []
   raycaster = new THREE.Raycaster()
   pointerNdc = new THREE.Vector2()
 
-  // Scratch objects reused every frame to avoid per-card GC churn.
+  // Scratch objects reused every frame to avoid per-item GC churn.
   _ringPos = new THREE.Vector3()
+  _localPos = new THREE.Vector3()
   _focusLocal = new THREE.Vector3()
   _ringQuat = new THREE.Quaternion()
+  _itemQuat = new THREE.Quaternion()
   _ringEuler = new THREE.Euler()
   _focusQuat = new THREE.Quaternion()
 
@@ -160,11 +191,20 @@ class App {
   boundOnHoverMove: (e: MouseEvent) => void
   boundOnKeyDown: (e: KeyboardEvent) => void
 
-  constructor(container: HTMLElement, items: GalleryItem[], aspect: number, borderRadius: number, scrollEase: number, onItemClick?: (index: number) => void) {
+  constructor(
+    container: HTMLElement,
+    items: GalleryItem[],
+    aspect: number,
+    borderRadius: number,
+    swipeEase: number,
+    onItemClick?: (index: number) => void,
+    onActiveIndexChange?: (index: number) => void
+  ) {
     this.container = container
     this.aspect = aspect
-    this.progress.ease = scrollEase
+    this.progress.ease = swipeEase
     this.onItemClick = onItemClick
+    this.onActiveIndexChange = onActiveIndexChange
     this.count = items.length
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
@@ -172,13 +212,13 @@ class App {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     container.appendChild(this.renderer.domElement)
 
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100)
+    this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 100)
     this.camera.position.set(0, 0, CAMERA_Z)
 
     this.buildSaturn()
     this.buildStarfield()
     this.buildLights()
-    this.buildCards(items, aspect, borderRadius)
+    this.buildItems(items, aspect, borderRadius)
     this.buildDebris()
     this.onResize()
 
@@ -209,11 +249,11 @@ class App {
     const loader = new THREE.TextureLoader()
     const planetTex = loader.load('/textures/saturn.jpg')
     planetTex.colorSpace = THREE.SRGBColorSpace
-    const sphere = new THREE.Mesh(
+    this.planetMesh = new THREE.Mesh(
       new THREE.SphereGeometry(PLANET_RADIUS, 48, 48),
       new THREE.MeshStandardMaterial({ map: planetTex, roughness: 1, metalness: 0 })
     )
-    this.saturnGroup.add(sphere)
+    this.saturnGroup.add(this.planetMesh)
 
     const ringTex = loader.load('/textures/saturn-ring.png')
     ringTex.colorSpace = THREE.SRGBColorSpace
@@ -259,14 +299,28 @@ class App {
     this.scene.add(new THREE.AmbientLight(0x404050, 0.65))
   }
 
-  buildCards(items: GalleryItem[], aspect: number, borderRadius: number) {
+  buildItems(items: GalleryItem[], aspect: number, borderRadius: number) {
     const height = CARD_HEIGHT
     const width = height * aspect
-    const geometry = new THREE.PlaneGeometry(width, height)
+    const cardGeometry = new THREE.PlaneGeometry(width, height)
     const loader = new THREE.TextureLoader()
 
-    this.cards = items.map((item, index) => {
-      const material = new THREE.ShaderMaterial({
+    items.forEach((item, index) => {
+      // Meteorite: unique lumpy shape and size per project.
+      const rockSize = 0.5 + ((index * 0.618033) % 1) * 0.4
+      const rockGeometry = createRockGeometry(index * 7.13 + 1.7, rockSize)
+      const rockMaterial = new THREE.MeshStandardMaterial({
+        color: new THREE.Color().setHSL(0.08 + ((index * 0.21) % 1) * 0.05, 0.2, 0.42),
+        roughness: 0.85,
+        metalness: 0.08,
+      })
+      const rock = new THREE.Mesh(rockGeometry, rockMaterial) as IndexedMesh
+      rock.userData.index = index
+      this.saturnGroup.add(rock)
+      this.rocks.push(rock)
+
+      // Preview card: what the meteorite unfolds into near focus.
+      const cardMaterial = new THREE.ShaderMaterial({
         vertexShader: CARD_VERTEX,
         fragmentShader: CARD_FRAGMENT,
         uniforms: {
@@ -276,23 +330,20 @@ class App {
           uBorderRadius: { value: borderRadius },
         },
       })
-      const mesh = new THREE.Mesh(geometry, material) as CardMesh
-      mesh.userData.index = index
-      // Parented to saturnGroup (not the scene) so a card riding on the ring
-      // inherits the group's tilt and slow spin for free — it's genuinely
-      // orbiting with the ring, not faking it.
-      this.saturnGroup.add(mesh)
+      const card = new THREE.Mesh(cardGeometry, cardMaterial) as IndexedMesh
+      card.userData.index = index
+      this.saturnGroup.add(card)
+      this.cards.push(card)
 
       loader.load(item.image, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace
-        material.uniforms.uMap.value = tex
-        material.uniforms.uImageSize.value.set(tex.image.width, tex.image.height)
+        cardMaterial.uniforms.uMap.value = tex
+        cardMaterial.uniforms.uImageSize.value.set(tex.image.width, tex.image.height)
       })
-
-      return mesh
     })
-    this.focusFactors = new Array(this.cards.length).fill(0)
-    this.cardSpin = new Array(this.cards.length).fill(0)
+
+    this.focusFactors = new Array(this.count).fill(0)
+    this.rockSpin = new Array(this.count).fill(0)
   }
 
   buildDebris() {
@@ -319,19 +370,22 @@ class App {
     }
   }
 
-  getMaxProgress() {
-    return this.count > 1 ? (this.count - 1) / this.count : 0
-  }
-
-  setProgress(progress: number) {
-    this.progress.target = clamp(progress, 0, 1) * this.getMaxProgress()
+  // Brings `index` to focus via the shortest direction around the loop.
+  goTo(index: number) {
+    if (this.count < 1) return
+    const step = 1 / this.count
+    const targetFrac = wrap01(index * step)
+    const currentFrac = wrap01(this.progress.target)
+    let delta = targetFrac - currentFrac
+    if (delta > 0.5) delta -= 1
+    if (delta < -0.5) delta += 1
+    this.progress.target += delta
   }
 
   onCheck() {
-    if (this.count < 2) return
+    if (this.count < 1) return
     const step = 1 / this.count
-    const index = Math.round(this.progress.target / step)
-    this.progress.target = clamp(index * step, 0, this.getMaxProgress())
+    this.progress.target = Math.round(this.progress.target / step) * step
   }
 
   hitTest(clientX: number, clientY: number): number | null {
@@ -339,10 +393,12 @@ class App {
     this.pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1
     this.pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1
     this.raycaster.setFromCamera(this.pointerNdc, this.camera)
-    const candidates = this.cards.filter((_, i) => this.focusFactors[i] > CLICKABLE_FOCUS)
+    const candidates: THREE.Object3D[] = [...this.rocks, ...this.cards, this.planetMesh]
     const hits = this.raycaster.intersectObjects(candidates, false)
     if (hits.length === 0) return null
-    return (hits[0].object as CardMesh).userData.index as number
+    const nearest = hits[0].object
+    if (nearest === this.planetMesh) return null // the planet occludes whatever's behind it
+    return (nearest as IndexedMesh).userData.index
   }
 
   onTouchDown(e: MouseEvent | TouchEvent) {
@@ -362,7 +418,7 @@ class App {
     if (Math.abs(x - this.pointerDownX) > 6) this.hasDragged = true
     const dx = this.pointerDownX - x
     const delta = (dx / this.container.clientWidth) * (1 / this.count) * 1.6
-    this.progress.target = clamp(this.dragStartProgress + delta, 0, this.getMaxProgress())
+    this.progress.target = this.dragStartProgress + delta
   }
 
   onTouchUp(e: MouseEvent | TouchEvent) {
@@ -370,7 +426,10 @@ class App {
     const isQuickTap = !this.hasDragged && performance.now() - this.pointerDownTime < 500
     if (isQuickTap) {
       const index = this.hitTest(this.pointerDownX, this.pointerDownY)
-      if (index !== null) this.onItemClick?.(index)
+      if (index !== null) {
+        if (index === this.activeIndex) this.onItemClick?.(index)
+        else this.goTo(index)
+      }
     }
     this.onCheck()
   }
@@ -385,10 +444,10 @@ class App {
     const step = 1 / this.count
     if (e.key === 'ArrowRight') {
       e.preventDefault()
-      this.progress.target = clamp(this.progress.target + step, 0, this.getMaxProgress())
+      this.progress.target += step
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault()
-      this.progress.target = clamp(this.progress.target - step, 0, this.getMaxProgress())
+      this.progress.target -= step
     }
   }
 
@@ -398,6 +457,17 @@ class App {
     this.renderer.setSize(width, height)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
+
+    // Shrink the unfolded card's target scale so it never overflows a
+    // narrow/portrait (mobile) viewport, while staying at full size on wide
+    // desktop screens.
+    const distance = CAMERA_Z - FOCUS_WORLD.z
+    const vFov = THREE.MathUtils.degToRad(this.camera.fov)
+    const visibleHeight = 2 * Math.tan(vFov / 2) * distance
+    const visibleWidth = visibleHeight * this.camera.aspect
+    const cardWorldWidth = CARD_HEIGHT * this.aspect
+    const maxAllowed = visibleWidth * MAX_VIEWPORT_WIDTH_FRACTION
+    this.focusScaleAdjust = Math.min(FOCUS_SCALE, (maxAllowed / cardWorldWidth) * FOCUS_SCALE)
   }
 
   update() {
@@ -408,32 +478,52 @@ class App {
 
     // The world-space focus point, expressed in the group's CURRENT local
     // space — recomputed every frame since the group keeps spinning, so a
-    // lifted-off card stays pinned in front of the camera regardless of
+    // lifted-off item stays pinned in front of the camera regardless of
     // where the ring has rotated to underneath it.
     this._focusLocal.copy(FOCUS_WORLD)
     this.saturnGroup.worldToLocal(this._focusLocal)
     this._focusQuat.copy(this.saturnGroup.quaternion).invert()
 
-    for (let i = 0; i < this.cards.length; i++) {
+    let bestIndex = 0
+    let bestFocus = -1
+
+    for (let i = 0; i < this.count; i++) {
       const t = wrap01(masterT - i / this.count)
       const theta = t * Math.PI * 2
       const liftDist = Math.min(t, 1 - t)
       const lift = smoothstep(LIFT_WINDOW, 0, liftDist)
       this.focusFactors[i] = lift
+      if (lift > bestFocus) {
+        bestFocus = lift
+        bestIndex = i
+      }
 
-      this.cardSpin[i] += CARD_SPIN_SPEED * (1 - lift)
+      this.rockSpin[i] += ROCK_SPIN_SPEED * (1 - lift)
 
       // Flat on the ring plane (local XZ, matching the ring mesh's own
-      // orientation) — this is where the card spends most of its loop,
+      // orientation) — where the meteorite spends most of its loop,
       // genuinely riding the ring rather than approximating it.
-      this._ringPos.set(CARD_ORBIT_RADIUS * Math.sin(theta), 0, CARD_ORBIT_RADIUS * Math.cos(theta))
-      this._ringEuler.set(-Math.PI / 2, -theta + this.cardSpin[i], 0)
+      this._ringPos.set(ITEM_ORBIT_RADIUS * Math.sin(theta), 0, ITEM_ORBIT_RADIUS * Math.cos(theta))
+      this._ringEuler.set(-Math.PI / 2, -theta + this.rockSpin[i], 0)
       this._ringQuat.setFromEuler(this._ringEuler)
 
-      const mesh = this.cards[i]
-      mesh.position.copy(this._ringPos).lerp(this._focusLocal, lift)
-      mesh.quaternion.slerpQuaternions(this._ringQuat, this._focusQuat, lift)
-      mesh.scale.setScalar(RING_RIDE_SCALE + (FOCUS_SCALE - RING_RIDE_SCALE) * lift)
+      this._localPos.copy(this._ringPos).lerp(this._focusLocal, lift)
+      this._itemQuat.slerpQuaternions(this._ringQuat, this._focusQuat, lift)
+
+      const rock = this.rocks[i]
+      rock.position.copy(this._localPos)
+      rock.quaternion.copy(this._itemQuat)
+      rock.scale.setScalar(1 - lift)
+
+      const card = this.cards[i]
+      card.position.copy(this._localPos)
+      card.quaternion.copy(this._itemQuat)
+      card.scale.setScalar(this.focusScaleAdjust * lift)
+    }
+
+    if (bestIndex !== this.activeIndex) {
+      this.activeIndex = bestIndex
+      this.onActiveIndexChange?.(bestIndex)
     }
 
     for (const d of this.debris) {
@@ -474,36 +564,46 @@ class App {
 }
 
 const SaturnGallery = forwardRef<SaturnGalleryHandle, SaturnGalleryProps>(function SaturnGallery(
-  { items, aspect = 16 / 9, borderRadius = 0.04, scrollEase = 0.065, onItemClick },
+  { items, aspect = 16 / 9, borderRadius = 0.04, swipeEase = 0.08, onItemClick, onActiveIndexChange },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<App | null>(null)
   const onItemClickRef = useRef(onItemClick)
   onItemClickRef.current = onItemClick
+  const onActiveIndexChangeRef = useRef(onActiveIndexChange)
+  onActiveIndexChangeRef.current = onActiveIndexChange
 
   useImperativeHandle(ref, () => ({
-    setProgress: (progress: number) => appRef.current?.setProgress(progress),
+    goTo: (index: number) => appRef.current?.goTo(index),
   }), [])
 
   useEffect(() => {
     if (!containerRef.current) return
-    const app = new App(containerRef.current, items, aspect, borderRadius, scrollEase, (index) => onItemClickRef.current?.(index))
+    const app = new App(
+      containerRef.current,
+      items,
+      aspect,
+      borderRadius,
+      swipeEase,
+      (index) => onItemClickRef.current?.(index),
+      (index) => onActiveIndexChangeRef.current?.(index)
+    )
     appRef.current = app
     return () => {
       app.destroy()
       appRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, aspect, borderRadius, scrollEase])
+  }, [items, aspect, borderRadius, swipeEase])
 
   return (
     <div
       ref={containerRef}
-      className="h-full w-full cursor-grab outline-none active:cursor-grabbing"
+      className="h-full w-full cursor-grab touch-pan-y outline-none active:cursor-grabbing"
       tabIndex={0}
       role="region"
-      aria-label="Project gallery. Scroll to move through projects, click a card to view details."
+      aria-label="Project gallery. Swipe left or right to spin through projects, tap the focused one to view details."
     />
   )
 })

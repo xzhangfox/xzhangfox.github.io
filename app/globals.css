@@ -25,12 +25,18 @@
 
 html {
   scroll-behavior: smooth;
+  /* Stops the mobile rubber-band bounce on horizontal swipes — without this,
+     a left/right gesture can nudge the whole viewport sideways for a frame,
+     and the fixed video/particle background behind the page content briefly
+     shows through the gap before it snaps back. */
+  overscroll-behavior-x: none;
 }
 
 body {
   background: #0A0A0A;
   color: white;
   overflow-x: hidden;
+  overscroll-behavior-x: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
