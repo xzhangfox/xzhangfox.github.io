@@ -88,23 +88,32 @@ function findPlanetId(obj: THREE.Object3D | null): string | undefined {
 }
 
 // --- Scene layout --------------------------------------------------------
-// The overview is a top-down(-ish) shot of the whole system, Sun at the
-// center, every planet on its own continuously-revolving orbit (thin ring
-// lines mark each path) — the Moon's own orbit is around Earth's current
-// position, not the Sun's. Entering a planet (click its mesh, or its
-// top-left badge) eases the camera onto `planet.position + CAMERA_OFFSET`
-// with a fixed, unrotated orientation and keeps tracking it live as it
-// keeps slowly orbiting. Only THEN do that planet's own craft become
-// visible, idly riding its ring/orbit — clicking one flies it up to a fixed
+// The overview is a true top-down shot of the whole system, Sun at the
+// center, every planet on its own continuously-revolving circular orbit
+// (thin ring lines mark each path) — the Moon's own orbit is around Earth's
+// current position, not the Sun's. Entering a planet (click its mesh, or
+// its top-left badge) hides every other planet and eases the camera onto
+// `planet.position + planet.cameraOffset()` (scaled per-planet so every
+// planet fills the same apparent size once entered, regardless of its real
+// radius) with a fixed, unrotated orientation, tracking it live as it keeps
+// slowly orbiting. Only THEN do that planet's own craft become visible,
+// idly riding its ring/orbit — clicking one flies it up to a fixed
 // on-screen focus spot and projects its holographic preview; nothing is
 // auto-selected on entry.
 const CAMERA_FOV = 45
 // Deltas from a focused planet's own group position to the camera/focus/
-// craft-parking spots — unchanged from the original single-Saturn scene so
-// its close-up framing stays pixel-identical.
-const CAMERA_OFFSET = new THREE.Vector3(0, 1, 24)
-const FOCUS_OFFSET = new THREE.Vector3(0, 1, 18)
-const CRAFT_FOCUS_OFFSET = new THREE.Vector3(0, 1, 16.6)
+// craft-parking spots, AT Saturn's own scale (the original single-Saturn
+// scene's exact values, so Saturn's close-up framing stays pixel-identical).
+// Every other planet's actual offsets are these scaled by its own
+// `viewScale` (see PlanetInstance) so every planet fills the same apparent
+// size once entered, regardless of its real radius.
+const BASE_CAMERA_OFFSET = new THREE.Vector3(0, 1, 24)
+const BASE_FOCUS_OFFSET = new THREE.Vector3(0, 1, 18)
+const BASE_CRAFT_FOCUS_OFFSET = new THREE.Vector3(0, 1, 16.6)
+// Saturn's own bare radius (its ring is a bonus on top, not counted) — the
+// reference every other planet's `viewScale` is computed against, so every
+// planet's actual sphere reads at the same apparent size once entered.
+const REFERENCE_RADIUS = 3.2
 const UNIT_Z = new THREE.Vector3(0, 0, 1)
 const IDENTITY_QUAT = new THREE.Quaternion()
 const ORIGIN = new THREE.Vector3(0, 0, 0)
@@ -132,6 +141,10 @@ const CRAFT_SCALE_NEAR = 1.35
 // slower than drag-follow so the craft's full flight is visible rather than
 // snapping straight to the next item.
 const GOTO_EASE = 0.032
+// Per-frame step for the screen's own reveal timer, independent of
+// GOTO_EASE — reaches 1 in ~20 frames (~0.33s) once the plane has formed,
+// so the "flickering to life" moment always resolves quickly.
+const REVEAL_TIMER_STEP = 1 / 20
 
 const SCREEN_HEIGHT = 3.4
 const FOCUS_SCALE = 1.05
@@ -144,9 +157,16 @@ const MAX_VIEWPORT_WIDTH_FRACTION = 0.84
 const ENTER_SECONDS = 1.6
 const LEAVE_SECONDS = 1.3
 
-// Overview framing.
-const OVERVIEW_ELEVATION_DEG = 58
+// Overview framing — a true top-down shot (camera directly above the Sun,
+// looking straight down) so every orbit, which is geometrically a circle in
+// the XZ plane, actually reads as a circle rather than being foreshortened
+// into an ellipse by a tilted viewing angle.
 const OVERVIEW_MARGIN = 1.35
+// Looking straight down (-Y) makes the default (0,1,0) up-vector parallel
+// to the view direction, which is a degenerate/undefined case for
+// Object3D.lookAt(). Using world -Z as "up on screen" instead keeps the
+// orientation well-defined and gives a conventional top-down map layout.
+const OVERVIEW_UP = new THREE.Vector3(0, 0, -1)
 
 const SCREEN_VERTEX = `
   varying vec2 vUv;
@@ -366,6 +386,7 @@ class PlanetInstance {
   lasers: THREE.Mesh[] = []
   craftSpin: number[] = []
   focusFactors: number[] = []
+  revealTimer: number[] = []
   itemOrbitRadius = 0
 
   progress = { current: 0.5, target: 0.5, ease: 0.08 }
@@ -387,11 +408,30 @@ class PlanetInstance {
   _ringEuler = new THREE.Euler()
   _focusQuat = new THREE.Quaternion()
   _focusWorldScratch = new THREE.Vector3()
+  _cameraOffsetScratch = new THREE.Vector3()
+  _focusOffsetScratch = new THREE.Vector3()
+  _craftFocusOffsetScratch = new THREE.Vector3()
+
+  cameraOffset(): THREE.Vector3 {
+    return this._cameraOffsetScratch.copy(BASE_CAMERA_OFFSET).multiplyScalar(this.viewScale)
+  }
+  focusOffset(): THREE.Vector3 {
+    return this._focusOffsetScratch.copy(BASE_FOCUS_OFFSET).multiplyScalar(this.viewScale)
+  }
+  craftFocusOffset(): THREE.Vector3 {
+    return this._craftFocusOffsetScratch.copy(BASE_CRAFT_FOCUS_OFFSET).multiplyScalar(this.viewScale)
+  }
 
   // Set by the App before calling activeUpdate — a shared, resize-driven
   // scale factor (same for every planet since the camera/focus geometry is
   // identical everywhere).
   _focusScaleAdjustRef: { value: number } | null = null
+
+  /** Scales the camera/focus/craft-parking offsets and the hologram screen
+   *  so every planet fills the same apparent size once entered and its
+   *  screen reads at the same size, regardless of its real radius. 1 for
+   *  Saturn itself (the reference). */
+  viewScale: number
 
   constructor(site: PlanetSite, scene: THREE.Scene, aspect: number, borderRadius: number, swipeEase: number, seedIndex: number) {
     this.site = site
@@ -399,6 +439,7 @@ class PlanetInstance {
     this.count = site.items?.length ?? 0
     this.progress.ease = swipeEase
     this.orbitAngle = site.orbitPhase ?? seedIndex * 2.399963 // golden-angle-ish spread
+    this.viewScale = site.radius / REFERENCE_RADIUS
 
     scene.add(this.group)
     this.group.userData.planetId = site.id
@@ -538,6 +579,7 @@ class PlanetInstance {
 
     this.focusFactors = new Array(this.count).fill(0)
     this.craftSpin = new Array(this.count).fill(0)
+    this.revealTimer = new Array(this.count).fill(0)
   }
 
   advanceOrbit(parentPos: THREE.Vector3) {
@@ -566,6 +608,14 @@ class PlanetInstance {
       this.screens.forEach((s) => (s.visible = false))
       this.lasers.forEach((l) => (l.visible = false))
     }
+  }
+
+  // Hides the planet itself (mesh/ring/debris, all children of `group`) and
+  // its orbit line — used so entering one planet hides every other one
+  // (including, once close up, its own now-enormous-looking orbit ring).
+  setSceneVisible(visible: boolean) {
+    this.group.visible = visible
+    if (this.orbitLine) this.orbitLine.visible = visible
   }
 
   // Brings local `index` to focus via the shortest direction around the
@@ -631,7 +681,7 @@ class PlanetInstance {
     const masterT = this.progress.current
 
     this.group.updateMatrixWorld()
-    this._craftFocusLocal.copy(this.group.position).add(CRAFT_FOCUS_OFFSET)
+    this._craftFocusLocal.copy(this.group.position).add(this.craftFocusOffset())
     this.group.worldToLocal(this._craftFocusLocal)
     this._focusQuat.copy(this.group.quaternion).invert()
 
@@ -655,6 +705,7 @@ class PlanetInstance {
         this._idlePosition(i, t, time)
         this.screens[i].visible = false
         this.lasers[i].visible = false
+        this.revealTimer[i] = 0 // fully departed — next approach starts its reveal fresh
         continue
       }
 
@@ -671,14 +722,14 @@ class PlanetInstance {
       const craft = this.crafts[i]
       craft.position.copy(this._localPos)
       craft.quaternion.copy(this._itemQuat)
-      craft.scale.setScalar(CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * craftMoveK)
+      craft.scale.setScalar((CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * craftMoveK) * this.viewScale)
       const halo = this.crewHalos[i]
       ;(halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - craftMoveK)
 
       const laserGrow = approaching ? smoothstep(0.3, 0.38, lift) : 0
       const laserVisibility = approaching ? smoothstep(0.3, 0.34, lift) * (1 - smoothstep(0.66, 0.74, lift)) : 0
       const laser = this.lasers[i]
-      const focusWorld = this._focusWorldScratch.copy(this.group.position).add(FOCUS_OFFSET)
+      const focusWorld = this._focusWorldScratch.copy(this.group.position).add(this.focusOffset())
       if (laserVisibility > 0.01) {
         this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
         const dist = this._craftWorldPos.distanceTo(focusWorld)
@@ -692,7 +743,7 @@ class PlanetInstance {
         mat.opacity = 0.85 * laserVisibility * flicker
         laser.position.copy(this._craftWorldPos)
         laser.quaternion.copy(this._laserQuat)
-        laser.scale.set(1, 1, dist * laserGrow)
+        laser.scale.set(this.viewScale, this.viewScale, dist * laserGrow)
       } else {
         laser.visible = false
       }
@@ -703,24 +754,37 @@ class PlanetInstance {
       let scaleX: number
       let scaleY: number
       let glow: number
-      let reveal: number
       if (approaching) {
         scaleX = laserGrow
         scaleY = smoothstep(0.4, 0.5, lift)
         glow = 1 - smoothstep(0.5, 0.54, lift)
-        reveal = smoothstep(0.74, 0.88, lift)
       } else {
         scaleY = smoothstep(0, 0.62, lift)
         scaleX = smoothstep(0, 0.3, lift)
         glow = 0
-        reveal = smoothstep(0.62, 0.82, lift)
       }
+
+      // The image reveal/flicker-out runs on its own fixed-duration timer
+      // once the plane has formed (glow drops), rather than tracking the
+      // raw approach/depart `lift` directly — `lift`'s own convergence
+      // speed depends on GOTO_EASE, which after the slower "watch the
+      // craft fly" tuning could take seconds to cross the reveal
+      // thresholds, stretching the intentional brief "static flickering to
+      // life" moment into something that reads as stuck flickering. A
+      // bounded timer guarantees the flicker always resolves quickly.
+      if (glow > 0.5) {
+        this.revealTimer[i] = 0
+      } else {
+        this.revealTimer[i] = Math.min(1, this.revealTimer[i] + REVEAL_TIMER_STEP)
+      }
+      const reveal = approaching ? this.revealTimer[i] : smoothstep(0.62, 0.82, lift)
+
       const focusScaleAdjust = this._focusScaleAdjustRef!.value
       screen.visible = true
       screen.position.copy(focusWorld)
       screen.scale.set(
-        Math.max(scaleX, 0.0001) * focusScaleAdjust,
-        Math.max(scaleY, 0.0001) * focusScaleAdjust,
+        Math.max(scaleX, 0.0001) * focusScaleAdjust * this.viewScale,
+        Math.max(scaleY, 0.0001) * focusScaleAdjust * this.viewScale,
         1
       )
       screenMat.uniforms.uGlow.value = glow
@@ -901,13 +965,7 @@ class App {
       if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) obj.frustumCulled = false
     })
 
-    this.computeOverviewFraming()
-    const scratch = new THREE.Object3D()
-    scratch.position.copy(this.overviewCameraPos)
-    scratch.lookAt(0, 0, 0)
-    this.overviewQuat.copy(scratch.quaternion)
-    this.camera.position.copy(this.overviewCameraPos)
-    this.camera.quaternion.copy(this.overviewQuat)
+    this.computeOverviewFraming() // also sets overviewQuat/camera since viewMode starts as 'overview'
 
     this.onResize()
 
@@ -942,20 +1000,24 @@ class App {
 
   _overviewExtent = 60
 
+  computeOverviewQuat(): THREE.Quaternion {
+    const scratch = new THREE.Object3D()
+    scratch.up.copy(OVERVIEW_UP)
+    scratch.position.copy(this.overviewCameraPos)
+    scratch.lookAt(0, 0, 0)
+    return scratch.quaternion
+  }
+
   updateOverviewDistance() {
     const aspect = Math.max(this.camera.aspect || 1, 0.5)
     const vFov = THREE.MathUtils.degToRad(CAMERA_FOV)
     const distForWidth = this._overviewExtent / (Math.tan(vFov / 2) * Math.min(aspect, 1))
     const distForHeight = this._overviewExtent / Math.tan(vFov / 2)
     const distance = Math.max(distForWidth, distForHeight, 50)
-    const elevRad = THREE.MathUtils.degToRad(OVERVIEW_ELEVATION_DEG)
-    this.overviewCameraPos.set(0, distance * Math.sin(elevRad), distance * Math.cos(elevRad))
+    this.overviewCameraPos.set(0, distance, 0)
     if (this.viewMode === 'overview') {
       this.camera.position.copy(this.overviewCameraPos)
-      const scratch = new THREE.Object3D()
-      scratch.position.copy(this.overviewCameraPos)
-      scratch.lookAt(0, 0, 0)
-      this.overviewQuat.copy(scratch.quaternion)
+      this.overviewQuat.copy(this.computeOverviewQuat())
       this.camera.quaternion.copy(this.overviewQuat)
     }
   }
@@ -1004,6 +1066,7 @@ class App {
     if (this.viewMode !== 'overview') return
     planet.resetSelection()
     planet.setCraftVisible(true)
+    for (const p of this.planets) p.setSceneVisible(p === planet)
     this.transition = {
       t: 0,
       duration: ENTER_SECONDS,
@@ -1017,6 +1080,7 @@ class App {
   leavePlanet() {
     if (this.viewMode !== 'planet' || !this.focusedPlanet) return
     this.focusedPlanet.setCraftVisible(false)
+    for (const p of this.planets) p.setSceneVisible(true)
     this.transition = {
       t: 0,
       duration: LEAVE_SECONDS,
@@ -1146,7 +1210,11 @@ class App {
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
 
-    const distance = CAMERA_OFFSET.z - FOCUS_OFFSET.z
+    // Computed at Saturn's own (reference, scale=1) distance — the ratio
+    // this produces is scale-invariant since every other planet's screen
+    // size and camera distance are scaled by the same `viewScale` factor,
+    // so one shared clamp is valid for all of them.
+    const distance = BASE_CAMERA_OFFSET.z - BASE_FOCUS_OFFSET.z
     const vFov = THREE.MathUtils.degToRad(this.camera.fov)
     const visibleHeight = 2 * Math.tan(vFov / 2) * distance
     const visibleWidth = visibleHeight * this.camera.aspect
@@ -1171,7 +1239,7 @@ class App {
       const localT = clamp(tr.t / tr.duration, 0, 1)
       const e = easeInOutCubic(localT)
       if (tr.toPlanet) {
-        this._toCamPosScratch.copy(tr.toPlanet.group.position).add(CAMERA_OFFSET)
+        this._toCamPosScratch.copy(tr.toPlanet.group.position).add(tr.toPlanet.cameraOffset())
         this.camera.position.lerpVectors(tr.fromPos, this._toCamPosScratch, e)
         this.camera.quaternion.slerpQuaternions(tr.fromQuat, IDENTITY_QUAT, e)
       } else {
@@ -1195,7 +1263,7 @@ class App {
         this.transition = null
       }
     } else if (this.viewMode === 'planet' && this.focusedPlanet) {
-      this.camera.position.copy(this.focusedPlanet.group.position).add(CAMERA_OFFSET)
+      this.camera.position.copy(this.focusedPlanet.group.position).add(this.focusedPlanet.cameraOffset())
       this.camera.quaternion.copy(IDENTITY_QUAT)
     }
 
