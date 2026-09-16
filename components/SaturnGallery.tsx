@@ -89,6 +89,11 @@ const DEPART_WINDOW = 0.06
 const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.35
 
+// Eased speed for a programmatic jump (arrow buttons, dots, keyboard) — much
+// slower than drag-follow so the craft's full flight around the ring is
+// visible rather than snapping straight to the next item.
+const GOTO_EASE = 0.032
+
 const SCREEN_HEIGHT = 3.4
 const FOCUS_SCALE = 1.05
 // Keep the screen's projected width within this fraction of the viewport,
@@ -262,6 +267,10 @@ class App {
   onItemClick?: (index: number) => void
   onActiveIndexChange?: (index: number) => void
   progress = { current: 0, target: 0, ease: 0.08 }
+  // Non-null while a programmatic (non-drag) jump is easing toward its
+  // target — overrides progress.ease so buttons/keyboard feel deliberate
+  // without slowing down drag-follow.
+  goToEaseActive = false
   count: number
   focusScaleAdjust = FOCUS_SCALE
   activeIndex = -1
@@ -505,6 +514,7 @@ class App {
     if (delta > 0.5) delta -= 1
     if (delta < -0.5) delta += 1
     this.progress.target += delta
+    this.goToEaseActive = true
   }
 
   onCheck() {
@@ -530,6 +540,7 @@ class App {
   onTouchDown(e: MouseEvent | TouchEvent) {
     this.isDown = true
     this.hasDragged = false
+    this.goToEaseActive = false
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
     this.pointerDownX = clientX
@@ -571,9 +582,11 @@ class App {
     if (e.key === 'ArrowRight') {
       e.preventDefault()
       this.progress.target += step
+      this.goToEaseActive = true
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault()
       this.progress.target -= step
+      this.goToEaseActive = true
     }
   }
 
@@ -598,7 +611,11 @@ class App {
 
   update() {
     this.time += 0.016
-    this.progress.current += (this.progress.target - this.progress.current) * this.progress.ease
+    const ease = this.goToEaseActive ? GOTO_EASE : this.progress.ease
+    this.progress.current += (this.progress.target - this.progress.current) * ease
+    if (this.goToEaseActive && Math.abs(this.progress.target - this.progress.current) < 0.0005) {
+      this.goToEaseActive = false
+    }
     const masterT = this.progress.current
 
     this.saturnGroup.rotation.y += GROUP_SPIN_SPEED
