@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import FadeIn from './FadeIn'
-import CircularGallery, { type CircularGalleryHandle, type GalleryItem } from './CircularGallery'
+import SaturnGallery, { type SaturnGalleryHandle, type GalleryItem } from './SaturnGallery'
 import ProjectPreviewModal, { type PreviewProject } from './ProjectPreviewModal'
 import { projects } from '@/lib/data'
 import { useLanguage } from '@/lib/i18n'
@@ -14,7 +14,7 @@ import { useLanguage } from '@/lib/i18n'
 const VH_PER_TRANSITION = 65
 
 // Static (language-independent) and module-level so it never changes identity
-// across renders — CircularGallery tears down and rebuilds its whole WebGL
+// across renders — SaturnGallery tears down and rebuilds its whole WebGL
 // scene whenever `items` changes identity, which would otherwise happen on
 // every scroll-driven re-render.
 const GALLERY_ITEMS: GalleryItem[] = projects.map((p) => ({ image: p.image }))
@@ -27,7 +27,7 @@ export default function Projects() {
 
   const [activeIndex, setActiveIndex] = useState(0)
   const pinRef = useRef<HTMLDivElement>(null)
-  const galleryRef = useRef<CircularGalleryHandle>(null)
+  const galleryRef = useRef<SaturnGalleryHandle>(null)
 
   const handleItemClick = useCallback(
     (index: number) => {
@@ -92,12 +92,10 @@ export default function Projects() {
           <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-bg to-transparent" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-20 bg-gradient-to-t from-bg to-transparent" />
 
-          <CircularGallery
+          <SaturnGallery
             ref={galleryRef}
             items={GALLERY_ITEMS}
-            bend={6}
             borderRadius={0.04}
-            scrollSpeed={2}
             scrollEase={0.065}
             aspect={16 / 9}
             onItemClick={handleItemClick}
@@ -118,6 +116,10 @@ export default function Projects() {
               )
             })}
           </div>
+
+          <p className="pointer-events-none absolute bottom-2 right-3 z-10 text-[9px] text-white/15">
+            Saturn textures © Solar System Scope, CC BY 4.0
+          </p>
         </div>
       </div>
 
