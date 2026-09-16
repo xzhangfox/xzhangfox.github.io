@@ -13,116 +13,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-function autoBind(instance: any): void {
-  const proto = Object.getPrototypeOf(instance)
-  Object.getOwnPropertyNames(proto).forEach((key) => {
-    if (key !== 'constructor' && typeof instance[key] === 'function') {
-      instance[key] = instance[key].bind(instance)
-    }
-  })
-}
-
-function getFontSize(font: string): number {
-  const match = font.match(/(\d+)px/)
-  return match ? parseInt(match[1], 10) : 22
-}
-
-function createTextTexture(
-  gl: GL,
-  text: string,
-  font: string,
-  color: string
-): { texture: Texture; width: number; height: number } {
-  const canvas = document.createElement('canvas')
-  const context = canvas.getContext('2d')
-  if (!context) throw new Error('Could not get 2d context')
-
-  context.font = font
-  const metrics = context.measureText(text)
-  const textWidth = Math.ceil(metrics.width)
-  const fontSize = getFontSize(font)
-  const textHeight = Math.ceil(fontSize * 1.3)
-
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
-  canvas.width = (textWidth + 24) * dpr
-  canvas.height = (textHeight + 16) * dpr
-  context.scale(dpr, dpr)
-
-  context.font = font
-  context.fillStyle = color
-  context.textBaseline = 'middle'
-  context.textAlign = 'center'
-  context.clearRect(0, 0, canvas.width, canvas.height)
-  context.fillText(text, (textWidth + 24) / 2, (textHeight + 16) / 2)
-
-  const texture = new Texture(gl, { generateMipmaps: false })
-  texture.image = canvas
-  return { texture, width: textWidth + 24, height: textHeight + 16 }
-}
-
-interface TitleProps {
-  gl: GL
-  plane: Mesh
-  text: string
-  textColor: string
-  font: string
-}
-
-class Title {
-  gl: GL
-  plane: Mesh
-  text: string
-  textColor: string
-  font: string
-  mesh!: Mesh
-
-  constructor({ gl, plane, text, textColor, font }: TitleProps) {
-    autoBind(this)
-    this.gl = gl
-    this.plane = plane
-    this.text = text
-    this.textColor = textColor
-    this.font = font
-    this.createMesh()
-  }
-
-  createMesh() {
-    const { texture, width, height } = createTextTexture(this.gl, this.text, this.font, this.textColor)
-    const geometry = new Plane(this.gl)
-    const program = new Program(this.gl, {
-      vertex: `
-        attribute vec3 position;
-        attribute vec2 uv;
-        uniform mat4 modelViewMatrix;
-        uniform mat4 projectionMatrix;
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragment: `
-        precision highp float;
-        uniform sampler2D tMap;
-        varying vec2 vUv;
-        void main() {
-          vec4 color = texture2D(tMap, vUv);
-          if (color.a < 0.1) discard;
-          gl_FragColor = color;
-        }
-      `,
-      uniforms: { tMap: { value: texture } },
-      transparent: true,
-    })
-    this.mesh = new Mesh(this.gl, { geometry, program })
-    const aspect = width / height
-    const textHeightScaled = this.plane.scale.y * 0.09
-    const textWidthScaled = textHeightScaled * aspect
-    this.mesh.scale.set(textWidthScaled, textHeightScaled, 1)
-    this.mesh.position.y = -this.plane.scale.y * 0.5 - textHeightScaled * 0.9
-    this.mesh.setParent(this.plane)
-  }
-}
+// How a card's "bend" displacement (see Media.update) splits across axes to
+// read as a tilted, receding ring rather than a flat vertical arc: mostly
+// depth (cards curl back and shrink toward the edges, like the far side of a
+// ring), a little vertical lift (keeps the ellipse tilt readable), and a
+// yaw/roll so cards bank to face along the ring's tangent.
+const RING_DEPTH_RATIO = 0.85
+const RING_YAW_RATIO = 0.8
+const RING_ROLL_RATIO = 0.35
 
 interface ScreenSize {
   width: number
@@ -136,7 +34,6 @@ interface Viewport {
 
 export interface GalleryItem {
   image: string
-  title: string
 }
 
 interface MediaProps {
@@ -147,12 +44,9 @@ interface MediaProps {
   length: number
   scene: Transform
   screen: ScreenSize
-  text: string
   viewport: Viewport
   bend: number
-  textColor: string
   borderRadius: number
-  font: string
   aspect: number
 }
 
@@ -164,16 +58,12 @@ class Media {
   length: number
   scene: Transform
   screen: ScreenSize
-  text: string
   viewport: Viewport
   bend: number
-  textColor: string
   borderRadius: number
-  font: string
   aspect: number
   program!: Program
   plane!: Mesh
-  title!: Title
   width!: number
   padding!: number
   x!: number
@@ -181,7 +71,7 @@ class Media {
   isBefore: boolean = false
   isAfter: boolean = false
 
-  constructor({ geometry, gl, image, index, length, scene, screen, text, viewport, bend, textColor, borderRadius, font, aspect }: MediaProps) {
+  constructor({ geometry, gl, image, index, length, scene, screen, viewport, bend, borderRadius, aspect }: MediaProps) {
     this.geometry = geometry
     this.gl = gl
     this.image = image
@@ -189,16 +79,12 @@ class Media {
     this.length = length
     this.scene = scene
     this.screen = screen
-    this.text = text
     this.viewport = viewport
     this.bend = bend
-    this.textColor = textColor
     this.borderRadius = borderRadius
-    this.font = font
     this.aspect = aspect
     this.createShader()
     this.createMesh()
-    this.createTitle()
     this.onResize()
   }
 
@@ -280,10 +166,6 @@ class Media {
     this.plane.setParent(this.scene)
   }
 
-  createTitle() {
-    this.title = new Title({ gl: this.gl, plane: this.plane, text: this.text, textColor: this.textColor, font: this.font })
-  }
-
   update(scroll: { current: number; last: number }) {
     this.plane.position.x = this.x - scroll.current
 
@@ -292,19 +174,24 @@ class Media {
 
     if (this.bend === 0) {
       this.plane.position.y = 0
-      this.plane.rotation.z = 0
+      this.plane.position.z = 0
+      this.plane.rotation.set(0, 0, 0)
     } else {
       const B_abs = Math.abs(this.bend)
       const R = (H * H + B_abs * B_abs) / (2 * B_abs)
       const effectiveX = Math.min(Math.abs(x), H)
+      const theta = Math.asin(effectiveX / R)
       const arc = R - Math.sqrt(R * R - effectiveX * effectiveX)
-      if (this.bend > 0) {
-        this.plane.position.y = -arc
-        this.plane.rotation.z = -Math.sign(x) * Math.asin(effectiveX / R)
-      } else {
-        this.plane.position.y = arc
-        this.plane.rotation.z = Math.sign(x) * Math.asin(effectiveX / R)
-      }
+      const dir = this.bend > 0 ? -1 : 1
+
+      // Saturn-ring feel: most of the curvature sweeps cards back in depth
+      // (like the far side of a ring curling away) rather than straight up
+      // or down, with a small vertical lift so the ring still reads as
+      // tilted, plus a yaw so cards bank to follow the ring's tangent.
+      this.plane.position.z = dir * arc * RING_DEPTH_RATIO
+      this.plane.position.y = dir * arc * (1 - RING_DEPTH_RATIO)
+      this.plane.rotation.y = -Math.sign(x) * theta * RING_YAW_RATIO
+      this.plane.rotation.z = dir * Math.sign(x) * theta * RING_ROLL_RATIO
     }
 
     this.speed = scroll.current - scroll.last
@@ -341,9 +228,7 @@ class Media {
 interface AppConfig {
   items: GalleryItem[]
   bend: number
-  textColor: string
   borderRadius: number
-  font: string
   scrollSpeed: number
   scrollEase: number
   aspect: number
@@ -381,7 +266,7 @@ class App {
   pointerDownY: number = 0
   pointerDownTime: number = 0
 
-  constructor(container: HTMLElement, { items, bend, textColor, borderRadius, font, scrollSpeed, scrollEase, aspect, onItemClick }: AppConfig) {
+  constructor(container: HTMLElement, { items, bend, borderRadius, scrollSpeed, scrollEase, aspect, onItemClick }: AppConfig) {
     this.container = container
     this.scrollSpeed = scrollSpeed
     this.aspect = aspect
@@ -392,7 +277,7 @@ class App {
     this.createScene()
     this.onResize()
     this.createGeometry()
-    this.createMedias(items, bend, textColor, borderRadius, font)
+    this.createMedias(items, bend, borderRadius)
     this.update()
     this.addEventListeners()
   }
@@ -426,7 +311,7 @@ class App {
     this.planeGeometry = new Plane(this.gl, { heightSegments: 50, widthSegments: 100 })
   }
 
-  createMedias(items: GalleryItem[], bend: number, textColor: string, borderRadius: number, font: string) {
+  createMedias(items: GalleryItem[], bend: number, borderRadius: number) {
     this.items = items
     this.medias = items.map((data, index) => {
       return new Media({
@@ -437,12 +322,9 @@ class App {
         length: items.length,
         scene: this.scene,
         screen: this.screen,
-        text: data.title,
         viewport: this.viewport,
         bend,
-        textColor,
         borderRadius,
-        font,
         aspect: this.aspect,
       })
     })
@@ -596,10 +478,9 @@ export interface CircularGalleryHandle {
 
 interface CircularGalleryProps {
   items: GalleryItem[]
+  /** Overall curvature magnitude, in world units — how far edge cards sweep into depth/tilt. */
   bend?: number
-  textColor?: string
   borderRadius?: number
-  font?: string
   scrollSpeed?: number
   scrollEase?: number
   /** width / height, e.g. 16/9 for a normal screen. */
@@ -608,7 +489,7 @@ interface CircularGalleryProps {
 }
 
 const CircularGallery = forwardRef<CircularGalleryHandle, CircularGalleryProps>(function CircularGallery(
-  { items, bend = 1, textColor = 'rgba(255,255,255,0.92)', borderRadius = 0.04, font = '600 22px Inter, sans-serif', scrollSpeed = 2, scrollEase = 0.065, aspect = 16 / 9, onItemClick },
+  { items, bend = 6, borderRadius = 0.04, scrollSpeed = 2, scrollEase = 0.065, aspect = 16 / 9, onItemClick },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -625,9 +506,7 @@ const CircularGallery = forwardRef<CircularGalleryHandle, CircularGalleryProps>(
     const app = new App(containerRef.current, {
       items,
       bend,
-      textColor,
       borderRadius,
-      font,
       scrollSpeed,
       scrollEase,
       aspect,
@@ -639,7 +518,7 @@ const CircularGallery = forwardRef<CircularGalleryHandle, CircularGalleryProps>(
       appRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, bend, textColor, borderRadius, font, scrollSpeed, scrollEase, aspect])
+  }, [items, bend, borderRadius, scrollSpeed, scrollEase, aspect])
 
   return (
     <div

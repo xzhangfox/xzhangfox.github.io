@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import FadeIn from './FadeIn'
 import CircularGallery, { type CircularGalleryHandle, type GalleryItem } from './CircularGallery'
@@ -13,6 +13,12 @@ import { useLanguage } from '@/lib/i18n'
 // page is released to continue scrolling normally.
 const VH_PER_TRANSITION = 65
 
+// Static (language-independent) and module-level so it never changes identity
+// across renders — CircularGallery tears down and rebuilds its whole WebGL
+// scene whenever `items` changes identity, which would otherwise happen on
+// every scroll-driven re-render.
+const GALLERY_ITEMS: GalleryItem[] = projects.map((p) => ({ image: p.image }))
+
 export default function Projects() {
   const { t } = useLanguage()
   const items: PreviewProject[] = projects.map((p, i) => ({ ...p, ...t.projects.items[i] }))
@@ -20,29 +26,8 @@ export default function Projects() {
   const openProject = items.find((p) => p.id === openId) ?? null
 
   const [activeIndex, setActiveIndex] = useState(0)
-  const [fontFamily, setFontFamily] = useState('Inter, -apple-system, sans-serif')
   const pinRef = useRef<HTMLDivElement>(null)
   const galleryRef = useRef<CircularGalleryHandle>(null)
-
-  useEffect(() => {
-    const value = getComputedStyle(document.documentElement).getPropertyValue('--font-inter').trim()
-    if (value) setFontFamily(value)
-  }, [])
-
-  // Memoized so this array keeps the same reference across re-renders that
-  // don't actually change its content (e.g. the activeIndex updates fired by
-  // the scroll handler below) — CircularGallery tears down and rebuilds its
-  // whole WebGL scene whenever `items` changes identity, which would otherwise
-  // happen on every scroll tick.
-  const galleryItems: GalleryItem[] = useMemo(
-    () =>
-      items.map((p, i) => {
-        const source = projects[i]
-        return { image: source.image, title: p.link ? p.title : `${p.title} · ${t.projects.comingSoon}` }
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t]
-  )
 
   const handleItemClick = useCallback(
     (index: number) => {
@@ -61,7 +46,7 @@ export default function Projects() {
       const scrollableHeight = rect.height - window.innerHeight
       const progress = scrollableHeight <= 0 ? (rect.top > 0 ? 0 : 1) : Math.min(1, Math.max(0, -rect.top / scrollableHeight))
       galleryRef.current?.setProgress(progress)
-      const idx = Math.round(progress * (galleryItems.length - 1))
+      const idx = Math.round(progress * (GALLERY_ITEMS.length - 1))
       setActiveIndex((prev) => (prev === idx ? prev : idx))
     }
     update()
@@ -71,8 +56,7 @@ export default function Projects() {
       window.removeEventListener('scroll', update)
       window.removeEventListener('resize', update)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [galleryItems.length])
+  }, [])
 
   return (
     <section id="projects" className="relative py-32">
@@ -103,18 +87,16 @@ export default function Projects() {
       {/* Pinned, scroll-driven horizontal gallery. Scrolling down inside this
           block sweeps the gallery right through each project; once the last
           project is reached the section un-pins and the page keeps scrolling. */}
-      <div ref={pinRef} className="relative" style={{ height: `${100 + (galleryItems.length - 1) * VH_PER_TRANSITION}vh` }}>
+      <div ref={pinRef} className="relative" style={{ height: `${100 + (GALLERY_ITEMS.length - 1) * VH_PER_TRANSITION}vh` }}>
         <div className="sticky top-0 h-screen w-full overflow-hidden">
           <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-bg to-transparent" />
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-20 bg-gradient-to-t from-bg to-transparent" />
 
           <CircularGallery
             ref={galleryRef}
-            items={galleryItems}
-            bend={1}
-            textColor="rgba(255,255,255,0.92)"
+            items={GALLERY_ITEMS}
+            bend={6}
             borderRadius={0.04}
-            font={`600 22px ${fontFamily}`}
             scrollSpeed={2}
             scrollEase={0.065}
             aspect={16 / 9}
@@ -122,7 +104,7 @@ export default function Projects() {
           />
 
           <div className="pointer-events-none absolute inset-x-0 bottom-8 z-10 flex items-center justify-center gap-2">
-            {galleryItems.map((_, i) => {
+            {GALLERY_ITEMS.map((_, i) => {
               const source = projects[i]
               return (
                 <span
