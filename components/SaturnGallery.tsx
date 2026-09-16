@@ -62,7 +62,13 @@ const GROUP_ROLL = THREE.MathUtils.degToRad(10) // left low, right high
 const GROUP_SPIN_SPEED = 0.0006
 const CAMERA_Z = 14
 const CAMERA_FOV = 45
-const FOCUS_WORLD = new THREE.Vector3(0, 0, 5.2)
+// Where the holographic screen sits — fixed in world space, doesn't move.
+// Noticeably closer to the camera than the craft's own parking spot.
+const FOCUS_WORLD = new THREE.Vector3(0, 0, 8)
+// Where the craft itself parks while its beam reaches the rest of the way
+// to the screen — this gap is what the laser visually bridges.
+const CRAFT_FOCUS_WORLD = new THREE.Vector3(0, 0, 6.6)
+const UNIT_Z = new THREE.Vector3(0, 0, 1)
 
 const ITEM_ORBIT_RADIUS = (RING_INNER + RING_OUTER) / 2
 const CRAFT_SPIN_SPEED = 0.01
@@ -70,7 +76,7 @@ const CRAFT_SPIN_SPEED = 0.01
 // Approach is slow and deliberate; departure ("quickly flies back behind
 // Saturn") uses a much narrower window so it snaps away fast.
 const APPROACH_WINDOW = 0.2
-const DEPART_WINDOW = 0.075
+const DEPART_WINDOW = 0.055
 
 const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.35
@@ -233,9 +239,10 @@ class App {
   // Scratch objects reused every frame to avoid per-item GC churn.
   _ringPos = new THREE.Vector3()
   _localPos = new THREE.Vector3()
-  _screenLocalPos = new THREE.Vector3()
-  _forward = new THREE.Vector3()
-  _focusLocal = new THREE.Vector3()
+  _craftWorldPos = new THREE.Vector3()
+  _laserDir = new THREE.Vector3()
+  _laserQuat = new THREE.Quaternion()
+  _craftFocusLocal = new THREE.Vector3()
   _ringQuat = new THREE.Quaternion()
   _itemQuat = new THREE.Quaternion()
   _ringEuler = new THREE.Euler()
@@ -376,10 +383,14 @@ class App {
       this.saturnGroup.add(craft)
       this.crafts.push(craft)
 
+      // Laser and screen are scene-level (world-space), NOT children of the
+      // spinning ring group — the screen holds still at a fixed spot in
+      // front of the camera while the craft (still riding the ring) beams
+      // across the gap to it each time it swings into position.
       const laser = createLaser()
       laser.userData.index = index
       laser.visible = false
-      this.saturnGroup.add(laser)
+      this.scene.add(laser)
       this.lasers.push(laser)
 
       const screenMaterial = new THREE.ShaderMaterial({
@@ -396,8 +407,9 @@ class App {
       })
       const screen = new THREE.Mesh(screenGeometry, screenMaterial)
       screen.userData.index = index
+      screen.position.copy(FOCUS_WORLD)
       screen.scale.set(0.0001, 0.0001, 1)
-      this.saturnGroup.add(screen)
+      this.scene.add(screen)
       this.screens.push(screen)
 
       loader.load(item.image, (tex) => {
@@ -542,13 +554,16 @@ class App {
     const masterT = this.progress.current
 
     this.saturnGroup.rotation.y += GROUP_SPIN_SPEED
+    this.saturnGroup.updateMatrixWorld()
 
-    // The world-space focus point, expressed in the group's CURRENT local
-    // space — recomputed every frame since the group keeps spinning, so a
-    // lifted-off craft stays pinned in front of the camera regardless of
-    // where the ring has rotated to underneath it.
-    this._focusLocal.copy(FOCUS_WORLD)
-    this.saturnGroup.worldToLocal(this._focusLocal)
+    // The craft's parking spot, expressed in the group's CURRENT local
+    // space — recomputed every frame since the group keeps spinning, so the
+    // craft stays pinned in front of the camera regardless of where the
+    // ring has rotated to underneath it. The screen itself is NOT parented
+    // to the group and doesn't move at all — only the craft (and the laser
+    // bridging the two) animates position.
+    this._craftFocusLocal.copy(CRAFT_FOCUS_WORLD)
+    this.saturnGroup.worldToLocal(this._craftFocusLocal)
     this._focusQuat.copy(this.saturnGroup.quaternion).invert()
 
     let bestIndex = 0
@@ -577,7 +592,7 @@ class App {
       this._ringEuler.set(-Math.PI / 2, -theta + this.craftSpin[i], 0)
       this._ringQuat.setFromEuler(this._ringEuler)
 
-      this._localPos.copy(this._ringPos).lerp(this._focusLocal, lift)
+      this._localPos.copy(this._ringPos).lerp(this._craftFocusLocal, lift)
       this._itemQuat.slerpQuaternions(this._ringQuat, this._focusQuat, lift)
 
       const craft = this.crafts[i]
@@ -585,48 +600,49 @@ class App {
       craft.quaternion.copy(this._itemQuat)
       craft.scale.setScalar(CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * lift)
 
-      // The screen floats a little ahead of the craft, toward the camera.
-      this._forward.set(0, 0, 1).applyQuaternion(this._itemQuat)
-      this._screenLocalPos.copy(this._localPos).addScaledVector(this._forward, 0.55)
-
-      // Laser window: fires while the screen is being cast, then retracts —
-      // it doesn't stay on for the whole dwell.
-      // Only fires while approaching (projecting the screen) — closing is a
+      // Laser: a real beam from the craft's current WORLD position to the
+      // screen's fixed WORLD position — recomputed every frame since the
+      // craft is always moving relative to the (stationary) screen. Only
+      // fires while approaching (projecting the screen); closing is a
       // silent collapse, no laser.
       const laserAmount = approaching ? smoothstep(0.3, 0.42, lift) * (1 - smoothstep(0.58, 0.72, lift)) : 0
       const laser = this.lasers[i]
       if (laserAmount > 0.01) {
+        this._craftWorldPos.copy(this._localPos).applyMatrix4(this.saturnGroup.matrixWorld)
+        const dist = this._craftWorldPos.distanceTo(FOCUS_WORLD)
+        this._laserDir.copy(FOCUS_WORLD).sub(this._craftWorldPos).normalize()
+        this._laserQuat.setFromUnitVectors(UNIT_Z, this._laserDir)
+
         laser.visible = true
         const flickerNoise = Math.sin(this.time * 47 + i) * Math.sin(this.time * 13.3 + i * 2)
         const flicker = flickerNoise > -0.35 ? 1 : 0.2
         const mat = laser.material as THREE.MeshBasicMaterial
         mat.opacity = 0.85 * laserAmount * flicker
-        const laserLength = 0.55
-        laser.position.copy(this._localPos)
-        laser.quaternion.copy(this._itemQuat)
-        laser.scale.set(1, 1, laserLength)
+        laser.position.copy(this._craftWorldPos)
+        laser.quaternion.copy(this._laserQuat)
+        laser.scale.set(1, 1, dist)
       } else {
         laser.visible = false
       }
 
-      // Screen: opens with a grow + static flicker while approaching;
-      // closes with a fast vertical collapse to a line, then the line
-      // shrinks away, while departing.
+      // Screen: fixed in place, no movement — it opens point → horizontal
+      // line → full plane while approaching (X unfurls, then Y), with a
+      // brief static/snow flicker once fully formed that clears to the
+      // clean image; and closes plane → line → point while departing
+      // (Y collapses first, then X), noticeably faster than it opened.
       const screen = this.screens[i]
       const screenMat = screen.material as THREE.ShaderMaterial
-      screen.position.copy(this._screenLocalPos)
-      screen.quaternion.copy(this._itemQuat)
 
       let scaleX: number
       let scaleY: number
       let staticAmount = 0
       if (approaching) {
-        const grow = smoothstep(0.35, 0.7, lift)
-        scaleX = scaleY = grow
-        staticAmount = smoothstep(0.32, 0.42, lift) * (1 - smoothstep(0.55, 0.78, lift))
+        scaleX = smoothstep(0.3, 0.45, lift)
+        scaleY = smoothstep(0.45, 0.62, lift)
+        staticAmount = smoothstep(0.58, 0.66, lift) * (1 - smoothstep(0.72, 0.85, lift))
       } else {
         scaleY = smoothstep(0, 1, lift)
-        scaleX = smoothstep(0, 0.55, lift)
+        scaleX = smoothstep(0, 0.45, lift)
       }
       screen.scale.set(Math.max(scaleX, 0.0001) * this.focusScaleAdjust, Math.max(scaleY, 0.0001) * this.focusScaleAdjust, 1)
       screenMat.uniforms.uStatic.value = staticAmount
