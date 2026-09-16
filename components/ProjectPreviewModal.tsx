@@ -12,6 +12,7 @@ export interface PreviewProject {
   description: string
   tech: string[]
   link?: string
+  image: string
   gallery: GalleryShot[]
   highlights: string[]
   color: string

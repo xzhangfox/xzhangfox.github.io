@@ -9,72 +9,107 @@ import { projects } from '@/lib/data'
 import { useLanguage } from '@/lib/i18n'
 
 // Saturn keeps the original four projects; the Moon hosts Flux Path on its
-// own. This order (Saturn's items, then the Moon's) is the gallery's GLOBAL
-// index order — what the arrows/dots/keyboard step through — independent of
-// `lib/data.ts`'s own listing order.
+// own orbit around Earth.
 const SATURN_PROJECT_IDS = ['flux-nutrition', 'flux-career', 'flux-finance', 'financial-tracker']
 const MOON_PROJECT_IDS = ['flux-path']
-const GALLERY_PROJECT_IDS = [...SATURN_PROJECT_IDS, ...MOON_PROJECT_IDS]
 
 const PLANET_LABELS: Record<string, string> = { saturn: 'Saturn', moon: 'The Moon' }
 const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg', moon: '/textures/moon.jpg' }
+const CONTENT_PLANET_IDS = ['saturn', 'moon']
 
 // Static (language-independent) and module-level so it never changes
 // identity across renders — SolarSystemGallery tears down and rebuilds its
-// whole WebGL scene whenever `planets` changes identity.
-// Listed in gallery/global-index order (content planets first in the order
-// their items should appear — Saturn's four, then the Moon's one — with the
-// decorative planets interleaved wherever they sit spatially); array order
-// here drives SolarSystemGallery's global item index, independent of each
-// entry's 3D `position`. Saturn is first so it's also the default focus on
-// load, matching the original single-Saturn scene.
+// whole WebGL scene whenever `planets` changes identity. Orbit radii/speeds
+// are stylized, not physically accurate — spaced for a readable overview
+// rather than real distance ratios. Order matters only in that the Moon
+// (whose orbit is relative to Earth) must come after Earth.
 const PLANETS: PlanetSite[] = [
+  { id: 'sun', textureUrl: '/textures/sun.jpg', radius: 5.5, orbitRadius: 0, orbitSpeed: 0 },
+  { id: 'mercury', textureUrl: '/textures/mercury.jpg', radius: 0.9, orbitRadius: 10, orbitSpeed: 0.0016 },
+  { id: 'venus', textureUrl: '/textures/venus.jpg', radius: 1.5, orbitRadius: 14, orbitSpeed: 0.0012 },
+  { id: 'earth', textureUrl: '/textures/earth.jpg', radius: 1.7, orbitRadius: 18.5, orbitSpeed: 0.0009 },
+  { id: 'mars', textureUrl: '/textures/mars.jpg', radius: 1.1, orbitRadius: 23, orbitSpeed: 0.0007 },
+  { id: 'jupiter', textureUrl: '/textures/jupiter.jpg', radius: 4.0, orbitRadius: 33, orbitSpeed: 0.0004 },
   {
     id: 'saturn',
     textureUrl: '/textures/saturn.jpg',
     radius: 3.2,
-    position: [0, -1, -10],
+    orbitRadius: 45,
+    orbitSpeed: 0.0003,
     hasRing: true,
     ringTextureUrl: '/textures/saturn-ring.png',
     items: SATURN_PROJECT_IDS.map((id) => ({ image: projects.find((p) => p.id === id)!.image })),
   },
+  { id: 'uranus', textureUrl: '/textures/uranus.jpg', radius: 2.2, orbitRadius: 57, orbitSpeed: 0.00022 },
+  { id: 'neptune', textureUrl: '/textures/neptune.jpg', radius: 2.1, orbitRadius: 67, orbitSpeed: 0.00017 },
   {
     id: 'moon',
     textureUrl: '/textures/moon.jpg',
     radius: 0.55,
-    position: [-27, -1, -10],
+    orbitRadius: 2.3,
+    orbitSpeed: 0.01,
+    orbitParent: 'earth',
     items: MOON_PROJECT_IDS.map((id) => ({ image: projects.find((p) => p.id === id)!.image })),
   },
-  { id: 'sun', textureUrl: '/textures/sun.jpg', radius: 5.5, position: [-70, -1, -10] },
-  { id: 'mercury', textureUrl: '/textures/mercury.jpg', radius: 0.9, position: [-52, -1, -10] },
-  { id: 'venus', textureUrl: '/textures/venus.jpg', radius: 1.5, position: [-42, -1, -10] },
-  { id: 'earth', textureUrl: '/textures/earth.jpg', radius: 1.7, position: [-32, -1, -10] },
-  { id: 'mars', textureUrl: '/textures/mars.jpg', radius: 1.1, position: [-21, -1, -10] },
-  { id: 'jupiter', textureUrl: '/textures/jupiter.jpg', radius: 4.0, position: [-13, -1, -10] },
-  { id: 'uranus', textureUrl: '/textures/uranus.jpg', radius: 2.2, position: [13, -1, -10] },
-  { id: 'neptune', textureUrl: '/textures/neptune.jpg', radius: 2.1, position: [22, -1, -10] },
 ]
+
+function PlanetBadge({ textureUrl, label, active, onClick }: { textureUrl: string; label: string; active?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className="pointer-events-auto h-8 w-8 flex-shrink-0 rounded-full border bg-cover bg-center transition-all duration-300 sm:h-9 sm:w-9"
+      style={{
+        backgroundImage: `url(${textureUrl})`,
+        borderColor: active ? 'var(--gold)' : 'rgba(201,168,76,0.35)',
+        boxShadow: active ? '0 0 14px rgba(201,168,76,0.45)' : '0 0 8px rgba(201,168,76,0.15)',
+      }}
+    />
+  )
+}
 
 export default function Projects() {
   const { t } = useLanguage()
   const items: PreviewProject[] = projects.map((p, i) => ({ ...p, ...t.projects.items[i] }))
-  const galleryItems: PreviewProject[] = GALLERY_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!)
+  const projectsByPlanet: Record<string, PreviewProject[]> = {
+    saturn: SATURN_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
+    moon: MOON_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
+  }
+
   const [openId, setOpenId] = useState<string | null>(null)
   const openProject = items.find((p) => p.id === openId) ?? null
 
-  const [activeIndex, setActiveIndex] = useState(0)
-  const [activePlanetId, setActivePlanetId] = useState('saturn')
+  // null activePlanetId = the solar-system overview; activeIndex is local
+  // to whichever planet is currently entered (null = nothing selected yet).
+  const [activePlanetId, setActivePlanetId] = useState<string | null>(null)
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const [hoverInfo, setHoverInfo] = useState<{ localIndex: number; clientX: number; clientY: number } | null>(null)
   const galleryRef = useRef<SolarSystemGalleryHandle>(null)
-  const activeProject = galleryItems[activeIndex]
+
+  const currentProjects = activePlanetId ? projectsByPlanet[activePlanetId] ?? [] : []
+  const activeProject = activeIndex !== null ? currentProjects[activeIndex] : undefined
+  const hoveredProject = hoverInfo ? currentProjects[hoverInfo.localIndex] : undefined
 
   const handleItemClick = useCallback(
     (index: number) => {
-      const project = galleryItems[index]
+      const project = currentProjects[index]
       if (project) setOpenId(project.id)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t]
+    [t, activePlanetId]
   )
+
+  const goPrevNext = (dir: 1 | -1) => {
+    const count = currentProjects.length
+    if (count < 1) return
+    if (activeIndex === null) {
+      galleryRef.current?.goTo(dir === 1 ? 0 : count - 1)
+    } else {
+      galleryRef.current?.goTo((activeIndex + dir + count) % count)
+    }
+  }
 
   return (
     <section id="projects" className="relative py-32">
@@ -102,11 +137,12 @@ export default function Projects() {
         </div>
       </div>
 
-      {/* Swipe-driven only — not tied to page scroll. Left/right drag spins
-          the focused planet's ring; a craft unfolds into its preview card as
-          it nears focus, dead-center. Crossing planets (arrows/dots/keyboard
-          only, never drag) pulls the camera back to the full solar system
-          and flies it in on the target. */}
+      {/* Loads on a top-down overview of the whole system, Sun-centered,
+          every planet slowly revolving on its own orbit. Click a planet (or
+          its badge, top-left) to zoom in — only then do its own projects'
+          craft appear, idling on the ring until one is clicked. Swipe/arrows
+          stay scoped to whichever planet is entered; only the back button
+          returns to the overview. */}
       <div className="relative h-[65vh] max-h-[760px] min-h-[420px] w-full overflow-hidden sm:h-[72vh]">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-bg to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-20 bg-gradient-to-t from-bg to-transparent" />
@@ -120,36 +156,68 @@ export default function Projects() {
           onItemClick={handleItemClick}
           onActiveIndexChange={setActiveIndex}
           onActivePlanetChange={setActivePlanetId}
+          onHoverChange={setHoverInfo}
         />
 
-        {/* Which planet is currently in focus — a cropped badge of that
-            planet's own texture, not an emoji, so it reads as part of the
-            same 3D scene rather than a bolted-on UI icon. */}
-        <div className="pointer-events-none absolute left-2 top-2 z-10 sm:left-4 sm:top-4">
+        {/* Top-left: in the overview, a badge per content planet (an
+            alternate entry point to clicking the tiny 3D mesh); once
+            entered, a back button plus a badge per project on that planet. */}
+        <div className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1.5 sm:left-4 sm:top-4 sm:gap-2">
           <AnimatePresence mode="wait">
-            <motion.div
-              key={activePlanetId}
-              initial={{ opacity: 0, scale: 0.85 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.85 }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-              className="flex items-center gap-2"
-            >
-              <div
-                className="h-8 w-8 rounded-full border border-gold/40 bg-cover bg-center shadow-[0_0_14px_rgba(201,168,76,0.3)] sm:h-9 sm:w-9"
-                style={{ backgroundImage: `url(${PLANET_TEXTURES[activePlanetId] ?? PLANET_TEXTURES.saturn})` }}
-                title={PLANET_LABELS[activePlanetId] ?? activePlanetId}
-                aria-hidden="true"
-              />
-              <span className="hidden font-mono text-[10px] uppercase tracking-widest text-white/35 sm:inline">
-                {PLANET_LABELS[activePlanetId] ?? activePlanetId}
-              </span>
-            </motion.div>
+            {activePlanetId === null ? (
+              <motion.div
+                key="overview-badges"
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.3 }}
+                className="flex items-center gap-1.5 sm:gap-2"
+              >
+                {CONTENT_PLANET_IDS.map((id) => (
+                  <PlanetBadge
+                    key={id}
+                    textureUrl={PLANET_TEXTURES[id]}
+                    label={PLANET_LABELS[id]}
+                    onClick={() => galleryRef.current?.enterPlanet(id)}
+                  />
+                ))}
+              </motion.div>
+            ) : (
+              <motion.div
+                key="planet-badges"
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.3 }}
+                className="flex items-center gap-1.5 sm:gap-2"
+              >
+                <button
+                  type="button"
+                  onClick={() => galleryRef.current?.leavePlanet()}
+                  aria-label="Back to solar system"
+                  title="Back to solar system"
+                  className="pointer-events-auto flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/50 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:text-gold sm:h-9 sm:w-9"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                    <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                {currentProjects.map((project, i) => (
+                  <PlanetBadge
+                    key={project.id}
+                    textureUrl={project.image}
+                    label={project.title}
+                    active={activeIndex === i}
+                    onClick={() => galleryRef.current?.goTo(i)}
+                  />
+                ))}
+              </motion.div>
+            )}
           </AnimatePresence>
         </div>
 
-        {/* Carrier/HUD-style readout briefly introducing the focused
-            project, angular clipped corners and a mono label row. */}
+        {/* Carrier/HUD-style readout — only once a project's actually
+            focused, not just while idling on the ring. */}
         {activeProject && (
           <div className="pointer-events-none absolute right-2 top-2 z-10 w-[168px] sm:right-4 sm:top-4 sm:w-[220px]">
             <AnimatePresence mode="wait">
@@ -178,45 +246,62 @@ export default function Projects() {
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={() => galleryRef.current?.goTo((activeIndex - 1 + galleryItems.length) % galleryItems.length)}
-          aria-label="Previous project"
-          className="absolute left-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/15 text-white/35 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:bg-black/40 hover:text-gold sm:left-6 sm:h-11 sm:w-11"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          onClick={() => galleryRef.current?.goTo((activeIndex + 1) % galleryItems.length)}
-          aria-label="Next project"
-          className="absolute right-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/15 text-white/35 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:bg-black/40 hover:text-gold sm:right-6 sm:h-11 sm:w-11"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        {/* Simple hover tooltip — a craft idling on the ring, not yet
+            clicked, just names itself. */}
+        {hoverInfo && hoveredProject && (
+          <div
+            className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full rounded-md border border-gold/30 bg-black/80 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm"
+            style={{ left: hoverInfo.clientX, top: hoverInfo.clientY - 14 }}
+          >
+            {hoveredProject.title}
+          </div>
+        )}
 
-        <div className="pointer-events-none absolute inset-x-0 bottom-8 z-10 flex items-center justify-center gap-2">
-          {galleryItems.map((project, i) => (
+        {activePlanetId !== null && currentProjects.length > 1 && (
+          <>
             <button
-              key={project.id}
               type="button"
-              onClick={() => galleryRef.current?.goTo(i)}
-              aria-label={`Show ${project.title}`}
-              className="pointer-events-auto h-1.5 rounded-full transition-all duration-300 ease-out"
-              style={{
-                width: i === activeIndex ? 24 : 6,
-                background: i === activeIndex ? project.color : 'rgba(255,255,255,0.18)',
-              }}
-            />
-          ))}
-        </div>
+              onClick={() => goPrevNext(-1)}
+              aria-label="Previous project"
+              className="absolute left-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/15 text-white/35 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:bg-black/40 hover:text-gold sm:left-6 sm:h-11 sm:w-11"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => goPrevNext(1)}
+              aria-label="Next project"
+              className="absolute right-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/15 text-white/35 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:bg-black/40 hover:text-gold sm:right-6 sm:h-11 sm:w-11"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </>
+        )}
+
+        {activePlanetId !== null && currentProjects.length > 1 && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-8 z-10 flex items-center justify-center gap-2">
+            {currentProjects.map((project, i) => (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => galleryRef.current?.goTo(i)}
+                aria-label={`Show ${project.title}`}
+                className="pointer-events-auto h-1.5 rounded-full transition-all duration-300 ease-out"
+                style={{
+                  width: i === activeIndex ? 24 : 6,
+                  background: i === activeIndex ? project.color : 'rgba(255,255,255,0.18)',
+                }}
+              />
+            ))}
+          </div>
+        )}
 
         <p className="pointer-events-none absolute bottom-2 right-3 z-10 text-[9px] text-white/15">
-          Saturn, Moon &amp; planet textures © Solar System Scope, CC BY 4.0
+          Solar system textures © Solar System Scope, CC BY 4.0
         </p>
       </div>
 

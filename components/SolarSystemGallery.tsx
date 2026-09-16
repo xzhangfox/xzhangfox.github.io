@@ -11,8 +11,14 @@ export interface PlanetSite {
   id: string
   textureUrl: string
   radius: number
-  /** [x, y, z] in scene units. */
-  position: [number, number, number]
+  /** Distance from its orbit parent's center. 0 for the Sun (stays fixed). */
+  orbitRadius: number
+  /** Radians advanced per frame — ambient, continuous revolution. */
+  orbitSpeed: number
+  /** Starting angle around the orbit, radians. */
+  orbitPhase?: number
+  /** Defaults to the Sun (fixed at the origin). The Moon sets this to 'earth'. */
+  orbitParent?: string
   hasRing?: boolean
   ringTextureUrl?: string
   /** Undefined/empty = a decorative-only planet, not a gallery stop. */
@@ -20,10 +26,19 @@ export interface PlanetSite {
 }
 
 export interface SolarSystemGalleryHandle {
-  /** Bring the item at this GLOBAL index (spanning every content planet, in
-   *  `planets` prop order) into focus — same-planet items spin the ring as
-   *  before; a different planet triggers the pull-back/fly-to sequence. */
-  goTo: (globalIndex: number) => void
+  /** Zoom from the overview into this planet. */
+  enterPlanet: (planetId: string) => void
+  /** Zoom back out to the full solar-system overview. */
+  leavePlanet: () => void
+  /** Bring the item at this LOCAL index (within the currently-entered
+   *  planet) into focus — ignored while in the overview. */
+  goTo: (localIndex: number) => void
+}
+
+interface HoverInfo {
+  localIndex: number
+  clientX: number
+  clientY: number
 }
 
 interface SolarSystemGalleryProps {
@@ -31,9 +46,10 @@ interface SolarSystemGalleryProps {
   aspect?: number
   borderRadius?: number
   swipeEase?: number
-  onItemClick?: (globalIndex: number) => void
-  onActiveIndexChange?: (globalIndex: number) => void
-  onActivePlanetChange?: (planetId: string) => void
+  onItemClick?: (localIndex: number) => void
+  onActiveIndexChange?: (localIndex: number | null) => void
+  onActivePlanetChange?: (planetId: string | null) => void
+  onHoverChange?: (info: HoverInfo | null) => void
 }
 
 function clamp(v: number, min: number, max: number) {
@@ -62,27 +78,36 @@ function findIndex(obj: THREE.Object3D | null): number | undefined {
   return undefined
 }
 
+function findPlanetId(obj: THREE.Object3D | null): string | undefined {
+  let cur: THREE.Object3D | null = obj
+  while (cur) {
+    if (cur.userData.planetId !== undefined) return cur.userData.planetId as string
+    cur = cur.parent
+  }
+  return undefined
+}
+
 // --- Scene layout --------------------------------------------------------
-// Every content planet (one bearing gallery items) hosts the same craft/
-// laser/hologram mechanic proven on the original single-Saturn scene: small
-// craft ride the ring/orbit, grow and fire a laser as they near a fixed
-// on-screen focus spot, and project a holographic preview card. The whole
-// thing now happens at each planet's own position in a wider solar-system
-// layout — the camera translates to `planet.position + CAMERA_OFFSET` (and
-// keeps a fixed, unrotated orientation) whenever that planet is focused, so
-// every planet gets an identical relative framing for free. Crossing to a
-// different planet eases the camera out to a fixed overview shot of the
-// whole system, then back in onto the target.
+// The overview is a top-down(-ish) shot of the whole system, Sun at the
+// center, every planet on its own continuously-revolving orbit (thin ring
+// lines mark each path) — the Moon's own orbit is around Earth's current
+// position, not the Sun's. Entering a planet (click its mesh, or its
+// top-left badge) eases the camera onto `planet.position + CAMERA_OFFSET`
+// with a fixed, unrotated orientation and keeps tracking it live as it
+// keeps slowly orbiting. Only THEN do that planet's own craft become
+// visible, idly riding its ring/orbit — clicking one flies it up to a fixed
+// on-screen focus spot and projects its holographic preview; nothing is
+// auto-selected on entry.
 const CAMERA_FOV = 45
 // Deltas from a focused planet's own group position to the camera/focus/
-// craft-parking spots — derived from the original single-Saturn scene
-// (planet at (0,-1,-10), camera at (0,0,14), focus at (0,0,8), craft parking
-// at (0,0,6.6)) so Saturn's own framing stays pixel-identical.
+// craft-parking spots — unchanged from the original single-Saturn scene so
+// its close-up framing stays pixel-identical.
 const CAMERA_OFFSET = new THREE.Vector3(0, 1, 24)
 const FOCUS_OFFSET = new THREE.Vector3(0, 1, 18)
 const CRAFT_FOCUS_OFFSET = new THREE.Vector3(0, 1, 16.6)
 const UNIT_Z = new THREE.Vector3(0, 0, 1)
 const IDENTITY_QUAT = new THREE.Quaternion()
+const ORIGIN = new THREE.Vector3(0, 0, 0)
 
 // Shared by the laser material and the screen's glow/edge/static tint so the
 // beam and the hologram it projects read as one continuous piece of light —
@@ -90,21 +115,22 @@ const IDENTITY_QUAT = new THREE.Quaternion()
 const LASER_WHITE = new THREE.Color(0xeaf6ff)
 
 const CRAFT_SPIN_SPEED = 0.01
-const IDLE_ORBIT_SPEED = 0.00045
+const SELF_SPIN_SPEED = 0.0018
 
-// Approach is slow and deliberate; departure ("quickly flies back behind the
-// planet") uses a much narrower window so it snaps away fast. Both are tuned
-// to stay well under 1/count of the loop so two crafts on the same planet
-// are never near the shared parking spot at once — numerically verified.
+// Approach is slow and deliberate; departure ("quickly flies back behind
+// the planet") uses a much narrower window so it snaps away fast. Both are
+// tuned to stay well under 1/count of the loop so two crafts on the same
+// planet are never near the shared parking spot at once — numerically
+// verified.
 const APPROACH_WINDOW = 0.15
 const DEPART_WINDOW = 0.06
 
 const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.35
 
-// Eased speed for a programmatic jump (arrow buttons, dots, keyboard) — much
-// slower than drag-follow so the craft's full flight around the ring is
-// visible rather than snapping straight to the next item.
+// Eased speed for a programmatic jump (arrow buttons, dots, badges) — much
+// slower than drag-follow so the craft's full flight is visible rather than
+// snapping straight to the next item.
 const GOTO_EASE = 0.032
 
 const SCREEN_HEIGHT = 3.4
@@ -114,15 +140,13 @@ const FOCUS_SCALE = 1.05
 // recomputed on resize.
 const MAX_VIEWPORT_WIDTH_FRACTION = 0.84
 
-// How long a planet's active hologram takes to fade out once a cross-planet
-// jump begins, in the same fixed 0.016/frame time unit the rest of the
-// scene's animation uses.
-const DEPART_FADE_T = 0.3
+// Enter/leave camera moves, in seconds.
+const ENTER_SECONDS = 1.6
+const LEAVE_SECONDS = 1.3
 
-// Cinematic camera pull-back/fly-to when crossing planets, in seconds
-// (converted to the fixed-timestep frame convention at 60fps).
-const TRANSITION_OUT_SECONDS = 1.1
-const TRANSITION_IN_SECONDS = 1.3
+// Overview framing.
+const OVERVIEW_ELEVATION_DEG = 58
+const OVERVIEW_MARGIN = 1.35
 
 const SCREEN_VERTEX = `
   varying vec2 vUv;
@@ -240,16 +264,18 @@ const RING_FRAGMENT = `
 `
 
 // A small shared craft design: elongated body + two wings + a glowing
-// engine, instanced once per project (engine tint varies slightly by index).
+// engine + a soft pulsing halo ring, instanced once per project (engine
+// tint varies slightly by index).
 function createCraftGeometry() {
   const body = new THREE.ConeGeometry(0.09, 0.34, 6)
   body.rotateX(Math.PI / 2)
   const wing = new THREE.BoxGeometry(0.3, 0.015, 0.1)
-  return { body, wing }
+  const halo = new THREE.RingGeometry(0.17, 0.205, 28)
+  return { body, wing, halo }
 }
 const CRAFT_GEO = createCraftGeometry()
 
-function createCraft(index: number): THREE.Group {
+function createCraft(index: number): { group: THREE.Group; halo: THREE.Mesh } {
   const group = new THREE.Group()
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.35, metalness: 0.75 })
   const body = new THREE.Mesh(CRAFT_GEO.body, bodyMat)
@@ -271,7 +297,22 @@ function createCraft(index: number): THREE.Group {
   engine.position.z = -0.19
   group.add(engine)
 
-  return group
+  // A gently pulsing ring around the craft — a "this is clickable" cue
+  // while it idles on the ring, before anything's been selected.
+  const halo = new THREE.Mesh(
+    CRAFT_GEO.halo,
+    new THREE.MeshBasicMaterial({
+      color: LASER_WHITE,
+      transparent: true,
+      opacity: 0.5,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  )
+  group.add(halo)
+
+  return { group, halo }
 }
 
 function createLaser(): THREE.Mesh {
@@ -291,33 +332,47 @@ function createLaser(): THREE.Mesh {
   return new THREE.Mesh(geometry, material)
 }
 
-// One planet in the scene: its mesh (+ optional ring/debris), and — if it
-// carries gallery items — the full craft/laser/hologram-screen mechanic,
-// scoped to this planet's own group. `active` gates whether the expensive
-// per-item choreography runs (the focused planet) or a cheap idle orbit
-// (every other content planet, glimpsed only from the wide overview shot).
+function createOrbitRing(radius: number): THREE.LineLoop {
+  const segments = 160
+  const points: THREE.Vector3[] = []
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * Math.PI * 2
+    points.push(new THREE.Vector3(radius * Math.cos(a), 0, radius * Math.sin(a)))
+  }
+  const geometry = new THREE.BufferGeometry().setFromPoints(points)
+  const material = new THREE.LineBasicMaterial({ color: 0xc9a84c, transparent: true, opacity: 0.32 })
+  return new THREE.LineLoop(geometry, material)
+}
+
+// One planet in the scene: its mesh (+ optional ring/debris/orbit line),
+// continuously revolving around its orbit parent, and — if it carries
+// gallery items — the full craft/laser/hologram-screen mechanic. Craft stay
+// hidden until the planet is entered; once entered they idle on the ring
+// with nothing selected until the user clicks one.
 class PlanetInstance {
   site: PlanetSite
   scene: THREE.Scene
   group = new THREE.Group()
   mesh!: THREE.Mesh
   ring?: THREE.Mesh
+  orbitLine?: THREE.LineLoop
   debris: { mesh: THREE.Mesh; spin: THREE.Vector3 }[] = []
+  orbitAngle: number
 
   count: number
   crafts: THREE.Group[] = []
+  crewHalos: THREE.Mesh[] = []
   screens: THREE.Mesh[] = []
   lasers: THREE.Mesh[] = []
   craftSpin: number[] = []
   focusFactors: number[] = []
   itemOrbitRadius = 0
 
-  progress = { current: 0, target: 0, ease: 0.08 }
+  progress = { current: 0.5, target: 0.5, ease: 0.08 }
   goToEaseActive = false
-  active = false
-  departing = false
-  departT = 0
-  idleT = 0
+  /** True once the user has clicked (or arrowed to) a specific item on this
+   *  planet — before that, every craft just idles on the ring. */
+  anySelected = false
   activeIndex = -1
 
   // Scratch objects reused every frame to avoid per-item GC churn.
@@ -331,24 +386,48 @@ class PlanetInstance {
   _itemQuat = new THREE.Quaternion()
   _ringEuler = new THREE.Euler()
   _focusQuat = new THREE.Quaternion()
+  _focusWorldScratch = new THREE.Vector3()
 
-  constructor(site: PlanetSite, scene: THREE.Scene, aspect: number, borderRadius: number, swipeEase: number) {
+  // Set by the App before calling activeUpdate — a shared, resize-driven
+  // scale factor (same for every planet since the camera/focus geometry is
+  // identical everywhere).
+  _focusScaleAdjustRef: { value: number } | null = null
+
+  constructor(site: PlanetSite, scene: THREE.Scene, aspect: number, borderRadius: number, swipeEase: number, seedIndex: number) {
     this.site = site
     this.scene = scene
     this.count = site.items?.length ?? 0
     this.progress.ease = swipeEase
+    this.orbitAngle = site.orbitPhase ?? seedIndex * 2.399963 // golden-angle-ish spread
 
-    this.group.position.set(...site.position)
     scene.add(this.group)
+    this.group.userData.planetId = site.id
 
     const loader = new THREE.TextureLoader()
     const tex = loader.load(site.textureUrl)
     tex.colorSpace = THREE.SRGBColorSpace
+    // The Sun is a light source, not something lit by one — emissive so it
+    // glows on its own regardless of the scene's actual lighting.
+    const isSun = site.id === 'sun'
     this.mesh = new THREE.Mesh(
       new THREE.SphereGeometry(site.radius, 48, 48),
-      new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0 })
+      isSun
+        ? new THREE.MeshBasicMaterial({ map: tex })
+        : new THREE.MeshStandardMaterial({ map: tex, roughness: 1, metalness: 0 })
     )
+    this.mesh.userData.planetId = site.id
     this.group.add(this.mesh)
+
+    if (site.orbitRadius > 0) {
+      this.orbitLine = createOrbitRing(site.orbitRadius)
+      if (site.orbitParent) {
+        // Parented at construction time by the App once every instance
+        // exists (see App constructor) so it can track a moving parent
+        // (the Moon's ring follows Earth).
+      } else {
+        scene.add(this.orbitLine)
+      }
+    }
 
     if (site.hasRing && site.ringTextureUrl) {
       const ringInner = site.radius * 1.35
@@ -409,13 +488,15 @@ class PlanetInstance {
     const loader = new THREE.TextureLoader()
 
     items.forEach((item, index) => {
-      const craft = createCraft(index)
+      const { group: craft, halo } = createCraft(index)
       craft.userData.index = index
+      craft.visible = false
       this.group.add(craft)
       this.crafts.push(craft)
+      this.crewHalos.push(halo)
 
       // Laser and screen are scene-level (world-space), NOT children of the
-      // spinning group — the screen holds still at a fixed spot in front of
+      // orbiting group — the screen holds still at a fixed spot in front of
       // the camera while the craft (still riding the ring/orbit) beams
       // across the gap to it each time it swings into position.
       const laser = createLaser()
@@ -443,7 +524,7 @@ class PlanetInstance {
       })
       const screen = new THREE.Mesh(screenGeometry, screenMaterial)
       screen.userData.index = index
-      screen.position.copy(this.group.position).add(FOCUS_OFFSET)
+      screen.visible = false
       screen.scale.set(0.0001, 0.0001, 1)
       this.scene.add(screen)
       this.screens.push(screen)
@@ -459,18 +540,40 @@ class PlanetInstance {
     this.craftSpin = new Array(this.count).fill(0)
   }
 
-  // Brings local `index` to focus via the shortest direction around the
-  // loop. `fromOffset` (in loop-fraction units) optionally starts the
-  // traversal further back than the current position, so a planet that's
-  // becoming newly focused always shows a visible flight-in rather than
-  // popping straight to "arrived."
-  goTo(index: number, fromOffsetSteps = 0) {
-    if (this.count < 1) return
-    const step = 1 / this.count
-    if (fromOffsetSteps > 0) {
-      this.progress.current = wrap01(this.progress.current - step * fromOffsetSteps)
-      this.progress.target = this.progress.current
+  advanceOrbit(parentPos: THREE.Vector3) {
+    this.orbitAngle += this.site.orbitSpeed
+    this.group.position.set(
+      parentPos.x + this.site.orbitRadius * Math.cos(this.orbitAngle),
+      parentPos.y,
+      parentPos.z + this.site.orbitRadius * Math.sin(this.orbitAngle)
+    )
+    this.group.rotation.y += SELF_SPIN_SPEED
+  }
+
+  // Distance from this planet's own orbit parent (not necessarily the Sun —
+  // the Moon's is relative to Earth). Used only for overview framing, where
+  // underestimating the Moon's true Sun-distance by Earth's own orbit
+  // radius is harmless: Earth's radius alone already dwarfs the Moon's
+  // small extra offset next to the outer planets that actually set the
+  // framing extent.
+  orbitRadius0() {
+    return this.site.orbitRadius
+  }
+
+  setCraftVisible(visible: boolean) {
+    this.crafts.forEach((c) => (c.visible = visible))
+    if (!visible) {
+      this.screens.forEach((s) => (s.visible = false))
+      this.lasers.forEach((l) => (l.visible = false))
     }
+  }
+
+  // Brings local `index` to focus via the shortest direction around the
+  // loop.
+  goTo(index: number) {
+    if (this.count < 1) return
+    this.anySelected = true
+    const step = 1 / this.count
     const targetFrac = wrap01(index * step)
     const currentFrac = wrap01(this.progress.target)
     let delta = targetFrac - currentFrac
@@ -481,44 +584,45 @@ class PlanetInstance {
   }
 
   onCheck() {
-    if (this.count < 1) return
+    if (this.count < 1 || !this.anySelected) return
     const step = 1 / this.count
     this.progress.target = Math.round(this.progress.target / step) * step
   }
 
-  beginDepart() {
-    this.departing = true
-    this.departT = 0
+  resetSelection() {
+    this.anySelected = false
+    this.activeIndex = -1
+    this.progress.current = 0.5 / Math.max(this.count, 1)
+    this.progress.target = this.progress.current
+    this.goToEaseActive = false
+    this.screens.forEach((s) => {
+      s.scale.set(0.0001, 0.0001, 1)
+      s.visible = false
+    })
+    this.lasers.forEach((l) => (l.visible = false))
   }
 
-  // Cheap ambient motion for a content planet that isn't currently focused —
-  // no laser/screen activity, just the craft still circulating so the
-  // planet reads as "alive" if glimpsed during the wide overview shot.
-  idleUpdate() {
-    this.group.rotation.y += IDLE_ORBIT_SPEED
-    if (this.count < 1) return
-    this.idleT += IDLE_ORBIT_SPEED * 3
-    for (let i = 0; i < this.count; i++) {
-      const t = wrap01(this.idleT - i / this.count)
-      const theta = t * Math.PI * 2
-      this._ringPos.set(this.itemOrbitRadius * Math.sin(theta), 0, this.itemOrbitRadius * Math.cos(theta))
-      this._ringEuler.set(-Math.PI / 2, -theta, 0)
-      const craft = this.crafts[i]
-      craft.position.copy(this._ringPos)
-      craft.quaternion.setFromEuler(this._ringEuler)
-      craft.scale.setScalar(CRAFT_SCALE_FAR)
-      this.screens[i].scale.set(0.0001, 0.0001, 1)
-      this.lasers[i].visible = false
-    }
+  // Cheap idle circulation for every item on the ring/orbit — used both
+  // while nothing's selected yet and (via the halo pulse) once something
+  // is, for the items NOT currently near the focus point.
+  _idlePosition(i: number, t: number, time: number) {
+    const theta = t * Math.PI * 2
+    this._ringPos.set(this.itemOrbitRadius * Math.sin(theta), 0, this.itemOrbitRadius * Math.cos(theta))
+    this._ringEuler.set(-Math.PI / 2, -theta, 0)
+    const craft = this.crafts[i]
+    craft.position.copy(this._ringPos)
+    craft.quaternion.setFromEuler(this._ringEuler)
+    craft.scale.setScalar(CRAFT_SCALE_FAR)
+    const halo = this.crewHalos[i]
+    const pulse = 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(time * 3.2 + i * 1.7))
+    ;(halo.material as THREE.MeshBasicMaterial).opacity = pulse
   }
 
-  // The full craft/laser/hologram choreography — identical math to the
-  // original single-Saturn scene, scoped to this planet's own group and
-  // world-space focus offsets. Returns the local index currently in focus.
+  // The full craft/laser/hologram choreography once at least one item has
+  // been selected — identical math to the original single-Saturn scene,
+  // scoped to this planet's own group and world-space focus offsets. Items
+  // not near the focus point just ride the ring via `_idlePosition`.
   activeUpdate(time: number): number {
-    this.group.rotation.y += CRAFT_SPIN_SPEED * 0.06
-    this.group.updateMatrixWorld()
-
     const ease = this.goToEaseActive ? GOTO_EASE : this.progress.ease
     this.progress.current += (this.progress.target - this.progress.current) * ease
     if (this.goToEaseActive && Math.abs(this.progress.target - this.progress.current) < 0.0005) {
@@ -526,23 +630,16 @@ class PlanetInstance {
     }
     const masterT = this.progress.current
 
+    this.group.updateMatrixWorld()
     this._craftFocusLocal.copy(this.group.position).add(CRAFT_FOCUS_OFFSET)
     this.group.worldToLocal(this._craftFocusLocal)
     this._focusQuat.copy(this.group.quaternion).invert()
-
-    let departFade = 1
-    if (this.departing) {
-      this.departT += 0.016
-      departFade = Math.max(0, 1 - this.departT / DEPART_FADE_T)
-      if (this.departT >= DEPART_FADE_T) this.departing = false
-    }
 
     let bestIndex = 0
     let bestFocus = -1
 
     for (let i = 0; i < this.count; i++) {
       const t = wrap01(masterT - i / this.count)
-      const theta = t * Math.PI * 2
       const approaching = t > 0.5
       const distFromFocus = approaching ? 1 - t : t
       const window_ = approaching ? APPROACH_WINDOW : DEPART_WINDOW
@@ -554,8 +651,15 @@ class PlanetInstance {
         bestIndex = i
       }
 
-      this.craftSpin[i] += CRAFT_SPIN_SPEED * (1 - lift)
+      if (lift < 0.001) {
+        this._idlePosition(i, t, time)
+        this.screens[i].visible = false
+        this.lasers[i].visible = false
+        continue
+      }
 
+      this.craftSpin[i] += CRAFT_SPIN_SPEED * (1 - lift)
+      const theta = t * Math.PI * 2
       this._ringPos.set(this.itemOrbitRadius * Math.sin(theta), 0, this.itemOrbitRadius * Math.cos(theta))
       this._ringEuler.set(-Math.PI / 2, -theta + this.craftSpin[i], 0)
       this._ringQuat.setFromEuler(this._ringEuler)
@@ -568,11 +672,13 @@ class PlanetInstance {
       craft.position.copy(this._localPos)
       craft.quaternion.copy(this._itemQuat)
       craft.scale.setScalar(CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * craftMoveK)
+      const halo = this.crewHalos[i]
+      ;(halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - craftMoveK)
 
       const laserGrow = approaching ? smoothstep(0.3, 0.38, lift) : 0
       const laserVisibility = approaching ? smoothstep(0.3, 0.34, lift) * (1 - smoothstep(0.66, 0.74, lift)) : 0
       const laser = this.lasers[i]
-      const focusWorld = this._focusWorldFor(i)
+      const focusWorld = this._focusWorldScratch.copy(this.group.position).add(FOCUS_OFFSET)
       if (laserVisibility > 0.01) {
         this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
         const dist = this._craftWorldPos.distanceTo(focusWorld)
@@ -583,7 +689,7 @@ class PlanetInstance {
         const flickerNoise = Math.sin(time * 47 + i) * Math.sin(time * 13.3 + i * 2)
         const flicker = flickerNoise > -0.35 ? 1 : 0.2
         const mat = laser.material as THREE.MeshBasicMaterial
-        mat.opacity = 0.85 * laserVisibility * flicker * departFade
+        mat.opacity = 0.85 * laserVisibility * flicker
         laser.position.copy(this._craftWorldPos)
         laser.quaternion.copy(this._laserQuat)
         laser.scale.set(1, 1, dist * laserGrow)
@@ -610,9 +716,11 @@ class PlanetInstance {
         reveal = smoothstep(0.62, 0.82, lift)
       }
       const focusScaleAdjust = this._focusScaleAdjustRef!.value
+      screen.visible = true
+      screen.position.copy(focusWorld)
       screen.scale.set(
-        Math.max(scaleX, 0.0001) * focusScaleAdjust * departFade,
-        Math.max(scaleY, 0.0001) * focusScaleAdjust * departFade,
+        Math.max(scaleX, 0.0001) * focusScaleAdjust,
+        Math.max(scaleY, 0.0001) * focusScaleAdjust,
         1
       )
       screenMat.uniforms.uGlow.value = glow
@@ -635,24 +743,19 @@ class PlanetInstance {
       d.mesh.rotation.z += d.spin.z
     }
 
-    this.activeIndex = bestIndex
-    return bestIndex
+    this.activeIndex = bestFocus > 0.001 ? bestIndex : -1
+    return this.activeIndex
   }
 
-  // Screens/lasers live in world space at `group.position + FOCUS_OFFSET` —
-  // a getter would recompute a fresh vector every call, so callers get a
-  // scratch vector instead (set once per activeUpdate via `_focusWorldFor`).
-  _focusWorldScratch = new THREE.Vector3()
-  _focusWorldFor(_i: number) {
-    return this._focusWorldScratch.copy(this.group.position).add(FOCUS_OFFSET)
+  // Pure idle pass — nothing selected yet, every item evenly spaced around
+  // its ring/orbit, none of them near the focus spot.
+  idleSelectionUpdate(time: number) {
+    for (let i = 0; i < this.count; i++) {
+      this._idlePosition(i, wrap01(i / this.count), time)
+    }
   }
 
-  // Set by the App before calling activeUpdate — a shared, resize-driven
-  // scale factor (same for every planet since the camera/focus geometry is
-  // identical everywhere).
-  _focusScaleAdjustRef: { value: number } | null = null
-
-  hitTest(raycaster: THREE.Raycaster): number | null {
+  hitTestItem(raycaster: THREE.Raycaster): number | null {
     const candidates: THREE.Object3D[] = [this.mesh, ...this.crafts, ...this.screens]
     const hits = raycaster.intersectObjects(candidates, true)
     if (hits.length === 0) return null
@@ -664,6 +767,11 @@ class PlanetInstance {
 
   dispose() {
     this.scene.remove(this.group)
+    if (this.orbitLine) {
+      this.orbitLine.geometry.dispose()
+      ;(this.orbitLine.material as THREE.Material).dispose()
+      this.orbitLine.parent?.remove(this.orbitLine)
+    }
     ;[this.mesh, this.ring, ...this.debris.map((d) => d.mesh)].forEach((m) => {
       if (!m) return
       m.geometry.dispose()
@@ -687,21 +795,23 @@ class PlanetInstance {
   }
 }
 
-interface Transition {
+type ViewMode = 'overview' | 'entering' | 'planet' | 'leaving'
+
+interface CameraTransition {
   t: number
-  phase: 'out' | 'in'
-  fromCamPos: THREE.Vector3
-  toPlanet: PlanetInstance
-  pendingLocalIndex: number
+  duration: number
+  fromPos: THREE.Vector3
+  fromQuat: THREE.Quaternion
+  toPlanet: PlanetInstance | null // null when leaving (target is the static overview)
 }
 
 class App {
   container: HTMLElement
   aspect: number
-  onItemClick?: (globalIndex: number) => void
-  onActiveIndexChange?: (globalIndex: number) => void
-  onActivePlanetChange?: (planetId: string) => void
-  swipeEase: number
+  onItemClick?: (localIndex: number) => void
+  onActiveIndexChange?: (localIndex: number | null) => void
+  onActivePlanetChange?: (planetId: string | null) => void
+  onHoverChange?: (info: HoverInfo | null) => void
 
   renderer: THREE.WebGLRenderer
   scene = new THREE.Scene()
@@ -710,15 +820,15 @@ class App {
   pointerNdc = new THREE.Vector2()
 
   planets: PlanetInstance[] = []
+  planetsById = new Map<string, PlanetInstance>()
   contentPlanets: PlanetInstance[] = []
-  focusedPlanet!: PlanetInstance
-  cameraState: 'focused' | 'transitioning' = 'focused'
-  transition: Transition | null = null
+  focusedPlanet: PlanetInstance | null = null
+  viewMode: ViewMode = 'overview'
+  transition: CameraTransition | null = null
   overviewCameraPos = new THREE.Vector3()
-  overviewLookAt = new THREE.Vector3()
   overviewQuat = new THREE.Quaternion()
   focusScaleAdjust = { value: FOCUS_SCALE }
-  activeGlobalIndex = -1
+  hoveredIndex = -1
   time = 0
 
   raf = 0
@@ -734,7 +844,7 @@ class App {
   boundOnTouchMove: (e: MouseEvent | TouchEvent) => void
   boundOnTouchUp: (e: MouseEvent | TouchEvent) => void
   boundOnHoverMove: (e: MouseEvent) => void
-  boundOnKeyDown: (e: KeyboardEvent) => void
+  boundOnMouseLeave: () => void
 
   constructor(
     container: HTMLElement,
@@ -742,46 +852,62 @@ class App {
     aspect: number,
     borderRadius: number,
     swipeEase: number,
-    onItemClick?: (globalIndex: number) => void,
-    onActiveIndexChange?: (globalIndex: number) => void,
-    onActivePlanetChange?: (planetId: string) => void
+    onItemClick?: (localIndex: number) => void,
+    onActiveIndexChange?: (localIndex: number | null) => void,
+    onActivePlanetChange?: (planetId: string | null) => void,
+    onHoverChange?: (info: HoverInfo | null) => void
   ) {
     this.container = container
     this.aspect = aspect
-    this.swipeEase = swipeEase
     this.onItemClick = onItemClick
     this.onActiveIndexChange = onActiveIndexChange
     this.onActivePlanetChange = onActivePlanetChange
+    this.onHoverChange = onHoverChange
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     container.appendChild(this.renderer.domElement)
 
-    this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 200)
+    this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 400)
 
     this.buildStarfield()
     this.buildLights()
 
-    this.planets = planetSites.map((site) => {
-      const p = new PlanetInstance(site, this.scene, aspect, borderRadius, swipeEase)
+    this.planets = planetSites.map((site, i) => {
+      const p = new PlanetInstance(site, this.scene, aspect, borderRadius, swipeEase, i)
       p._focusScaleAdjustRef = this.focusScaleAdjust
+      this.planetsById.set(site.id, p)
       return p
     })
     this.contentPlanets = this.planets.filter((p) => p.count > 0)
 
-    // Compute the overview camera framing so every planet's position fits
-    // comfortably in view, with margin.
+    // Parent each orbit-parented ring (the Moon's) to its parent's group so
+    // it visually travels with it.
+    for (const p of this.planets) {
+      if (p.orbitLine && p.site.orbitParent) {
+        const parent = this.planetsById.get(p.site.orbitParent)
+        parent?.group.add(p.orbitLine)
+      }
+    }
+
+    // The camera jumps between a close-up focused position and the very
+    // distant overview position (tens of units apart) rather than moving
+    // gradually frame to frame — Three.js's default per-mesh frustum-sphere
+    // culling doesn't cope well with that kind of large jump and can end up
+    // discarding everything. The scene is small enough that culling buys
+    // nothing worth trading correctness for, so it's just disabled outright.
+    this.scene.traverse((obj) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) obj.frustumCulled = false
+    })
+
     this.computeOverviewFraming()
     const scratch = new THREE.Object3D()
     scratch.position.copy(this.overviewCameraPos)
-    scratch.lookAt(this.overviewLookAt)
+    scratch.lookAt(0, 0, 0)
     this.overviewQuat.copy(scratch.quaternion)
-
-    this.focusedPlanet = this.contentPlanets[0]
-    this.focusedPlanet.active = true
-    this.camera.position.copy(this.focusedPlanet.group.position).add(CAMERA_OFFSET)
-    this.camera.quaternion.copy(IDENTITY_QUAT)
+    this.camera.position.copy(this.overviewCameraPos)
+    this.camera.quaternion.copy(this.overviewQuat)
 
     this.onResize()
 
@@ -790,7 +916,7 @@ class App {
     this.boundOnTouchMove = this.onTouchMove.bind(this)
     this.boundOnTouchUp = this.onTouchUp.bind(this)
     this.boundOnHoverMove = this.onHoverMove.bind(this)
-    this.boundOnKeyDown = this.onKeyDown.bind(this)
+    this.boundOnMouseLeave = this.onMouseLeave.bind(this)
     window.addEventListener('resize', this.boundOnResize)
     window.addEventListener('mousedown', this.boundOnTouchDown)
     window.addEventListener('mousemove', this.boundOnTouchMove)
@@ -799,54 +925,51 @@ class App {
     window.addEventListener('touchmove', this.boundOnTouchMove, { passive: true })
     window.addEventListener('touchend', this.boundOnTouchUp)
     container.addEventListener('mousemove', this.boundOnHoverMove)
-    container.addEventListener('keydown', this.boundOnKeyDown)
+    container.addEventListener('mouseleave', this.boundOnMouseLeave)
 
     this.update()
   }
 
   computeOverviewFraming() {
-    let minX = Infinity
-    let maxX = -Infinity
-    let cx = 0
-    let cz = 0
+    let maxReach = 0
     for (const p of this.planets) {
-      const reach = p.site.hasRing ? p.site.radius * 2.4 : p.site.radius
-      const [px, , pz] = p.site.position
-      minX = Math.min(minX, px - reach)
-      maxX = Math.max(maxX, px + reach)
-      cx += px
-      cz += pz
+      const reach = p.orbitRadius0() + (p.site.hasRing ? p.site.radius * 2.4 : p.site.radius)
+      maxReach = Math.max(maxReach, reach)
     }
-    cx /= this.planets.length
-    cz /= this.planets.length
-    const width = (maxX - minX) * 1.28
-    this._overviewWidth = width
-    this.overviewLookAt.set(cx, -3, cz)
+    this._overviewExtent = maxReach * OVERVIEW_MARGIN
     this.updateOverviewDistance()
   }
 
-  _overviewWidth = 0
+  _overviewExtent = 60
 
   updateOverviewDistance() {
     const aspect = Math.max(this.camera.aspect || 1, 0.5)
     const vFov = THREE.MathUtils.degToRad(CAMERA_FOV)
-    // Distance needed so `_overviewWidth` fits within the horizontal FOV.
-    const distForWidth = this._overviewWidth / (2 * Math.tan(vFov / 2) * aspect)
-    const distance = Math.max(distForWidth, 40)
-    const elevation = distance * 0.28
-    this.overviewCameraPos.set(this.overviewLookAt.x, this.overviewLookAt.y + elevation, this.overviewLookAt.z + distance)
+    const distForWidth = this._overviewExtent / (Math.tan(vFov / 2) * Math.min(aspect, 1))
+    const distForHeight = this._overviewExtent / Math.tan(vFov / 2)
+    const distance = Math.max(distForWidth, distForHeight, 50)
+    const elevRad = THREE.MathUtils.degToRad(OVERVIEW_ELEVATION_DEG)
+    this.overviewCameraPos.set(0, distance * Math.sin(elevRad), distance * Math.cos(elevRad))
+    if (this.viewMode === 'overview') {
+      this.camera.position.copy(this.overviewCameraPos)
+      const scratch = new THREE.Object3D()
+      scratch.position.copy(this.overviewCameraPos)
+      scratch.lookAt(0, 0, 0)
+      this.overviewQuat.copy(scratch.quaternion)
+      this.camera.quaternion.copy(this.overviewQuat)
+    }
   }
 
   buildStarfield() {
-    const count = 900
+    const count = 1100
     const positions = new Float32Array(count * 3)
     for (let i = 0; i < count; i++) {
-      const r = 60 + Math.random() * 90
+      const r = 90 + Math.random() * 140
       const theta = Math.random() * Math.PI * 2
       const phi = Math.acos(2 * Math.random() - 1)
       positions[i * 3] = r * Math.sin(phi) * Math.cos(theta)
       positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta)
-      positions[i * 3 + 2] = r * Math.cos(phi) - 15
+      positions[i * 3 + 2] = r * Math.cos(phi)
     }
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -858,134 +981,162 @@ class App {
   }
 
   buildLights() {
-    const sun = new THREE.DirectionalLight(0xfff4e0, 1.5)
-    sun.position.set(-8, 6, 10)
-    this.scene.add(sun)
+    // A directional key light (distance-independent, unlike a PointLight —
+    // whose photometric intensity units would need to be enormous to reach
+    // planets tens of units from the Sun) so every planet reads clearly
+    // whether it's a few units or seventy units from the origin.
+    const key = new THREE.DirectionalLight(0xfff4e0, 1.6)
+    key.position.set(-8, 6, 10)
+    this.scene.add(key)
     this.scene.add(new THREE.AmbientLight(0x404050, 0.65))
-  }
-
-  // --- Global index <-> (planet, local index) ----------------------------
-
-  get totalItems() {
-    return this.contentPlanets.reduce((n, p) => n + p.count, 0)
-  }
-
-  resolveGlobalIndex(globalIndex: number): { planet: PlanetInstance; localIndex: number } | null {
-    const total = this.totalItems
-    if (total < 1) return null
-    const wrapped = ((globalIndex % total) + total) % total
-    let acc = 0
-    for (const p of this.contentPlanets) {
-      if (wrapped < acc + p.count) return { planet: p, localIndex: wrapped - acc }
-      acc += p.count
-    }
-    return null
-  }
-
-  globalIndexOf(planet: PlanetInstance, localIndex: number): number {
-    let acc = 0
-    for (const p of this.contentPlanets) {
-      if (p === planet) return acc + localIndex
-      acc += p.count
-    }
-    return -1
+    // A small decorative glow AT the Sun so it still reads as the scene's
+    // light source up close, without being relied on to illuminate anything.
+    const glow = new THREE.PointLight(0xffcf7a, 40, 40, 1.4)
+    glow.position.set(0, 0, 0)
+    this.scene.add(glow)
   }
 
   // --- Navigation ----------------------------------------------------------
 
-  goTo(globalIndex: number) {
-    const resolved = this.resolveGlobalIndex(globalIndex)
-    if (!resolved) return
-    const { planet, localIndex } = resolved
-    if (planet === this.focusedPlanet) {
-      planet.goTo(localIndex)
-    } else {
-      this.beginCrossPlanetTransition(planet, localIndex)
-    }
-  }
-
-  beginCrossPlanetTransition(targetPlanet: PlanetInstance, targetLocalIndex: number) {
-    if (this.cameraState === 'transitioning') return
-    this.cameraState = 'transitioning'
-    this.focusedPlanet.beginDepart()
+  enterPlanet(planetId: string) {
+    const planet = this.planetsById.get(planetId)
+    if (!planet || planet.count < 1) return
+    if (this.viewMode !== 'overview') return
+    planet.resetSelection()
+    planet.setCraftVisible(true)
     this.transition = {
       t: 0,
-      phase: 'out',
-      fromCamPos: this.camera.position.clone(),
-      toPlanet: targetPlanet,
-      pendingLocalIndex: targetLocalIndex,
+      duration: ENTER_SECONDS,
+      fromPos: this.camera.position.clone(),
+      fromQuat: this.camera.quaternion.clone(),
+      toPlanet: planet,
     }
+    this.viewMode = 'entering'
+  }
+
+  leavePlanet() {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet) return
+    this.focusedPlanet.setCraftVisible(false)
+    this.transition = {
+      t: 0,
+      duration: LEAVE_SECONDS,
+      fromPos: this.camera.position.clone(),
+      fromQuat: this.camera.quaternion.clone(),
+      toPlanet: null,
+    }
+    this.viewMode = 'leaving'
+    this.onActivePlanetChange?.(null)
+    this.onActiveIndexChange?.(null)
+    this.setHover(-1)
+  }
+
+  goTo(localIndex: number) {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet) return
+    this.focusedPlanet.goTo(localIndex)
   }
 
   onCheck() {
-    this.focusedPlanet.onCheck()
+    this.focusedPlanet?.onCheck()
   }
 
-  hitTest(clientX: number, clientY: number): number | null {
-    if (this.cameraState !== 'focused') return null
+  setHover(localIndex: number) {
+    if (localIndex === this.hoveredIndex) return
+    this.hoveredIndex = localIndex
+  }
+
+  hitTestItem(clientX: number, clientY: number): number | null {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet) return null
     const rect = this.container.getBoundingClientRect()
     this.pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1
     this.pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1
     this.raycaster.setFromCamera(this.pointerNdc, this.camera)
-    return this.focusedPlanet.hitTest(this.raycaster)
+    return this.focusedPlanet.hitTestItem(this.raycaster)
+  }
+
+  hitTestPlanet(clientX: number, clientY: number): string | null {
+    if (this.viewMode !== 'overview') return null
+    const rect = this.container.getBoundingClientRect()
+    this.pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1
+    this.pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1
+    this.raycaster.setFromCamera(this.pointerNdc, this.camera)
+    const hits = this.raycaster.intersectObjects(
+      this.contentPlanets.map((p) => p.mesh),
+      false
+    )
+    if (hits.length === 0) return null
+    return findPlanetId(hits[0].object) ?? null
   }
 
   onTouchDown(e: MouseEvent | TouchEvent) {
-    if (this.cameraState !== 'focused') return
     this.isDown = true
     this.hasDragged = false
-    this.focusedPlanet.goToEaseActive = false
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
     this.pointerDownX = clientX
     this.pointerDownY = clientY
     this.pointerDownTime = performance.now()
-    this.dragStartProgress = this.focusedPlanet.progress.target
+    if (this.viewMode === 'planet' && this.focusedPlanet) {
+      this.focusedPlanet.goToEaseActive = false
+      this.dragStartProgress = this.focusedPlanet.progress.target
+    }
   }
 
   onTouchMove(e: MouseEvent | TouchEvent) {
     if (!this.isDown) return
     const x = 'touches' in e ? e.touches[0].clientX : e.clientX
     if (Math.abs(x - this.pointerDownX) > 6) this.hasDragged = true
-    const dx = this.pointerDownX - x
-    const count = Math.max(this.focusedPlanet.count, 1)
-    const delta = (dx / this.container.clientWidth) * (1 / count) * 1.6
-    this.focusedPlanet.progress.target = this.dragStartProgress + delta
+    if (this.viewMode === 'planet' && this.focusedPlanet && this.focusedPlanet.count > 0) {
+      const dx = this.pointerDownX - x
+      const delta = (dx / this.container.clientWidth) * (1 / this.focusedPlanet.count) * 1.6
+      this.focusedPlanet.anySelected = true
+      this.focusedPlanet.progress.target = this.dragStartProgress + delta
+    }
   }
 
   onTouchUp(e: MouseEvent | TouchEvent) {
     if (!this.isDown) return
     this.isDown = false
     const isQuickTap = !this.hasDragged && performance.now() - this.pointerDownTime < 500
-    if (isQuickTap) {
-      const localIndex = this.hitTest(this.pointerDownX, this.pointerDownY)
-      if (localIndex !== null) {
-        if (localIndex === this.focusedPlanet.activeIndex) {
-          this.onItemClick?.(this.globalIndexOf(this.focusedPlanet, localIndex))
-        } else {
-          this.focusedPlanet.goTo(localIndex)
+
+    if (this.viewMode === 'overview') {
+      if (isQuickTap) {
+        const planetId = this.hitTestPlanet(this.pointerDownX, this.pointerDownY)
+        if (planetId) this.enterPlanet(planetId)
+      }
+      return
+    }
+
+    if (this.viewMode === 'planet' && this.focusedPlanet) {
+      if (isQuickTap) {
+        const localIndex = this.hitTestItem(this.pointerDownX, this.pointerDownY)
+        if (localIndex !== null) {
+          if (this.focusedPlanet.anySelected && localIndex === this.focusedPlanet.activeIndex) {
+            this.onItemClick?.(localIndex)
+          } else {
+            this.focusedPlanet.goTo(localIndex)
+          }
         }
       }
+      this.onCheck()
     }
-    this.onCheck()
   }
 
   onHoverMove(e: MouseEvent) {
     if (this.isDown) return
-    const index = this.hitTest(e.clientX, e.clientY)
-    this.container.style.cursor = index !== null ? 'pointer' : 'grab'
+    if (this.viewMode === 'planet') {
+      const localIndex = this.hitTestItem(e.clientX, e.clientY)
+      this.container.style.cursor = localIndex !== null ? 'pointer' : 'grab'
+      this.setHover(localIndex ?? -1)
+      this.onHoverChange?.(localIndex !== null ? { localIndex, clientX: e.clientX, clientY: e.clientY } : null)
+    } else if (this.viewMode === 'overview') {
+      const planetId = this.hitTestPlanet(e.clientX, e.clientY)
+      this.container.style.cursor = planetId ? 'pointer' : 'default'
+    }
   }
 
-  onKeyDown(e: KeyboardEvent) {
-    if (this.totalItems < 1) return
-    const currentGlobal = this.globalIndexOf(this.focusedPlanet, this.focusedPlanet.activeIndex < 0 ? 0 : this.focusedPlanet.activeIndex)
-    if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      this.goTo(currentGlobal + 1)
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      this.goTo(currentGlobal - 1)
-    }
+  onMouseLeave() {
+    this.setHover(-1)
+    this.onHoverChange?.(null)
   }
 
   onResize() {
@@ -1009,57 +1160,67 @@ class App {
   update() {
     this.time += 0.016
 
-    if (this.cameraState === 'transitioning' && this.transition) {
-      const tr = this.transition
+    for (const p of this.planets) {
+      const parentPos = p.site.orbitParent ? this.planetsById.get(p.site.orbitParent)!.group.position : ORIGIN
+      p.advanceOrbit(parentPos)
+    }
+
+    if (this.viewMode === 'entering' || this.viewMode === 'leaving') {
+      const tr = this.transition!
       tr.t += 1 / 60
-      if (tr.phase === 'out') {
-        const localT = clamp(tr.t / TRANSITION_OUT_SECONDS, 0, 1)
-        const e = easeInOutCubic(localT)
-        this.camera.position.lerpVectors(tr.fromCamPos, this.overviewCameraPos, e)
-        this.camera.quaternion.slerpQuaternions(IDENTITY_QUAT, this.overviewQuat, e)
-        if (localT >= 1) {
-          tr.phase = 'in'
-          tr.t = 0
-        }
-      } else {
-        const localT = clamp(tr.t / TRANSITION_IN_SECONDS, 0, 1)
-        const e = easeInOutCubic(localT)
+      const localT = clamp(tr.t / tr.duration, 0, 1)
+      const e = easeInOutCubic(localT)
+      if (tr.toPlanet) {
         this._toCamPosScratch.copy(tr.toPlanet.group.position).add(CAMERA_OFFSET)
-        this.camera.position.lerpVectors(this.overviewCameraPos, this._toCamPosScratch, e)
-        this.camera.quaternion.slerpQuaternions(this.overviewQuat, IDENTITY_QUAT, e)
-        if (localT >= 1) {
+        this.camera.position.lerpVectors(tr.fromPos, this._toCamPosScratch, e)
+        this.camera.quaternion.slerpQuaternions(tr.fromQuat, IDENTITY_QUAT, e)
+      } else {
+        this.camera.position.lerpVectors(tr.fromPos, this.overviewCameraPos, e)
+        this.camera.quaternion.slerpQuaternions(tr.fromQuat, this.overviewQuat, e)
+      }
+      if (localT >= 1) {
+        if (tr.toPlanet) {
           this.camera.position.copy(this._toCamPosScratch)
           this.camera.quaternion.copy(IDENTITY_QUAT)
           this.focusedPlanet = tr.toPlanet
-          this.focusedPlanet.active = true
-          this.focusedPlanet.departing = false
-          // Force a visible flight-in rather than popping straight to
-          // "arrived" on first focus.
-          this.focusedPlanet.goTo(tr.pendingLocalIndex, 1.4)
-          this.cameraState = 'focused'
-          this.transition = null
+          this.viewMode = 'planet'
           this.onActivePlanetChange?.(this.focusedPlanet.site.id)
+          this.onActiveIndexChange?.(null)
+        } else {
+          this.camera.position.copy(this.overviewCameraPos)
+          this.camera.quaternion.copy(this.overviewQuat)
+          this.focusedPlanet = null
+          this.viewMode = 'overview'
         }
+        this.transition = null
       }
+    } else if (this.viewMode === 'planet' && this.focusedPlanet) {
+      this.camera.position.copy(this.focusedPlanet.group.position).add(CAMERA_OFFSET)
+      this.camera.quaternion.copy(IDENTITY_QUAT)
     }
 
+    // The planet whose craft need positioning this frame — the focused one
+    // once arrived, but also the target while still flying in, since its
+    // craft are already visible (set in enterPlanet) and would otherwise
+    // sit unpositioned at the origin until the transition completes.
+    // While 'leaving', the departing planet's craft/screen/laser were
+    // already snapped invisible in leavePlanet() — don't keep running its
+    // activeUpdate here, or the still-live `progress`/lift state would
+    // immediately re-show the hologram screen it just hid.
+    const craftPlanet =
+      this.viewMode === 'planet'
+        ? this.focusedPlanet
+        : this.viewMode === 'entering'
+          ? (this.transition?.toPlanet ?? null)
+          : null
     for (const planet of this.planets) {
-      if (planet === this.focusedPlanet || planet.departing) {
-        const bestLocal = planet.activeUpdate(this.time)
-        if (planet === this.focusedPlanet) {
-          const global = this.globalIndexOf(planet, bestLocal)
-          if (global !== this.activeGlobalIndex) {
-            this.activeGlobalIndex = global
-            this.onActiveIndexChange?.(global)
-          }
-        }
-        if (planet.departing === false && planet !== this.focusedPlanet) {
-          // Finished fading out after a cross-planet jump — go fully idle.
-          planet.active = false
-        }
-      } else {
-        planet.idleUpdate()
+      if (planet.count < 1 || planet !== craftPlanet) continue
+      if (!planet.anySelected) {
+        planet.idleSelectionUpdate(this.time)
+        continue
       }
+      const bestLocal = planet.activeUpdate(this.time)
+      if (this.viewMode === 'planet') this.onActiveIndexChange?.(bestLocal >= 0 ? bestLocal : null)
     }
 
     this.renderer.render(this.scene, this.camera)
@@ -1078,7 +1239,7 @@ class App {
     window.removeEventListener('touchmove', this.boundOnTouchMove)
     window.removeEventListener('touchend', this.boundOnTouchUp)
     this.container.removeEventListener('mousemove', this.boundOnHoverMove)
-    this.container.removeEventListener('keydown', this.boundOnKeyDown)
+    this.container.removeEventListener('mouseleave', this.boundOnMouseLeave)
 
     this.planets.forEach((p) => p.dispose())
     this.scene.traverse((obj) => {
@@ -1094,7 +1255,7 @@ class App {
 }
 
 const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalleryProps>(function SolarSystemGallery(
-  { planets, aspect = 16 / 9, borderRadius = 0.04, swipeEase = 0.08, onItemClick, onActiveIndexChange, onActivePlanetChange },
+  { planets, aspect = 16 / 9, borderRadius = 0.04, swipeEase = 0.08, onItemClick, onActiveIndexChange, onActivePlanetChange, onHoverChange },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1105,9 +1266,13 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
   onActiveIndexChangeRef.current = onActiveIndexChange
   const onActivePlanetChangeRef = useRef(onActivePlanetChange)
   onActivePlanetChangeRef.current = onActivePlanetChange
+  const onHoverChangeRef = useRef(onHoverChange)
+  onHoverChangeRef.current = onHoverChange
 
   useImperativeHandle(ref, () => ({
-    goTo: (globalIndex: number) => appRef.current?.goTo(globalIndex),
+    enterPlanet: (id: string) => appRef.current?.enterPlanet(id),
+    leavePlanet: () => appRef.current?.leavePlanet(),
+    goTo: (localIndex: number) => appRef.current?.goTo(localIndex),
   }), [])
 
   useEffect(() => {
@@ -1120,7 +1285,8 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
       swipeEase,
       (i) => onItemClickRef.current?.(i),
       (i) => onActiveIndexChangeRef.current?.(i),
-      (id) => onActivePlanetChangeRef.current?.(id)
+      (id) => onActivePlanetChangeRef.current?.(id),
+      (info) => onHoverChangeRef.current?.(info)
     )
     appRef.current = app
     return () => {
@@ -1136,7 +1302,7 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
       className="h-full w-full cursor-grab touch-pan-y outline-none active:cursor-grabbing"
       tabIndex={0}
       role="region"
-      aria-label="Project gallery. Swipe left or right to spin through projects, tap the focused one to view details."
+      aria-label="Solar system project gallery. Click a planet to enter it, then click a craft to preview a project."
     />
   )
 })

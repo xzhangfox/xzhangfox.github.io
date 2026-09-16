@@ -175,7 +175,7 @@ export const translations: Record<Language, Dict> = {
       sectionLabel: '04 · Projects',
       headingPre: 'The',
       headingGold: 'Flux',
-      headingPost: ' Suite',
+      headingPost: ' Galaxy',
       subDesc:
         'AI-powered platforms built from scratch — each solving a different domain with the same design language and engineering standard.',
       liveBadge: 'All platforms live',
@@ -330,7 +330,7 @@ export const translations: Record<Language, Dict> = {
       sectionLabel: '04 · 项目作品',
       headingPre: '',
       headingGold: 'Flux',
-      headingPost: ' 套件',
+      headingPost: ' 星系',
       subDesc: '从零构建的 AI 驱动平台 —— 各自解决不同领域的问题，却共享同一套设计语言与工程标准。',
       liveBadge: '全部平台已上线',
       hudLabel: '项目情报',
