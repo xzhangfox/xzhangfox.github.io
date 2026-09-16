@@ -14,7 +14,7 @@ export interface SaturnGalleryHandle {
 
 interface SaturnGalleryProps {
   items: GalleryItem[]
-  /** width / height of the unfolded card, e.g. 16/9 for a normal screen. */
+  /** width / height of the holographic screen, e.g. 16/9 for a normal screen. */
   aspect?: number
   borderRadius?: number
   swipeEase?: number
@@ -35,52 +35,76 @@ function smoothstep(edge0: number, edge1: number, x: number) {
   return t * t * (3 - 2 * t)
 }
 
+function findIndex(obj: THREE.Object3D | null): number | undefined {
+  let cur: THREE.Object3D | null = obj
+  while (cur) {
+    if (cur.userData.index !== undefined) return cur.userData.index as number
+    cur = cur.parent
+  }
+  return undefined
+}
+
 // --- Scene layout --------------------------------------------------------
-// Saturn sits deep in the scene, tilted like the reference photo. Each
-// project is a lumpy meteorite that rides the tilted ring plane as a child
-// of the same group the ring belongs to — genuinely spinning with it, not
-// faking a path — sweeping behind the planet at the far side. Near the
-// front it unfolds into a flat preview card and lifts toward the camera,
-// then folds back into a rock and settles onto the ring afterward. Purely
-// swipe-driven: no scroll linkage at all.
+// Saturn sits deep in the scene, tilted and rolled like a photo taken at an
+// angle. Each project is a small craft that rides the tilted ring plane as
+// a child of the same group the ring belongs to — genuinely spinning with
+// it, not faking a path — sweeping behind the planet at the far side. Near
+// the front it grows, fires a laser, and projects a holographic screen
+// (the preview card) that opens with a static-flicker and closes with a
+// CRT-style collapse; the craft then snaps back to the ring quickly and the
+// next one's turn begins. Purely swipe-driven: no scroll linkage at all.
 const PLANET_RADIUS = 3.2
 const PLANET_POS = new THREE.Vector3(0, -1, -10)
 const RING_INNER = PLANET_RADIUS * 1.35
 const RING_OUTER = PLANET_RADIUS * 2.4
 const GROUP_TILT = THREE.MathUtils.degToRad(-20)
+const GROUP_ROLL = THREE.MathUtils.degToRad(10) // left low, right high
 const GROUP_SPIN_SPEED = 0.0006
 const CAMERA_Z = 14
 const CAMERA_FOV = 45
 const FOCUS_WORLD = new THREE.Vector3(0, 0, 5.2)
 
 const ITEM_ORBIT_RADIUS = (RING_INNER + RING_OUTER) / 2
-const LIFT_WINDOW = 0.17
-const ROCK_SPIN_SPEED = 0.01
-const CARD_HEIGHT = 3.4
+const CRAFT_SPIN_SPEED = 0.01
+
+// Approach is slow and deliberate; departure ("quickly flies back behind
+// Saturn") uses a much narrower window so it snaps away fast.
+const APPROACH_WINDOW = 0.2
+const DEPART_WINDOW = 0.075
+
+const CRAFT_SCALE_FAR = 0.5
+const CRAFT_SCALE_NEAR = 1.35
+
+const SCREEN_HEIGHT = 3.4
 const FOCUS_SCALE = 1.05
-// Keep the unfolded card's projected width within this fraction of the
-// viewport, shrinking it on narrow/portrait (mobile) screens so it's never
-// cropped — recomputed on resize.
+// Keep the screen's projected width within this fraction of the viewport,
+// shrinking it on narrow/portrait (mobile) screens so it's never cropped —
+// recomputed on resize.
 const MAX_VIEWPORT_WIDTH_FRACTION = 0.84
 
-const CARD_VERTEX = `
+const SCREEN_VERTEX = `
   varying vec2 vUv;
   void main() {
     vUv = uv;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
-const CARD_FRAGMENT = `
+const SCREEN_FRAGMENT = `
   precision highp float;
   uniform sampler2D uMap;
   uniform vec2 uImageSize;
   uniform vec2 uPlaneSize;
   uniform float uBorderRadius;
+  uniform float uStatic;
+  uniform float uTime;
   varying vec2 vUv;
 
   float roundedBoxSDF(vec2 p, vec2 b, float r) {
     vec2 d = abs(p) - b;
     return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - r;
+  }
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
   }
 
   void main() {
@@ -92,9 +116,21 @@ const CARD_FRAGMENT = `
       vUv.x * ratio.x + (1.0 - ratio.x) * 0.5,
       vUv.y * ratio.y + (1.0 - ratio.y) * 0.5
     );
+
     float d = roundedBoxSDF(vUv - 0.5, vec2(0.5 - uBorderRadius), uBorderRadius);
-    if (d > 0.0) discard;
-    gl_FragColor = vec4(texture2D(uMap, uv).rgb, 1.0);
+    if (d > 0.02) discard;
+
+    vec3 base = texture2D(uMap, uv).rgb;
+    float noise = hash(floor(vUv * vec2(140.0, 90.0)) + floor(uTime * 18.0));
+    vec3 withStatic = mix(base, vec3(noise), clamp(uStatic, 0.0, 1.0) * 0.85);
+    float scan = 0.94 + 0.06 * sin(vUv.y * 420.0 - uTime * 40.0);
+    withStatic *= scan;
+
+    float edge = smoothstep(-0.045, -0.01, d);
+    vec3 edgeColor = vec3(0.55, 0.85, 1.0);
+    vec3 finalColor = mix(withStatic, edgeColor, edge * 0.5);
+
+    gl_FragColor = vec4(finalColor, 1.0);
   }
 `
 
@@ -119,29 +155,54 @@ const RING_FRAGMENT = `
   }
 `
 
-type IndexedMesh = THREE.Mesh
+// A small shared craft design: elongated body + two wings + a glowing
+// engine, instanced once per project (engine tint varies slightly by index).
+function createCraftGeometry() {
+  const body = new THREE.ConeGeometry(0.09, 0.34, 6)
+  body.rotateX(Math.PI / 2)
+  const wing = new THREE.BoxGeometry(0.3, 0.015, 0.1)
+  return { body, wing }
+}
+const CRAFT_GEO = createCraftGeometry()
 
-// A continuous noise field over the unit sphere (not per-vertex random) so
-// shared corners on the icosahedron displace identically — no seams — while
-// still giving each seed a distinct, irregular, rocky silhouette.
-function createRockGeometry(seed: number, size: number): THREE.BufferGeometry {
-  const geometry = new THREE.IcosahedronGeometry(size, 1)
-  const position = geometry.attributes.position
-  const v = new THREE.Vector3()
-  const n = new THREE.Vector3()
-  for (let i = 0; i < position.count; i++) {
-    v.fromBufferAttribute(position, i)
-    n.copy(v).normalize()
-    const noise =
-      Math.sin(n.x * 3.1 + seed) * Math.cos(n.y * 2.6 + seed * 1.4) * 0.5 +
-      Math.sin(n.z * 4.3 + seed * 0.6) * Math.cos(n.x * 1.9 - seed) * 0.5
-    const s = size * (1 + noise * 0.32)
-    v.copy(n).multiplyScalar(s)
-    position.setXYZ(i, v.x, v.y, v.z)
-  }
-  position.needsUpdate = true
-  geometry.computeVertexNormals()
-  return geometry
+function createCraft(index: number): THREE.Group {
+  const group = new THREE.Group()
+  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.35, metalness: 0.75 })
+  const body = new THREE.Mesh(CRAFT_GEO.body, bodyMat)
+  group.add(body)
+
+  const wingMat = new THREE.MeshStandardMaterial({ color: 0x82899a, roughness: 0.5, metalness: 0.6 })
+  const wingL = new THREE.Mesh(CRAFT_GEO.wing, wingMat)
+  wingL.position.set(-0.09, 0, -0.02)
+  const wingR = wingL.clone()
+  wingR.position.x = 0.09
+  group.add(wingL, wingR)
+
+  const engineHue = 0.5 + ((index * 0.21) % 1) * 0.12
+  const engineColor = new THREE.Color().setHSL(engineHue, 0.9, 0.6)
+  const engine = new THREE.Mesh(
+    new THREE.SphereGeometry(0.04, 8, 8),
+    new THREE.MeshStandardMaterial({ color: engineColor, emissive: engineColor, emissiveIntensity: 2.2, roughness: 0.4 })
+  )
+  engine.position.z = -0.19
+  group.add(engine)
+
+  return group
+}
+
+function createLaser(): THREE.Mesh {
+  const geometry = new THREE.CylinderGeometry(0.012, 0.05, 1, 8, 1, true)
+  geometry.translate(0, 0.5, 0)
+  geometry.rotateX(Math.PI / 2)
+  const material = new THREE.MeshBasicMaterial({
+    color: 0x8fe3ff,
+    transparent: true,
+    opacity: 0.85,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+  return new THREE.Mesh(geometry, material)
 }
 
 class App {
@@ -153,15 +214,17 @@ class App {
   count: number
   focusScaleAdjust = FOCUS_SCALE
   activeIndex = -1
+  time = 0
 
   renderer: THREE.WebGLRenderer
   scene = new THREE.Scene()
   camera: THREE.PerspectiveCamera
   saturnGroup = new THREE.Group()
   planetMesh!: THREE.Mesh
-  rocks: IndexedMesh[] = []
-  cards: IndexedMesh[] = []
-  rockSpin: number[] = []
+  crafts: THREE.Group[] = []
+  screens: THREE.Mesh[] = []
+  lasers: THREE.Mesh[] = []
+  craftSpin: number[] = []
   focusFactors: number[] = []
   debris: { mesh: THREE.Mesh; spin: THREE.Vector3 }[] = []
   raycaster = new THREE.Raycaster()
@@ -170,6 +233,8 @@ class App {
   // Scratch objects reused every frame to avoid per-item GC churn.
   _ringPos = new THREE.Vector3()
   _localPos = new THREE.Vector3()
+  _screenLocalPos = new THREE.Vector3()
+  _forward = new THREE.Vector3()
   _focusLocal = new THREE.Vector3()
   _ringQuat = new THREE.Quaternion()
   _itemQuat = new THREE.Quaternion()
@@ -243,7 +308,7 @@ class App {
 
   buildSaturn() {
     this.saturnGroup.position.copy(PLANET_POS)
-    this.saturnGroup.rotation.x = GROUP_TILT
+    this.saturnGroup.rotation.set(GROUP_TILT, 0, GROUP_ROLL)
     this.scene.add(this.saturnGroup)
 
     const loader = new THREE.TextureLoader()
@@ -300,50 +365,50 @@ class App {
   }
 
   buildItems(items: GalleryItem[], aspect: number, borderRadius: number) {
-    const height = CARD_HEIGHT
+    const height = SCREEN_HEIGHT
     const width = height * aspect
-    const cardGeometry = new THREE.PlaneGeometry(width, height)
+    const screenGeometry = new THREE.PlaneGeometry(width, height)
     const loader = new THREE.TextureLoader()
 
     items.forEach((item, index) => {
-      // Meteorite: unique lumpy shape and size per project.
-      const rockSize = 0.5 + ((index * 0.618033) % 1) * 0.4
-      const rockGeometry = createRockGeometry(index * 7.13 + 1.7, rockSize)
-      const rockMaterial = new THREE.MeshStandardMaterial({
-        color: new THREE.Color().setHSL(0.08 + ((index * 0.21) % 1) * 0.05, 0.2, 0.42),
-        roughness: 0.85,
-        metalness: 0.08,
-      })
-      const rock = new THREE.Mesh(rockGeometry, rockMaterial) as IndexedMesh
-      rock.userData.index = index
-      this.saturnGroup.add(rock)
-      this.rocks.push(rock)
+      const craft = createCraft(index)
+      craft.userData.index = index
+      this.saturnGroup.add(craft)
+      this.crafts.push(craft)
 
-      // Preview card: what the meteorite unfolds into near focus.
-      const cardMaterial = new THREE.ShaderMaterial({
-        vertexShader: CARD_VERTEX,
-        fragmentShader: CARD_FRAGMENT,
+      const laser = createLaser()
+      laser.userData.index = index
+      laser.visible = false
+      this.saturnGroup.add(laser)
+      this.lasers.push(laser)
+
+      const screenMaterial = new THREE.ShaderMaterial({
+        vertexShader: SCREEN_VERTEX,
+        fragmentShader: SCREEN_FRAGMENT,
         uniforms: {
           uMap: { value: null },
           uImageSize: { value: new THREE.Vector2(1, 1) },
           uPlaneSize: { value: new THREE.Vector2(width, height) },
           uBorderRadius: { value: borderRadius },
+          uStatic: { value: 0 },
+          uTime: { value: 0 },
         },
       })
-      const card = new THREE.Mesh(cardGeometry, cardMaterial) as IndexedMesh
-      card.userData.index = index
-      this.saturnGroup.add(card)
-      this.cards.push(card)
+      const screen = new THREE.Mesh(screenGeometry, screenMaterial)
+      screen.userData.index = index
+      screen.scale.set(0.0001, 0.0001, 1)
+      this.saturnGroup.add(screen)
+      this.screens.push(screen)
 
       loader.load(item.image, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace
-        cardMaterial.uniforms.uMap.value = tex
-        cardMaterial.uniforms.uImageSize.value.set(tex.image.width, tex.image.height)
+        screenMaterial.uniforms.uMap.value = tex
+        screenMaterial.uniforms.uImageSize.value.set(tex.image.width, tex.image.height)
       })
     })
 
     this.focusFactors = new Array(this.count).fill(0)
-    this.rockSpin = new Array(this.count).fill(0)
+    this.craftSpin = new Array(this.count).fill(0)
   }
 
   buildDebris() {
@@ -393,12 +458,13 @@ class App {
     this.pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1
     this.pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1
     this.raycaster.setFromCamera(this.pointerNdc, this.camera)
-    const candidates: THREE.Object3D[] = [...this.rocks, ...this.cards, this.planetMesh]
-    const hits = this.raycaster.intersectObjects(candidates, false)
+    const candidates: THREE.Object3D[] = [this.planetMesh, ...this.crafts, ...this.screens]
+    const hits = this.raycaster.intersectObjects(candidates, true)
     if (hits.length === 0) return null
     const nearest = hits[0].object
     if (nearest === this.planetMesh) return null // the planet occludes whatever's behind it
-    return (nearest as IndexedMesh).userData.index
+    const index = findIndex(nearest)
+    return index === undefined ? null : index
   }
 
   onTouchDown(e: MouseEvent | TouchEvent) {
@@ -458,19 +524,20 @@ class App {
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
 
-    // Shrink the unfolded card's target scale so it never overflows a
+    // Shrink the screen's target scale so it never overflows a
     // narrow/portrait (mobile) viewport, while staying at full size on wide
     // desktop screens.
     const distance = CAMERA_Z - FOCUS_WORLD.z
     const vFov = THREE.MathUtils.degToRad(this.camera.fov)
     const visibleHeight = 2 * Math.tan(vFov / 2) * distance
     const visibleWidth = visibleHeight * this.camera.aspect
-    const cardWorldWidth = CARD_HEIGHT * this.aspect
+    const screenWorldWidth = SCREEN_HEIGHT * this.aspect
     const maxAllowed = visibleWidth * MAX_VIEWPORT_WIDTH_FRACTION
-    this.focusScaleAdjust = Math.min(FOCUS_SCALE, (maxAllowed / cardWorldWidth) * FOCUS_SCALE)
+    this.focusScaleAdjust = Math.min(FOCUS_SCALE, (maxAllowed / screenWorldWidth) * FOCUS_SCALE)
   }
 
   update() {
+    this.time += 0.016
     this.progress.current += (this.progress.target - this.progress.current) * this.progress.ease
     const masterT = this.progress.current
 
@@ -478,7 +545,7 @@ class App {
 
     // The world-space focus point, expressed in the group's CURRENT local
     // space — recomputed every frame since the group keeps spinning, so a
-    // lifted-off item stays pinned in front of the camera regardless of
+    // lifted-off craft stays pinned in front of the camera regardless of
     // where the ring has rotated to underneath it.
     this._focusLocal.copy(FOCUS_WORLD)
     this.saturnGroup.worldToLocal(this._focusLocal)
@@ -490,35 +557,80 @@ class App {
     for (let i = 0; i < this.count; i++) {
       const t = wrap01(masterT - i / this.count)
       const theta = t * Math.PI * 2
-      const liftDist = Math.min(t, 1 - t)
-      const lift = smoothstep(LIFT_WINDOW, 0, liftDist)
+      const approaching = t > 0.5
+      const distFromFocus = approaching ? 1 - t : t
+      const window_ = approaching ? APPROACH_WINDOW : DEPART_WINDOW
+      const lift = smoothstep(window_, 0, distFromFocus)
+
       this.focusFactors[i] = lift
       if (lift > bestFocus) {
         bestFocus = lift
         bestIndex = i
       }
 
-      this.rockSpin[i] += ROCK_SPIN_SPEED * (1 - lift)
+      this.craftSpin[i] += CRAFT_SPIN_SPEED * (1 - lift)
 
       // Flat on the ring plane (local XZ, matching the ring mesh's own
-      // orientation) — where the meteorite spends most of its loop,
-      // genuinely riding the ring rather than approximating it.
+      // orientation) — where the craft spends most of its loop, genuinely
+      // riding the ring rather than approximating it.
       this._ringPos.set(ITEM_ORBIT_RADIUS * Math.sin(theta), 0, ITEM_ORBIT_RADIUS * Math.cos(theta))
-      this._ringEuler.set(-Math.PI / 2, -theta + this.rockSpin[i], 0)
+      this._ringEuler.set(-Math.PI / 2, -theta + this.craftSpin[i], 0)
       this._ringQuat.setFromEuler(this._ringEuler)
 
       this._localPos.copy(this._ringPos).lerp(this._focusLocal, lift)
       this._itemQuat.slerpQuaternions(this._ringQuat, this._focusQuat, lift)
 
-      const rock = this.rocks[i]
-      rock.position.copy(this._localPos)
-      rock.quaternion.copy(this._itemQuat)
-      rock.scale.setScalar(1 - lift)
+      const craft = this.crafts[i]
+      craft.position.copy(this._localPos)
+      craft.quaternion.copy(this._itemQuat)
+      craft.scale.setScalar(CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * lift)
 
-      const card = this.cards[i]
-      card.position.copy(this._localPos)
-      card.quaternion.copy(this._itemQuat)
-      card.scale.setScalar(this.focusScaleAdjust * lift)
+      // The screen floats a little ahead of the craft, toward the camera.
+      this._forward.set(0, 0, 1).applyQuaternion(this._itemQuat)
+      this._screenLocalPos.copy(this._localPos).addScaledVector(this._forward, 0.55)
+
+      // Laser window: fires while the screen is being cast, then retracts —
+      // it doesn't stay on for the whole dwell.
+      // Only fires while approaching (projecting the screen) — closing is a
+      // silent collapse, no laser.
+      const laserAmount = approaching ? smoothstep(0.3, 0.42, lift) * (1 - smoothstep(0.58, 0.72, lift)) : 0
+      const laser = this.lasers[i]
+      if (laserAmount > 0.01) {
+        laser.visible = true
+        const flickerNoise = Math.sin(this.time * 47 + i) * Math.sin(this.time * 13.3 + i * 2)
+        const flicker = flickerNoise > -0.35 ? 1 : 0.2
+        const mat = laser.material as THREE.MeshBasicMaterial
+        mat.opacity = 0.85 * laserAmount * flicker
+        const laserLength = 0.55
+        laser.position.copy(this._localPos)
+        laser.quaternion.copy(this._itemQuat)
+        laser.scale.set(1, 1, laserLength)
+      } else {
+        laser.visible = false
+      }
+
+      // Screen: opens with a grow + static flicker while approaching;
+      // closes with a fast vertical collapse to a line, then the line
+      // shrinks away, while departing.
+      const screen = this.screens[i]
+      const screenMat = screen.material as THREE.ShaderMaterial
+      screen.position.copy(this._screenLocalPos)
+      screen.quaternion.copy(this._itemQuat)
+
+      let scaleX: number
+      let scaleY: number
+      let staticAmount = 0
+      if (approaching) {
+        const grow = smoothstep(0.35, 0.7, lift)
+        scaleX = scaleY = grow
+        staticAmount = smoothstep(0.32, 0.42, lift) * (1 - smoothstep(0.55, 0.78, lift))
+      } else {
+        scaleY = smoothstep(0, 1, lift)
+        scaleX = smoothstep(0, 0.55, lift)
+      }
+      screen.scale.set(Math.max(scaleX, 0.0001) * this.focusScaleAdjust, Math.max(scaleY, 0.0001) * this.focusScaleAdjust, 1)
+      screenMat.uniforms.uStatic.value = staticAmount
+      screenMat.uniforms.uTime.value = this.time
     }
 
     if (bestIndex !== this.activeIndex) {
