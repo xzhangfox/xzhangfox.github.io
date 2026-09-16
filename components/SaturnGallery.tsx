@@ -69,6 +69,9 @@ const FOCUS_WORLD = new THREE.Vector3(0, 0, 8)
 // to the screen — this gap is what the laser visually bridges.
 const CRAFT_FOCUS_WORLD = new THREE.Vector3(0, 0, 6.6)
 const UNIT_Z = new THREE.Vector3(0, 0, 1)
+// Shared by the laser material and the screen's edge glow/static tint so the
+// beam and the hologram it projects read as one continuous piece of light.
+const ACCENT_COLOR = new THREE.Color(0x8fe3ff)
 
 const ITEM_ORBIT_RADIUS = (RING_INNER + RING_OUTER) / 2
 const CRAFT_SPIN_SPEED = 0.01
@@ -101,8 +104,12 @@ const SCREEN_FRAGMENT = `
   uniform vec2 uImageSize;
   uniform vec2 uPlaneSize;
   uniform float uBorderRadius;
-  uniform float uStatic;
+  // 0 while the screen is still forming/static — the real image is never
+  // sampled at all during this — 1 once fully revealed.
+  uniform float uReveal;
+  uniform float uFlicker;
   uniform float uTime;
+  uniform vec3 uAccentColor;
   varying vec2 vUv;
 
   float roundedBoxSDF(vec2 p, vec2 b, float r) {
@@ -114,29 +121,37 @@ const SCREEN_FRAGMENT = `
   }
 
   void main() {
-    vec2 ratio = vec2(
-      min((uPlaneSize.x / uPlaneSize.y) / (uImageSize.x / uImageSize.y), 1.0),
-      min((uPlaneSize.y / uPlaneSize.x) / (uImageSize.y / uImageSize.x), 1.0)
-    );
-    vec2 uv = vec2(
-      vUv.x * ratio.x + (1.0 - ratio.x) * 0.5,
-      vUv.y * ratio.y + (1.0 - ratio.y) * 0.5
-    );
-
     float d = roundedBoxSDF(vUv - 0.5, vec2(0.5 - uBorderRadius), uBorderRadius);
     if (d > 0.02) discard;
 
-    vec3 base = texture2D(uMap, uv).rgb;
-    float noise = hash(floor(vUv * vec2(140.0, 90.0)) + floor(uTime * 18.0));
-    vec3 withStatic = mix(base, vec3(noise), clamp(uStatic, 0.0, 1.0) * 0.85);
-    float scan = 0.94 + 0.06 * sin(vUv.y * 420.0 - uTime * 40.0);
-    withStatic *= scan;
+    float reveal = clamp(uReveal, 0.0, 1.0);
+    vec3 color = vec3(0.0);
+    if (reveal < 0.999) {
+      // Pure noise/scanline hologram static — the preview image is never
+      // sampled here, so nothing of it can leak through before the reveal.
+      float noise = hash(floor(vUv * vec2(160.0, 100.0)) + floor(uTime * 22.0));
+      float scan = 0.6 + 0.4 * sin(vUv.y * 380.0 - uTime * 46.0);
+      vec3 staticColor = uAccentColor * (noise * 0.7 + 0.3) * scan * uFlicker;
+      color = staticColor;
+    }
+    if (reveal > 0.001) {
+      vec2 ratio = vec2(
+        min((uPlaneSize.x / uPlaneSize.y) / (uImageSize.x / uImageSize.y), 1.0),
+        min((uPlaneSize.y / uPlaneSize.x) / (uImageSize.y / uImageSize.x), 1.0)
+      );
+      vec2 uv = vec2(
+        vUv.x * ratio.x + (1.0 - ratio.x) * 0.5,
+        vUv.y * ratio.y + (1.0 - ratio.y) * 0.5
+      );
+      vec3 base = texture2D(uMap, uv).rgb;
+      float scan = 0.96 + 0.04 * sin(vUv.y * 420.0 - uTime * 40.0);
+      color = mix(color, base * scan, reveal);
+    }
 
     float edge = smoothstep(-0.045, -0.01, d);
-    vec3 edgeColor = vec3(0.55, 0.85, 1.0);
-    vec3 finalColor = mix(withStatic, edgeColor, edge * 0.5);
+    color = mix(color, uAccentColor, edge * 0.55);
 
-    gl_FragColor = vec4(finalColor, 1.0);
+    gl_FragColor = vec4(color, 1.0);
   }
 `
 
@@ -197,11 +212,15 @@ function createCraft(index: number): THREE.Group {
 }
 
 function createLaser(): THREE.Mesh {
-  const geometry = new THREE.CylinderGeometry(0.012, 0.05, 1, 8, 1, true)
+  // Narrow at the craft (the source), flaring into a wide cone toward the
+  // screen end — a projector beam, not a uniform pointer — so the taper
+  // itself reads as real 3D perspective and visually foreshadows the plane
+  // it's about to become.
+  const geometry = new THREE.CylinderGeometry(0.1, 0.018, 1, 10, 1, true)
   geometry.translate(0, 0.5, 0)
   geometry.rotateX(Math.PI / 2)
   const material = new THREE.MeshBasicMaterial({
-    color: 0x8fe3ff,
+    color: ACCENT_COLOR,
     transparent: true,
     opacity: 0.85,
     blending: THREE.AdditiveBlending,
@@ -401,8 +420,10 @@ class App {
           uImageSize: { value: new THREE.Vector2(1, 1) },
           uPlaneSize: { value: new THREE.Vector2(width, height) },
           uBorderRadius: { value: borderRadius },
-          uStatic: { value: 0 },
+          uReveal: { value: 0 },
+          uFlicker: { value: 1 },
           uTime: { value: 0 },
+          uAccentColor: { value: new THREE.Vector3(ACCENT_COLOR.r, ACCENT_COLOR.g, ACCENT_COLOR.b) },
         },
       })
       const screen = new THREE.Mesh(screenGeometry, screenMaterial)
@@ -602,12 +623,16 @@ class App {
 
       // Laser: a real beam from the craft's current WORLD position to the
       // screen's fixed WORLD position — recomputed every frame since the
-      // craft is always moving relative to the (stationary) screen. Only
-      // fires while approaching (projecting the screen); closing is a
-      // silent collapse, no laser.
-      const laserAmount = approaching ? smoothstep(0.3, 0.42, lift) * (1 - smoothstep(0.58, 0.72, lift)) : 0
+      // craft is always moving relative to the (stationary) screen. It
+      // extends from a point at the craft out to full length (this same
+      // growth also drives the screen's horizontal unfurl below, so the
+      // beam visibly "draws" the line the screen starts as), then holds
+      // through the screen's formation and static before fading. Only
+      // fires while approaching; closing is a silent collapse, no laser.
+      const laserGrow = approaching ? smoothstep(0.26, 0.38, lift) : 0
+      const laserVisibility = approaching ? smoothstep(0.26, 0.3, lift) * (1 - smoothstep(0.68, 0.78, lift)) : 0
       const laser = this.lasers[i]
-      if (laserAmount > 0.01) {
+      if (laserVisibility > 0.01) {
         this._craftWorldPos.copy(this._localPos).applyMatrix4(this.saturnGroup.matrixWorld)
         const dist = this._craftWorldPos.distanceTo(FOCUS_WORLD)
         this._laserDir.copy(FOCUS_WORLD).sub(this._craftWorldPos).normalize()
@@ -617,36 +642,47 @@ class App {
         const flickerNoise = Math.sin(this.time * 47 + i) * Math.sin(this.time * 13.3 + i * 2)
         const flicker = flickerNoise > -0.35 ? 1 : 0.2
         const mat = laser.material as THREE.MeshBasicMaterial
-        mat.opacity = 0.85 * laserAmount * flicker
+        mat.opacity = 0.85 * laserVisibility * flicker
         laser.position.copy(this._craftWorldPos)
         laser.quaternion.copy(this._laserQuat)
-        laser.scale.set(1, 1, dist)
+        // Grows from a point at the craft to its full length reaching the
+        // screen — real perspective on the taper comes for free from the
+        // camera projection, this just controls how much of the beam has
+        // "arrived" yet.
+        laser.scale.set(1, 1, dist * laserGrow)
       } else {
         laser.visible = false
       }
 
-      // Screen: fixed in place, no movement — it opens point → horizontal
-      // line → full plane while approaching (X unfurls, then Y), with a
-      // brief static/snow flicker once fully formed that clears to the
-      // clean image; and closes plane → line → point while departing
-      // (Y collapses first, then X), noticeably faster than it opened.
+      // Screen: fixed in place, no movement of its own. Opens point →
+      // horizontal line (X, synced to the laser's own extension above) →
+      // full plane (Y unfurls next); the real preview image is never
+      // sampled until fully revealed — until then the screen shows only
+      // flickering hologram static, well after the plane has finished
+      // forming. Closes plane → line → point while departing (Y collapses
+      // first, then X), through a much narrower window so it's fast.
       const screen = this.screens[i]
       const screenMat = screen.material as THREE.ShaderMaterial
 
       let scaleX: number
       let scaleY: number
-      let staticAmount = 0
+      let reveal: number
       if (approaching) {
-        scaleX = smoothstep(0.3, 0.45, lift)
-        scaleY = smoothstep(0.45, 0.62, lift)
-        staticAmount = smoothstep(0.58, 0.66, lift) * (1 - smoothstep(0.72, 0.85, lift))
+        scaleX = laserGrow
+        scaleY = smoothstep(0.38, 0.56, lift)
+        reveal = smoothstep(0.74, 0.88, lift)
       } else {
         scaleY = smoothstep(0, 1, lift)
         scaleX = smoothstep(0, 0.45, lift)
+        reveal = 1
       }
       screen.scale.set(Math.max(scaleX, 0.0001) * this.focusScaleAdjust, Math.max(scaleY, 0.0001) * this.focusScaleAdjust, 1)
-      screenMat.uniforms.uStatic.value = staticAmount
+      screenMat.uniforms.uReveal.value = reveal
       screenMat.uniforms.uTime.value = this.time
+      if (reveal < 0.999) {
+        const screenFlickerNoise = Math.sin(this.time * 39 + i * 3) * Math.sin(this.time * 17 + i)
+        screenMat.uniforms.uFlicker.value = screenFlickerNoise > -0.3 ? 1 : 0.35
+      }
     }
 
     if (bestIndex !== this.activeIndex) {
