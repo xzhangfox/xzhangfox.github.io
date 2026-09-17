@@ -135,12 +135,27 @@ const BASE_FOCUS_OFFSET = new THREE.Vector3(0, 1, 18)
 // the craft itself, not just its screen, should read as a clear, sizeable
 // presence once arrived, not a small accent beside the hologram.
 const BASE_CRAFT_FOCUS_OFFSET = new THREE.Vector3(0, 1, 18.8)
+// How far into the bottom-left quadrant the arrived craft sits, as a
+// fraction of the HALF visible width/height at its own focus distance
+// (see onResize's craftOffsetXY) — 1.0 would put it exactly at the frame
+// edge, so these stay well under that for a comfortable margin. The
+// hologram screen itself is untouched (still centered), so this alone is
+// what turns "craft dead center in front of its own screen" into "craft
+// off in the corner, laser firing diagonally up to the screen."
+const CRAFT_OFFSET_FRACTION_X = 0.42
+const CRAFT_OFFSET_FRACTION_Y = 0.4
 // Saturn's own bare radius (its ring is a bonus on top, not counted) — the
 // reference every other planet's `viewScale` is computed against, so every
 // planet's actual sphere reads at the same apparent size once entered.
 const REFERENCE_RADIUS = 3.2
 const UNIT_Z = new THREE.Vector3(0, 0, 1)
 const IDENTITY_QUAT = new THREE.Quaternion()
+const Y_AXIS = new THREE.Vector3(0, 1, 0)
+// The craft mesh's own nose (its cone body, see createCraftGeometry) points
+// along local +Z, but a Camera's lookAt orients its local -Z at the
+// target — this 180° correction is applied on top of that lookAt result
+// so the nose (not the engine) ends up pointing at whatever it's aimed at.
+const NOSE_FLIP_QUAT = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, Math.PI)
 const ORIGIN = new THREE.Vector3(0, 0, 0)
 
 // Shared by the laser material and the screen's glow/edge/static tint so the
@@ -416,19 +431,66 @@ function createCraft(index: number): { group: THREE.Group; halo: THREE.Mesh } {
   return { group, halo }
 }
 
+const LASER_VERTEX = `
+  varying vec2 vUv;
+  varying vec3 vNormal;
+  varying vec3 vViewPos;
+  void main() {
+    vUv = uv;
+    vNormal = normalize(normalMatrix * normal);
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vViewPos = -mvPosition.xyz;
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`
+// A cheap volumetric-looking beam rather than a flat-shaded cone: fresnel
+// (brighter where the surface is viewed edge-on, the standard trick for
+// faking a light shaft with a single hollow mesh) combined with a
+// coarse, slowly-drifting noise for visible motes drifting in the beam —
+// the Tyndall-effect look of light scattering off dust — and a fade from
+// bright at the craft (source) to faint at the screen end.
+const LASER_FRAGMENT = `
+  precision highp float;
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  uniform float uTime;
+  varying vec2 vUv;
+  varying vec3 vNormal;
+  varying vec3 vViewPos;
+
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+
+  void main() {
+    vec3 viewDir = normalize(vViewPos);
+    float fresnel = pow(1.0 - clamp(abs(dot(normalize(vNormal), viewDir)), 0.0, 1.0), 2.2);
+    float lengthFade = 1.0 - smoothstep(0.1, 1.0, vUv.y);
+    float streak = hash(vec2(floor(vUv.y * 26.0 - uTime * 2.2), floor(vUv.x * 5.0)));
+    float dust = 0.65 + 0.55 * streak;
+    float alpha = clamp(fresnel * 0.85 + 0.1, 0.0, 1.0) * mix(0.4, 1.0, lengthFade) * dust * uOpacity;
+    gl_FragColor = vec4(uColor, alpha);
+  }
+`
+
 function createLaser(): THREE.Mesh {
   // Narrow at the craft (the source), flaring into a wide cone toward the
   // screen end — a projector beam, not a uniform pointer.
   const geometry = new THREE.CylinderGeometry(0.1, 0.018, 1, 10, 1, true)
   geometry.translate(0, 0.5, 0)
   geometry.rotateX(Math.PI / 2)
-  const material = new THREE.MeshBasicMaterial({
-    color: LASER_WHITE,
+  const material = new THREE.ShaderMaterial({
+    vertexShader: LASER_VERTEX,
+    fragmentShader: LASER_FRAGMENT,
     transparent: true,
-    opacity: 0.85,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
+    uniforms: {
+      uColor: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
+      uOpacity: { value: 0 },
+      uTime: { value: 0 },
+    },
   })
   return new THREE.Mesh(geometry, material)
 }
@@ -518,6 +580,13 @@ class PlanetInstance {
   _cameraOffsetScratch = new THREE.Vector3()
   _focusOffsetScratch = new THREE.Vector3()
   _craftFocusOffsetScratch = new THREE.Vector3()
+  _screenFocusLocal = new THREE.Vector3()
+  // A reusable (never-rendered) camera purely for its lookAt math — see
+  // `computeOverviewQuat`'s own comment on why a plain Object3D's lookAt
+  // silently computes the wrong rotation and a Camera's doesn't. Reused
+  // every frame (not recreated) since this runs inside `activeUpdate`,
+  // unlike the once-per-resize overview version.
+  _aimScratchCam = new THREE.PerspectiveCamera()
 
   cameraOffset(): THREE.Vector3 {
     return this._cameraOffsetScratch.copy(BASE_CAMERA_OFFSET).multiplyScalar(this.viewScale)
@@ -526,13 +595,23 @@ class PlanetInstance {
     return this._focusOffsetScratch.copy(BASE_FOCUS_OFFSET).multiplyScalar(this.viewScale)
   }
   craftFocusOffset(): THREE.Vector3 {
-    return this._craftFocusOffsetScratch.copy(BASE_CRAFT_FOCUS_OFFSET).multiplyScalar(this.viewScale)
+    const off = this._craftFocusOffsetScratch.copy(BASE_CRAFT_FOCUS_OFFSET).multiplyScalar(this.viewScale)
+    const xy = this._craftOffsetXYRef?.value
+    if (xy) {
+      off.x += xy.x * this.viewScale
+      off.y += xy.y * this.viewScale
+    }
+    return off
   }
 
   // Set by the App before calling activeUpdate — a shared, resize-driven
   // scale factor (same for every planet since the camera/focus geometry is
   // identical everywhere).
   _focusScaleAdjustRef: { value: number } | null = null
+  /** Same idea, for the craft's bottom-left lateral offset (see App's
+   *  onResize) — shared and resize-driven since the geometry producing it
+   *  is identical for every planet. */
+  _craftOffsetXYRef: { value: THREE.Vector2 } | null = null
 
   /** Scales the camera/focus/craft-parking offsets and the hologram screen
    *  so every planet fills the same apparent size once entered and its
@@ -813,7 +892,16 @@ class PlanetInstance {
     this.group.updateMatrixWorld()
     this._craftFocusLocal.copy(this.group.position).add(this.craftFocusOffset())
     this.group.worldToLocal(this._craftFocusLocal)
-    this._focusQuat.copy(this.group.quaternion).invert()
+    // The screen's own local position, so the arrived craft can aim its
+    // nose at it directly rather than just facing the camera — necessary
+    // now that the craft parks off in the bottom-left corner instead of
+    // dead center in front of its screen.
+    this._screenFocusLocal.copy(this.group.position).add(this.focusOffset())
+    this.group.worldToLocal(this._screenFocusLocal)
+    this._aimScratchCam.position.copy(this._craftFocusLocal)
+    this._aimScratchCam.up.copy(Y_AXIS)
+    this._aimScratchCam.lookAt(this._screenFocusLocal)
+    this._focusQuat.copy(this._aimScratchCam.quaternion).multiply(NOSE_FLIP_QUAT)
 
     const flying = this.flightIndex
     if (flying >= 0) {
@@ -867,8 +955,9 @@ class PlanetInstance {
         laser.visible = true
         const flickerNoise = Math.sin(time * 47 + i) * Math.sin(time * 13.3 + i * 2)
         const flicker = flickerNoise > -0.35 ? 1 : 0.2
-        const mat = laser.material as THREE.MeshBasicMaterial
-        mat.opacity = 0.85 * laserVisibility * flicker
+        const mat = laser.material as THREE.ShaderMaterial
+        mat.uniforms.uOpacity.value = 0.85 * laserVisibility * flicker
+        mat.uniforms.uTime.value = time
         laser.position.copy(this._craftWorldPos)
         laser.quaternion.copy(this._laserQuat)
         laser.scale.set(this.viewScale, this.viewScale, dist * laserGrow)
@@ -1050,6 +1139,12 @@ class App {
   overviewCameraPos = new THREE.Vector3()
   overviewQuat = new THREE.Quaternion()
   focusScaleAdjust = { value: FOCUS_SCALE }
+  // Where, in world units at the craft's own focus distance, "bottom-left
+  // of frame" actually is — recomputed on resize (see onResize) from the
+  // live viewport/FOV the same way the screen's own size clamp already
+  // is, so the craft lands in the same RELATIVE spot regardless of
+  // aspect ratio, not a fixed offset that drifts off-screen on mobile.
+  craftOffsetXY = { value: new THREE.Vector2(0, 0) }
   hoveredIndex = -1
   time = 0
 
@@ -1102,6 +1197,7 @@ class App {
     this.planets = planetSites.map((site, i) => {
       const p = new PlanetInstance(site, this.scene, aspect, borderRadius, i)
       p._focusScaleAdjustRef = this.focusScaleAdjust
+      p._craftOffsetXYRef = this.craftOffsetXY
       this.planetsById.set(site.id, p)
       return p
     })
@@ -1469,6 +1565,19 @@ class App {
     const screenWorldWidth = SCREEN_HEIGHT * this.aspect
     const maxAllowed = visibleWidth * MAX_VIEWPORT_WIDTH_FRACTION
     this.focusScaleAdjust.value = Math.min(FOCUS_SCALE, (maxAllowed / screenWorldWidth) * FOCUS_SCALE)
+
+    // Same idea, for where the arrived craft sits: computed at ITS OWN
+    // focus distance (closer to the camera than the screen), so "bottom-
+    // left of frame" lands in the same relative spot at any aspect ratio
+    // instead of a fixed world offset that would drift toward the edge
+    // (or off it) on a narrower screen.
+    const craftDistance = BASE_CAMERA_OFFSET.z - BASE_CRAFT_FOCUS_OFFSET.z
+    const craftVisibleHeight = 2 * Math.tan(vFov / 2) * craftDistance
+    const craftVisibleWidth = craftVisibleHeight * this.camera.aspect
+    this.craftOffsetXY.value.set(
+      -CRAFT_OFFSET_FRACTION_X * (craftVisibleWidth / 2),
+      -CRAFT_OFFSET_FRACTION_Y * (craftVisibleHeight / 2)
+    )
 
     this.updateOverviewDistance()
   }
