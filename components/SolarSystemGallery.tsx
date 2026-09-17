@@ -43,12 +43,6 @@ export interface SolarSystemGalleryHandle {
    *  resumes its continuous idle rotation once that finishes. Call this
    *  whenever the preview modal closes, by whatever means. */
   closeSelection: () => void
-  /** Every craft on the focused planet currently close enough to the
-   *  camera to mark, in live viewport pixels — one rule for both an
-   *  idling craft passing the front of the ring and the clicked one that's
-   *  arrived at focus; the caller tells them apart via `index ===
-   *  activeIndex`. Meant to be polled from a caller-owned rAF loop. */
-  getCraftMarkers: () => { index: number; x: number; y: number }[]
 }
 
 interface HoverInfo {
@@ -164,21 +158,6 @@ const DEPART_WINDOW = 0.06
 // orbiting, not N craft parked. ~65s for a full revolution at 60fps: slow
 // and ambient, never fighting for attention with a focused item.
 const IDLE_ORBIT_SPEED = 0.00026
-// How close (real 3D distance to the camera, world units at viewScale=1 —
-// see `getCraftMarkers`) a craft must be before it's worth marking with a
-// circle+label, whether it's idling past its closest approach to the
-// camera or is the one that was clicked and has arrived at focus. The
-// arrived craft always sits ~7.4 units out; an idling craft's own closest
-// approach (its ring's nearest point to the camera, which — because the
-// planet keeps slowly self-spinning even while entered — isn't a fixed
-// ring position, just whatever currently measures closest) swings between
-// ~18 and ~30 depending on where it is in its orbit. 18.5 sits just above
-// that idling minimum: comfortably clears the arrived craft's own
-// distance, and — numerically verified — lights up an idling craft for
-// only ~15% of its orbit (any one of Saturn's 4 items marked ~45% of the
-// time, never two at once), reading as a brief pass rather than a
-// constant fixture.
-const CRAFT_MARKER_DISTANCE = 18.5
 
 const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.35
@@ -1345,46 +1324,11 @@ class App {
     return { top: minY, left: minX, width: maxX - minX, height: maxY - minY }
   }
 
-  // Every craft on the focused planet currently close enough to the camera
-  // to be worth marking, projected to viewport pixels — ONE rule (real 3D
-  // distance from the craft to the camera, scaled by the planet's own
-  // viewScale so it means the same apparent closeness on every planet
-  // regardless of its actual size) used for every craft alike, whether
-  // it's just idling past the front of the ring or is the one that was
-  // clicked and has arrived at focus. Previously these were two unrelated
-  // proxies — a ring-phase window for idling craft, a focus-lift threshold
-  // for the opened one — which could disagree with each other about what
-  // "close" means; this is the single source both the flyby marker and the
-  // arrived-craft marker now read from (the caller tells them apart via
-  // `index === activeIndex`).
-  getCraftMarkers(): { index: number; x: number; y: number }[] {
-    if (this.viewMode !== 'planet' || !this.focusedPlanet) return []
-    const planet = this.focusedPlanet
-    const rect = this.container.getBoundingClientRect()
-    const threshold = CRAFT_MARKER_DISTANCE * planet.viewScale
-    const out: { index: number; x: number; y: number }[] = []
-    for (let i = 0; i < planet.count; i++) {
-      const craft = planet.crafts[i]
-      if (!craft.visible) continue
-      craft.getWorldPosition(this._screenRectCorner)
-      const dist = this._screenRectCorner.distanceTo(this.camera.position)
-      if (dist >= threshold) continue
-      const ndc = this._screenRectCorner.project(this.camera)
-      if (ndc.z > 1) continue
-      out.push({
-        index: i,
-        x: rect.left + (ndc.x * 0.5 + 0.5) * rect.width,
-        y: rect.top + (1 - (ndc.y * 0.5 + 0.5)) * rect.height,
-      })
-    }
-    return out
-  }
-
   // There's no ring-drag anymore — switching between items is click-only
-  // (a craft, its flyby marker, the arrived marker, the HUD panel, a
-  // badge, or a dot). `hasDragged` still exists purely so an incidental
-  // finger/mouse wobble mid-click (or a page-scroll gesture that happens
-  // to start over the canvas) doesn't register as a tap.
+  // (a craft, the HUD panel, a badge, or a dot). `hasDragged` still exists
+  // purely so an incidental finger/mouse wobble mid-click (or a
+  // page-scroll gesture that happens to start over the canvas) doesn't
+  // register as a tap.
   onTouchDown(e: MouseEvent | TouchEvent) {
     this.isDown = true
     this.hasDragged = false
@@ -1422,6 +1366,12 @@ class App {
         } else {
           this.focusedPlanet.goTo(localIndex)
         }
+      } else if (this.focusedPlanet.anySelected) {
+        // Missed every craft/screen while something was selected — close
+        // it. (Once the preview modal itself is open, it's a full-viewport
+        // overlay sitting above the canvas, so this never fires then; the
+        // modal's own backdrop-click handles that case instead.)
+        this.focusedPlanet.closeSelection()
       }
     }
   }
@@ -1584,7 +1534,6 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     goTo: (localIndex: number) => appRef.current?.goTo(localIndex),
     getFocusedScreenRect: () => appRef.current?.getFocusedScreenRect() ?? null,
     closeSelection: () => appRef.current?.closeSelection(),
-    getCraftMarkers: () => appRef.current?.getCraftMarkers() ?? [],
   }), [])
 
   useEffect(() => {

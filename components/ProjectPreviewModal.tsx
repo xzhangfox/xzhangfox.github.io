@@ -152,8 +152,22 @@ export default function ProjectPreviewModal({
         initial={false}
         animate={{ x: cardFlip.x, y: cardFlip.y, scaleX: cardFlip.scaleX, scaleY: cardFlip.scaleY }}
         transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-        style={{ transformOrigin: 'center center' }}
-        className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-[4%]"
+        style={{
+          transformOrigin: 'center center',
+          // The detail page's own resting width IS the hologram screen's
+          // real measured width at the moment it was clicked — not an
+          // independent breakpoint-driven value — so it looks like the
+          // same object at any viewport size, not something that happens
+          // to start the same size and then grows wider once expanded.
+          // `getFocusedScreenRect()` (see SolarSystemGallery) already
+          // accounts for the screen's own mobile/narrow-viewport clamp, so
+          // this stays correctly sized on any device without extra logic
+          // here. Falls back to a fixed width only in the (practically
+          // unreachable) case this opens with no origin at all.
+          width: originRect ? `${originRect.width}px` : 'min(600px, 100%)',
+          maxWidth: 'calc(100vw - 2rem)',
+        }}
+        className="relative flex max-h-full flex-col overflow-hidden rounded-[4%]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Card chrome fill — deferred until the image has fully arrived,
