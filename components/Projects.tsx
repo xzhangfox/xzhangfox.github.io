@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import FadeIn from './FadeIn'
 import SolarSystemGallery, { type SolarSystemGalleryHandle, type PlanetSite, type ScreenRect } from './SolarSystemGallery'
@@ -91,6 +91,11 @@ export default function Projects() {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const [hoverInfo, setHoverInfo] = useState<{ localIndex: number; clientX: number; clientY: number } | null>(null)
   const galleryRef = useRef<SolarSystemGalleryHandle>(null)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const hudPanelRef = useRef<HTMLDivElement>(null)
+  const craftMarkerGroupRef = useRef<SVGGElement>(null)
+  const craftMarkerCircleRef = useRef<SVGCircleElement>(null)
+  const leaderLineRef = useRef<SVGLineElement>(null)
 
   const currentProjects = activePlanetId ? projectsByPlanet[activePlanetId] ?? [] : []
   const activeProject = activeIndex !== null ? currentProjects[activeIndex] : undefined
@@ -107,6 +112,57 @@ export default function Projects() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [t, activePlanetId]
   )
+
+  // Clicking the craft-callout marker or the HUD panel opens the same
+  // project the same way a direct craft click would — same origin rect, so
+  // the modal still morphs from a real on-screen anchor.
+  const openActiveProject = useCallback(() => {
+    if (activeIndex === null) return
+    handleItemClick(activeIndex, galleryRef.current?.getFocusedScreenRect() ?? null)
+  }, [activeIndex, handleItemClick])
+
+  // Polls the focused craft's live screen position on its own rAF loop
+  // (not React state) so the marker/leader-line can track a moving craft
+  // at 60fps without forcing the whole section to re-render every frame —
+  // only the SVG attributes are touched directly. Runs only while a
+  // project is actually focused; the getter itself returns null (hiding
+  // the marker) until the craft has essentially arrived.
+  useEffect(() => {
+    if (!activeProject) {
+      if (craftMarkerGroupRef.current) craftMarkerGroupRef.current.style.display = 'none'
+      return
+    }
+    let raf: number
+    const tick = () => {
+      const pos = galleryRef.current?.getCraftScreenPos()
+      const wrapperRect = wrapperRef.current?.getBoundingClientRect()
+      const group = craftMarkerGroupRef.current
+      const line = leaderLineRef.current
+      const circle = craftMarkerCircleRef.current
+      if (pos && wrapperRect && group && line && circle) {
+        const x = pos.x - wrapperRect.left
+        const y = pos.y - wrapperRect.top
+        group.style.display = ''
+        circle.setAttribute('cx', String(x))
+        circle.setAttribute('cy', String(y))
+        line.setAttribute('x1', String(x))
+        line.setAttribute('y1', String(y))
+        const hudRect = hudPanelRef.current?.getBoundingClientRect()
+        if (hudRect) {
+          line.setAttribute('x2', String(hudRect.left - wrapperRect.left))
+          line.setAttribute('y2', String(hudRect.bottom - wrapperRect.top))
+          line.style.display = ''
+        } else {
+          line.style.display = 'none'
+        }
+      } else if (group) {
+        group.style.display = 'none'
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [activeProject?.id])
 
   const goPrevNext = (dir: 1 | -1) => {
     const count = currentProjects.length
@@ -150,7 +206,7 @@ export default function Projects() {
           craft appear, idling on the ring until one is clicked. Swipe/arrows
           stay scoped to whichever planet is entered; only the back button
           returns to the overview. */}
-      <div className="relative h-[65vh] max-h-[760px] min-h-[420px] w-full overflow-hidden sm:h-[72vh]">
+      <div ref={wrapperRef} className="relative h-[65vh] max-h-[760px] min-h-[420px] w-full overflow-hidden sm:h-[72vh]">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-bg to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-20 bg-gradient-to-t from-bg to-transparent" />
 
@@ -229,12 +285,19 @@ export default function Projects() {
           <div className="pointer-events-none absolute right-2 top-2 z-10 w-[168px] sm:right-4 sm:top-4 sm:w-[220px]">
             <AnimatePresence mode="wait">
               <motion.div
+                ref={hudPanelRef}
                 key={activeProject.id}
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -6 }}
                 transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-                className="border bg-black/45 px-3 py-2 backdrop-blur-sm sm:px-3.5 sm:py-2.5"
+                role="button"
+                tabIndex={0}
+                onClick={openActiveProject}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') openActiveProject()
+                }}
+                className="pointer-events-auto cursor-pointer border bg-black/45 px-3 py-2 backdrop-blur-sm transition-colors duration-200 hover:bg-black/60 sm:px-3.5 sm:py-2.5"
                 style={{
                   borderColor: `${activeProject.color}35`,
                   clipPath: 'polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px))',
@@ -252,6 +315,35 @@ export default function Projects() {
             </AnimatePresence>
           </div>
         )}
+
+        {/* Craft callout — a targeting marker + leader line to the HUD panel
+            above, so a craft that renders visually tiny on a large planet
+            is still findable. Position is written directly to the SVG
+            attributes by the rAF loop above, not through React state, so
+            it can track a moving craft every frame without re-rendering
+            the section. Hidden (display:none) until the craft has arrived. */}
+        <svg className="pointer-events-none absolute inset-0 z-10 overflow-visible" aria-hidden="true">
+          <g ref={craftMarkerGroupRef} style={{ display: 'none' }}>
+            <line
+              ref={leaderLineRef}
+              stroke={activeProject ? `${activeProject.color}90` : 'rgba(234,246,255,0.6)'}
+              strokeWidth={1}
+              strokeDasharray="3 4"
+            />
+            <circle
+              ref={craftMarkerCircleRef}
+              r={16}
+              fill="transparent"
+              stroke={activeProject ? activeProject.color : '#eaf6ff'}
+              strokeWidth={1.5}
+              className="pointer-events-auto cursor-pointer"
+              onClick={openActiveProject}
+            >
+              <animate attributeName="r" values="14;18;14" dur="1.8s" repeatCount="indefinite" />
+              <animate attributeName="stroke-opacity" values="0.9;0.35;0.9" dur="1.8s" repeatCount="indefinite" />
+            </circle>
+          </g>
+        </svg>
 
         {/* Simple hover tooltip — a craft idling on the ring, not yet
             clicked, just names itself. */}

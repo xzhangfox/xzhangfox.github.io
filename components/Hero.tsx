@@ -36,7 +36,7 @@ export default function Hero() {
     return () => clearTimeout(timerRef.current)
   }, [displayText, isDeleting, titleIndex, TITLES])
 
-  const nameChars = 'XI ZHANG'.split('')
+  const nameChars = t.nav.name.split('')
 
   return (
     <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
@@ -82,7 +82,7 @@ export default function Hero() {
 
         {/* Name */}
         <h1
-          className="text-[clamp(3.5rem,11vw,8.5rem)] font-bold leading-none tracking-[0.08em] mb-6 select-none"
+          className="text-[clamp(3.5rem,11vw,8.5rem)] font-bold leading-none tracking-[0.08em] mb-6 select-none uppercase"
           style={{ filter: 'drop-shadow(0 2px 24px rgba(0,0,0,0.8)) drop-shadow(0 0 48px rgba(0,0,0,0.6))' }}
         >
           {nameChars.map((char, i) => (

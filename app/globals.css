@@ -106,3 +106,33 @@ body {
   height: 1px;
   background: rgba(255, 255, 255, 0.05);
 }
+
+/* Hologram edge — a persistent, laser-white torn-light border treatment for
+   the project preview modal's morphing image, matching the WebGL hologram
+   screen's frayed/glowing look (see SolarSystemGallery's SCREEN_FRAGMENT)
+   so there's no abrupt style swap when the WebGL scene hands off to this
+   DOM element, and it stays this way through the fully expanded state. */
+.hologram-edge {
+  border: 1.5px solid rgba(234, 246, 255, 0.6);
+  filter: url(#hologram-fray);
+  animation: hologram-flicker 3.4s infinite;
+}
+
+@keyframes hologram-flicker {
+  0%, 19%, 21%, 54%, 56%, 100% { opacity: 1; }
+  20%, 55% { opacity: 0.55; }
+  76% { opacity: 0.82; }
+}
+
+.hologram-scan {
+  top: -16%;
+  height: 14%;
+  background: linear-gradient(to bottom, transparent, rgba(234, 246, 255, 0.4), transparent);
+  mix-blend-mode: screen;
+  animation: hologram-scan-sweep 3.2s linear infinite;
+}
+
+@keyframes hologram-scan-sweep {
+  0% { top: -16%; }
+  100% { top: 116%; }
+}

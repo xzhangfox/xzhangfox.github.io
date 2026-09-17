@@ -33,6 +33,15 @@ export interface SolarSystemGalleryHandle {
   /** Bring the item at this LOCAL index (within the currently-entered
    *  planet) into focus — ignored while in the overview. */
   goTo: (localIndex: number) => void
+  /** The currently-open item's craft, in live viewport pixels, once it's
+   *  mostly arrived — null before then or when nothing's open. Meant to be
+   *  polled from a caller-owned rAF loop, not reactively. */
+  getCraftScreenPos: () => { x: number; y: number } | null
+  /** The focused, fully-open screen's current on-screen rect — the same
+   *  origin rect a direct craft click passes to `onItemClick`, exposed so a
+   *  non-craft trigger (the HUD panel, the craft callout marker) can open
+   *  the same project with the same FLIP-morph origin. */
+  getFocusedScreenRect: () => ScreenRect | null
 }
 
 interface HoverInfo {
@@ -1246,6 +1255,28 @@ class App {
     return { top: minY, left: minX, width: maxX - minX, height: maxY - minY }
   }
 
+  // The open item's craft, projected to viewport pixels, once it's mostly
+  // arrived at the focus spot — anchors a discoverability marker (circle +
+  // leader line to the HUD panel) for planets where `viewScale` still
+  // leaves the craft visually tiny. Null before arrival (nothing to point
+  // at yet) or once nothing's open.
+  getFocusedCraftScreenPos(): { x: number; y: number } | null {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet) return null
+    const planet = this.focusedPlanet
+    const idx = planet.openIndex
+    if (idx < 0 || idx >= planet.count) return null
+    if ((planet.focusFactors[idx] ?? 0) < 0.94) return null
+    const craft = planet.crafts[idx]
+    craft.getWorldPosition(this._screenRectCorner)
+    const ndc = this._screenRectCorner.project(this.camera)
+    if (ndc.z > 1) return null
+    const rect = this.container.getBoundingClientRect()
+    return {
+      x: rect.left + (ndc.x * 0.5 + 0.5) * rect.width,
+      y: rect.top + (1 - (ndc.y * 0.5 + 0.5)) * rect.height,
+    }
+  }
+
   onTouchDown(e: MouseEvent | TouchEvent) {
     this.isDown = true
     this.hasDragged = false
@@ -1456,6 +1487,8 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     enterPlanet: (id: string) => appRef.current?.enterPlanet(id),
     leavePlanet: () => appRef.current?.leavePlanet(),
     goTo: (localIndex: number) => appRef.current?.goTo(localIndex),
+    getCraftScreenPos: () => appRef.current?.getFocusedCraftScreenPos() ?? null,
+    getFocusedScreenRect: () => appRef.current?.getFocusedScreenRect() ?? null,
   }), [])
 
   useEffect(() => {

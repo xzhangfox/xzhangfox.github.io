@@ -112,6 +112,23 @@ export default function ProjectPreviewModal({
     >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
 
+      {/* Turbulence filter that gives the hologram-edge overlay below its
+          torn/frayed silhouette — a DOM analogue of the WebGL screen's
+          per-pixel noise-perturbed SDF border. The SMIL <animate> steps the
+          displacement in discrete jumps (calcMode="discrete") to echo the
+          shader's floor(uTime * rate) coarse/fine noise crawl rather than a
+          smooth wobble. */}
+      <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
+        <defs>
+          <filter id="hologram-fray" x="-20%" y="-20%" width="140%" height="140%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.9 0.7" numOctaves="2" seed="7" result="noise" />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G">
+              <animate attributeName="scale" values="4;7;3;6;4" dur="1.8s" repeatCount="indefinite" calcMode="discrete" />
+            </feDisplacementMap>
+          </filter>
+        </defs>
+      </svg>
+
       <motion.div
         layout
         className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl"
@@ -165,7 +182,7 @@ export default function ProjectPreviewModal({
             animate={{ x: flip.x, y: flip.y, scaleX: flip.scaleX, scaleY: flip.scaleY }}
             transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
             style={{ transformOrigin: 'center center' }}
-            className="relative aspect-video w-full overflow-hidden rounded-xl border border-white/15 bg-surface-elevated shadow-[0_0_24px_rgba(234,246,255,0.12)]"
+            className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface-elevated shadow-[0_0_24px_rgba(234,246,255,0.16)]"
           >
             <AnimatePresence mode="wait">
               <motion.img
@@ -179,6 +196,13 @@ export default function ProjectPreviewModal({
                 transition={{ duration: 0.25 }}
               />
             </AnimatePresence>
+
+            {/* Persistent hologram-style edge — the same laser-white
+                torn-light look the WebGL screen had, kept all the way
+                through the fully expanded state so nothing swaps to a
+                plain modal border partway through the morph. */}
+            <div className="pointer-events-none absolute inset-0 rounded-xl hologram-edge" />
+            <div className="pointer-events-none absolute inset-x-0 hologram-scan" />
 
             {expanded && shots.length > 1 && (
               <>
