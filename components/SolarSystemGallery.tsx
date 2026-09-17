@@ -148,7 +148,6 @@ const CRAFT_OFFSET_FRACTION_Y = 0.4
 // reference every other planet's `viewScale` is computed against, so every
 // planet's actual sphere reads at the same apparent size once entered.
 const REFERENCE_RADIUS = 3.2
-const UNIT_Z = new THREE.Vector3(0, 0, 1)
 const IDENTITY_QUAT = new THREE.Quaternion()
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 // The craft mesh's own nose (its cone body, see createCraftGeometry) points
@@ -447,8 +446,10 @@ const LASER_VERTEX = `
 // (brighter where the surface is viewed edge-on, the standard trick for
 // faking a light shaft with a single hollow mesh) combined with a
 // coarse, slowly-drifting noise for visible motes drifting in the beam —
-// the Tyndall-effect look of light scattering off dust — and a fade from
-// bright at the craft (source) to faint at the screen end.
+// the Tyndall-effect look of light scattering off dust — and a strong
+// fade from bright at the craft (source, vUv.y=0) to faint at the screen
+// end (vUv.y=1), so the beam clearly reads as strongest right at the
+// emitter and dissipating with distance, not a uniform-intensity shaft.
 const LASER_FRAGMENT = `
   precision highp float;
   uniform vec3 uColor;
@@ -465,20 +466,45 @@ const LASER_FRAGMENT = `
   void main() {
     vec3 viewDir = normalize(vViewPos);
     float fresnel = pow(1.0 - clamp(abs(dot(normalize(vNormal), viewDir)), 0.0, 1.0), 2.2);
-    float lengthFade = 1.0 - smoothstep(0.1, 1.0, vUv.y);
+    float lengthFade = pow(1.0 - clamp(vUv.y, 0.0, 1.0), 1.6);
     float streak = hash(vec2(floor(vUv.y * 26.0 - uTime * 2.2), floor(vUv.x * 5.0)));
     float dust = 0.65 + 0.55 * streak;
-    float alpha = clamp(fresnel * 0.85 + 0.1, 0.0, 1.0) * mix(0.4, 1.0, lengthFade) * dust * uOpacity;
+    float alpha = clamp(fresnel * 0.8 + 0.12, 0.0, 1.0) * mix(0.12, 1.0, lengthFade) * dust * uOpacity;
     gl_FragColor = vec4(uColor, alpha);
   }
 `
 
+// A 4-sided pyramid, not a smooth round cone — apex at the craft, base
+// the screen's own four actual corners. Its vertex positions are written
+// directly in WORLD space every frame (see activeUpdate), not derived
+// from the mesh's position/quaternion/scale: the craft now parks off to
+// one side rather than dead-center, so the apex-to-base direction is
+// diagonal, not perpendicular to the screen — an oblique pyramid, which
+// a single rigid transform (rotate the whole shape, then scale its local
+// x/y) can't represent while ALSO keeping the base's four corners
+// axis-aligned with the screen's own fixed, always-camera-facing
+// rectangle. Writing world positions directly sidesteps that entirely:
+// whatever the apex's direction to the screen is, the base is simply the
+// screen's real corners, exactly. The mesh's own transform stays
+// identity. Initial values here are placeholders, overwritten before the
+// mesh is ever shown.
+function createLaserGeometry(): THREE.BufferGeometry {
+  const positions = new Float32Array(36)
+  const uvs = new Float32Array([
+    0.5, 0, 0, 1, 1, 1,
+    0.5, 0, 0, 1, 1, 1,
+    0.5, 0, 0, 1, 1, 1,
+    0.5, 0, 0, 1, 1, 1,
+  ])
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage))
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geometry.computeVertexNormals()
+  return geometry
+}
+
 function createLaser(): THREE.Mesh {
-  // Narrow at the craft (the source), flaring into a wide cone toward the
-  // screen end — a projector beam, not a uniform pointer.
-  const geometry = new THREE.CylinderGeometry(0.1, 0.018, 1, 10, 1, true)
-  geometry.translate(0, 0.5, 0)
-  geometry.rotateX(Math.PI / 2)
+  const geometry = createLaserGeometry()
   const material = new THREE.ShaderMaterial({
     vertexShader: LASER_VERTEX,
     fragmentShader: LASER_FRAGMENT,
@@ -492,7 +518,15 @@ function createLaser(): THREE.Mesh {
       uTime: { value: 0 },
     },
   })
-  return new THREE.Mesh(geometry, material)
+  const mesh = new THREE.Mesh(geometry, material)
+  // Its geometry is rewritten with world-space vertex positions every
+  // frame (see activeUpdate) rather than moved via position/scale, so
+  // the bounding sphere Three.js would normally frustum-cull against
+  // never gets recomputed from the placeholder (all-zero) vertices this
+  // starts with — skip culling for this small, cheap mesh entirely
+  // rather than paying for computeBoundingSphere() every frame too.
+  mesh.frustumCulled = false
+  return mesh
 }
 
 function createOrbitRing(radius: number): THREE.LineLoop {
@@ -569,8 +603,6 @@ class PlanetInstance {
   _ringPos = new THREE.Vector3()
   _localPos = new THREE.Vector3()
   _craftWorldPos = new THREE.Vector3()
-  _laserDir = new THREE.Vector3()
-  _laserQuat = new THREE.Quaternion()
   _craftFocusLocal = new THREE.Vector3()
   _ringQuat = new THREE.Quaternion()
   _itemQuat = new THREE.Quaternion()
@@ -581,6 +613,11 @@ class PlanetInstance {
   _focusOffsetScratch = new THREE.Vector3()
   _craftFocusOffsetScratch = new THREE.Vector3()
   _screenFocusLocal = new THREE.Vector3()
+  // The screen's own four actual world-space corners — the laser beam's
+  // base, written directly into its geometry each frame (see
+  // createLaserGeometry's own comment on why a rigid transform can't do
+  // this once the beam's direction is oblique).
+  _laserCorners = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
   // A reusable (never-rendered) camera purely for its lookAt math — see
   // `computeOverviewQuat`'s own comment on why a plain Object3D's lookAt
   // silently computes the wrong rotation and a Camera's doesn't. Reused
@@ -618,6 +655,10 @@ class PlanetInstance {
    *  screen reads at the same size, regardless of its real radius. 1 for
    *  Saturn itself (the reference). */
   viewScale: number
+  /** Stored (not just passed through to buildItems) so activeUpdate can
+   *  size the laser beam's base to match the screen's own actual
+   *  width/height. */
+  aspect: number
 
   constructor(site: PlanetSite, scene: THREE.Scene, aspect: number, borderRadius: number, seedIndex: number) {
     this.site = site
@@ -625,6 +666,7 @@ class PlanetInstance {
     this.count = site.items?.length ?? 0
     this.orbitAngle = site.orbitPhase ?? seedIndex * 2.399963 // golden-angle-ish spread
     this.viewScale = site.radius / REFERENCE_RADIUS
+    this.aspect = aspect
 
     scene.add(this.group)
     this.group.userData.planetId = site.id
@@ -942,39 +984,30 @@ class PlanetInstance {
       const halo = this.crewHalos[i]
       ;(halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - flightT)
 
-      const laserGrow = opening ? smoothstep(0.3, 0.38, flightT) : 0
-      const laserVisibility = opening ? smoothstep(0.3, 0.34, flightT) * (1 - smoothstep(0.66, 0.74, flightT)) : 0
       const laser = this.lasers[i]
-      const focusWorld = this._focusWorldScratch.copy(this.group.position).add(this.focusOffset())
-      if (laserVisibility > 0.01) {
-        this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
-        const dist = this._craftWorldPos.distanceTo(focusWorld)
-        this._laserDir.copy(focusWorld).sub(this._craftWorldPos).normalize()
-        this._laserQuat.setFromUnitVectors(UNIT_Z, this._laserDir)
-
-        laser.visible = true
-        const flickerNoise = Math.sin(time * 47 + i) * Math.sin(time * 13.3 + i * 2)
-        const flicker = flickerNoise > -0.35 ? 1 : 0.2
-        const mat = laser.material as THREE.ShaderMaterial
-        mat.uniforms.uOpacity.value = 0.85 * laserVisibility * flicker
-        mat.uniforms.uTime.value = time
-        laser.position.copy(this._craftWorldPos)
-        laser.quaternion.copy(this._laserQuat)
-        laser.scale.set(this.viewScale, this.viewScale, dist * laserGrow)
-      } else {
-        laser.visible = false
-      }
-
       const screen = this.screens[i]
       const screenMat = screen.material as THREE.ShaderMaterial
+      const focusWorld = this._focusWorldScratch.copy(this.group.position).add(this.focusOffset())
+      const focusScaleAdjust = this._focusScaleAdjustRef!.value
+
+      // Opening sequence: the beam connects FIRST (0.30→0.45), fully
+      // visible and reaching the screen's actual corners before anything
+      // unfolds; only once it's connected does the screen unfold
+      // (0.45→0.60, width leading height very slightly for a subtle
+      // unfurl); the beam then holds through that and fades out shortly
+      // after (by ~0.80) as the image reveals. Closing keeps its old,
+      // simpler shape — the screen just shrinks away, no beam.
+      const laserAppear = opening ? smoothstep(0.3, 0.45, flightT) : 0
+      const laserFadeOut = opening ? 1 - smoothstep(0.64, 0.8, flightT) : 1
+      const laserVisibility = laserAppear * laserFadeOut
 
       let scaleX: number
       let scaleY: number
       let glow: number
       if (opening) {
-        scaleX = laserGrow
-        scaleY = smoothstep(0.4, 0.5, flightT)
-        glow = 1 - smoothstep(0.5, 0.54, flightT)
+        scaleX = smoothstep(0.45, 0.54, flightT)
+        scaleY = smoothstep(0.5, 0.6, flightT)
+        glow = 1 - smoothstep(0.56, 0.6, flightT)
       } else {
         scaleY = smoothstep(0, 0.62, flightT)
         scaleX = smoothstep(0, 0.3, flightT)
@@ -995,7 +1028,18 @@ class PlanetInstance {
       }
       const reveal = opening ? this.revealTimer[i] : smoothstep(0.62, 0.82, flightT)
 
-      const focusScaleAdjust = this._focusScaleAdjustRef!.value
+      // ONE flicker value drives both the screen's edge and the beam —
+      // they're the same light, so they flicker together rather than
+      // independently.
+      let flicker = 1
+      if (glow < 0.5 && reveal < 0.999) {
+        const screenFlickerNoise = Math.sin(time * 39 + i * 3) * Math.sin(time * 17 + i)
+        flicker = screenFlickerNoise > -0.3 ? 1 : 0.35
+      } else if (!opening && reveal > 0.5) {
+        const closeFlickerNoise = Math.sin(time * 53 + i * 4) * Math.sin(time * 21 + i)
+        flicker = closeFlickerNoise > 0.1 ? 1 : 0.4
+      }
+
       screen.visible = true
       screen.position.copy(focusWorld)
       screen.scale.set(
@@ -1006,15 +1050,49 @@ class PlanetInstance {
       screenMat.uniforms.uGlow.value = glow
       screenMat.uniforms.uReveal.value = reveal
       screenMat.uniforms.uTime.value = time
-      let flicker = 1
-      if (glow < 0.5 && reveal < 0.999) {
-        const screenFlickerNoise = Math.sin(time * 39 + i * 3) * Math.sin(time * 17 + i)
-        flicker = screenFlickerNoise > -0.3 ? 1 : 0.35
-      } else if (!opening && reveal > 0.5) {
-        const closeFlickerNoise = Math.sin(time * 53 + i * 4) * Math.sin(time * 21 + i)
-        flicker = closeFlickerNoise > 0.1 ? 1 : 0.4
-      }
       screenMat.uniforms.uFlicker.value = flicker
+
+      if (laserVisibility > 0.01) {
+        this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
+
+        // The screen's own actual four world-space corners — its
+        // geometry is an unrotated plane always facing the camera, so
+        // these are just its half-width/half-height (the same formula as
+        // its own scale.x/y at scale 1, see getFocusedScreenRect) offset
+        // from its center. Written straight into the beam's geometry
+        // below (see createLaserGeometry) rather than reconstructed from
+        // a rotate+scale transform, which can't represent an oblique
+        // pyramid whose base must stay axis-aligned regardless of which
+        // direction the apex sits in.
+        const halfW = SCREEN_HEIGHT * this.aspect * 0.5 * focusScaleAdjust * this.viewScale
+        const halfH = SCREEN_HEIGHT * 0.5 * focusScaleAdjust * this.viewScale
+        const [c0, c1, c2, c3] = this._laserCorners
+        c0.set(focusWorld.x - halfW, focusWorld.y - halfH, focusWorld.z)
+        c1.set(focusWorld.x + halfW, focusWorld.y - halfH, focusWorld.z)
+        c2.set(focusWorld.x + halfW, focusWorld.y + halfH, focusWorld.z)
+        c3.set(focusWorld.x - halfW, focusWorld.y + halfH, focusWorld.z)
+
+        const posAttr = laser.geometry.getAttribute('position') as THREE.BufferAttribute
+        const apex = this._craftWorldPos
+        const corners = [c0, c1, c2, c3]
+        for (let tri = 0; tri < 4; tri++) {
+          const a = corners[tri]
+          const b = corners[(tri + 1) % 4]
+          const base = tri * 3
+          posAttr.setXYZ(base, apex.x, apex.y, apex.z)
+          posAttr.setXYZ(base + 1, a.x, a.y, a.z)
+          posAttr.setXYZ(base + 2, b.x, b.y, b.z)
+        }
+        posAttr.needsUpdate = true
+        laser.geometry.computeVertexNormals()
+
+        laser.visible = true
+        const mat = laser.material as THREE.ShaderMaterial
+        mat.uniforms.uOpacity.value = 0.9 * laserVisibility * flicker
+        mat.uniforms.uTime.value = time
+      } else {
+        laser.visible = false
+      }
 
       if (!opening && flightT <= 0.001) {
         // Fully back at its ring slot after closing — hide and hand back
