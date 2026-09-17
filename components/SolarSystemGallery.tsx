@@ -779,7 +779,17 @@ class PlanetInstance {
     const craft = this.crafts[i]
     craft.position.copy(this._ringPos)
     craft.quaternion.setFromEuler(this._ringEuler)
-    craft.scale.setScalar(CRAFT_SCALE_FAR)
+    // Scaled by viewScale, matching the flying craft's own scale formula
+    // (CRAFT_SCALE_FAR is exactly its flightT=0 value) — without this, a
+    // small-viewScale planet's idle craft rendered at a flat, unscaled
+    // size while its much closer idle-distance camera (viewScale also
+    // shrinks the camera's distance) made it look disproportionately
+    // large — on the Moon, actually bigger than the "arrived" craft,
+    // backwards from the intended "closer to camera looks bigger." This
+    // also removes the visible size jump right at the moment a craft is
+    // clicked: idle and the first flight frame now use the identical
+    // formula instead of suddenly gaining a viewScale factor.
+    craft.scale.setScalar(CRAFT_SCALE_FAR * this.viewScale)
     const halo = this.crewHalos[i]
     const pulse = 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(time * 3.2 + i * 1.7))
     ;(halo.material as THREE.MeshBasicMaterial).opacity = pulse
