@@ -106,6 +106,11 @@ export default function Projects() {
       if (project) {
         setOpenOriginRect(rect)
         setOpenId(project.id)
+        // The modal's own backdrop is translucent and doesn't span the
+        // whole viewport-relative craft position, so tell the gallery to
+        // hide the craft/laser/screen behind it directly rather than
+        // relying on the backdrop alone to cover them.
+        galleryRef.current?.setPreviewOpen(true)
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,6 +132,7 @@ export default function Projects() {
   const closeActiveProject = useCallback(() => {
     setOpenId(null)
     setOpenOriginRect(null)
+    galleryRef.current?.setPreviewOpen(false)
     galleryRef.current?.closeSelection()
   }, [])
 

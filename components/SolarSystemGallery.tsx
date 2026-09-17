@@ -47,6 +47,13 @@ export interface SolarSystemGalleryHandle {
    *  discoverability label, in live viewport pixels — empty the instant
    *  anything's selected. Meant to be polled from a caller-owned rAF loop. */
   getFlybyLabels: () => { index: number; x: number; y: number }[]
+  /** Tell the gallery whether the full-page preview modal is actually
+   *  open right now — while true, the flying item's craft/laser/screen
+   *  are hidden (not just covered by the modal card, which doesn't span
+   *  the whole viewport) so nothing shows through the modal's translucent
+   *  backdrop. Call with true right when the modal opens, false right
+   *  when it closes (by any means). */
+  setPreviewOpen: (open: boolean) => void
 }
 
 interface HoverInfo {
@@ -838,6 +845,17 @@ class PlanetInstance {
     }
   }
 
+  /** True while the full-page preview modal is actually open for the
+   *  flying item — the modal's backdrop is translucent, so without this
+   *  the craft/laser/screen behind it (now off in the corner rather than
+   *  fully covered by the modal card, since the card is sized to the
+   *  hologram screen's own width, not the whole viewport) would keep
+   *  quietly fading in/settling and show through. `activeUpdate` hides
+   *  them each frame while this is true, without touching `flightT` or
+   *  any of the underlying position math, so closing the modal picks up
+   *  exactly where the flight actually is. */
+  previewOpen = false
+
   // Hides the planet itself (mesh/ring/debris, all children of `group`) and
   // its orbit line — used so entering one planet hides every other one
   // (including, once close up, its own now-enormous-looking orbit ring).
@@ -890,6 +908,7 @@ class PlanetInstance {
     this.openIndex = -1
     this.flightIndex = -1
     this.flightT = 0
+    this.previewOpen = false
     this.ringPhase = 0.5 / Math.max(this.count, 1)
     this.screens.forEach((s) => {
       s.scale.set(0.0001, 0.0001, 1)
@@ -1092,6 +1111,20 @@ class PlanetInstance {
         mat.uniforms.uTime.value = time
       } else {
         laser.visible = false
+      }
+
+      // The full-page preview modal is open for this item — its backdrop
+      // is translucent, so hide the craft/laser/screen behind it rather
+      // than let them keep quietly fading in/settling and show through.
+      // Position/flightT math above still ran as normal, so closing the
+      // modal (clearing this flag) picks back up exactly where the
+      // flight actually is, just visible again.
+      if (this.previewOpen) {
+        craft.visible = false
+        laser.visible = false
+        screen.visible = false
+      } else {
+        craft.visible = true
       }
 
       if (!opening && flightT <= 0.001) {
@@ -1445,6 +1478,10 @@ class App {
     this.focusedPlanet.closeSelection()
   }
 
+  setPreviewOpen(open: boolean) {
+    if (this.focusedPlanet) this.focusedPlanet.previewOpen = open
+  }
+
   setHover(localIndex: number) {
     if (localIndex === this.hoveredIndex) return
     this.hoveredIndex = localIndex
@@ -1779,6 +1816,7 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     getFocusedScreenRect: () => appRef.current?.getFocusedScreenRect() ?? null,
     closeSelection: () => appRef.current?.closeSelection(),
     getFlybyLabels: () => appRef.current?.getFlybyLabels() ?? [],
+    setPreviewOpen: (open: boolean) => appRef.current?.setPreviewOpen(open),
   }), [])
 
   useEffect(() => {
