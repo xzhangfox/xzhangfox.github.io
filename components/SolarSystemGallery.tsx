@@ -35,14 +35,18 @@ export interface SolarSystemGalleryHandle {
   goTo: (localIndex: number) => void
   /** The focused, fully-open screen's current on-screen rect — the same
    *  origin rect a direct craft click passes to `onItemClick`, exposed so a
-   *  non-craft trigger (the HUD panel, the craft callout marker) can open
-   *  the same project with the same FLIP-morph origin. */
+   *  non-craft trigger (the HUD panel) can open the same project with the
+   *  same FLIP-morph origin. */
   getFocusedScreenRect: () => ScreenRect | null
   /** Deselects without an instant hide — the open item's screen shrinks
    *  away exactly like switching to a different item would, and the ring
    *  resumes its continuous idle rotation once that finishes. Call this
    *  whenever the preview modal closes, by whatever means. */
   closeSelection: () => void
+  /** Idling craft currently close enough to the camera to be worth a
+   *  discoverability label, in live viewport pixels — empty the instant
+   *  anything's selected. Meant to be polled from a caller-owned rAF loop. */
+  getFlybyLabels: () => { index: number; x: number; y: number }[]
 }
 
 interface HoverInfo {
@@ -127,7 +131,10 @@ const CAMERA_FOV = 45
 // size once entered, regardless of its real radius.
 const BASE_CAMERA_OFFSET = new THREE.Vector3(0, 1, 24)
 const BASE_FOCUS_OFFSET = new THREE.Vector3(0, 1, 18)
-const BASE_CRAFT_FOCUS_OFFSET = new THREE.Vector3(0, 1, 16.6)
+// Closer to the camera (distance 5.2, was 7.4) than the original tuning —
+// the craft itself, not just its screen, should read as a clear, sizeable
+// presence once arrived, not a small accent beside the hologram.
+const BASE_CRAFT_FOCUS_OFFSET = new THREE.Vector3(0, 1, 18.8)
 // Saturn's own bare radius (its ring is a bonus on top, not counted) — the
 // reference every other planet's `viewScale` is computed against, so every
 // planet's actual sphere reads at the same apparent size once entered.
@@ -141,16 +148,7 @@ const ORIGIN = new THREE.Vector3(0, 0, 0)
 // "laser white."
 const LASER_WHITE = new THREE.Color(0xeaf6ff)
 
-const CRAFT_SPIN_SPEED = 0.01
 const SELF_SPIN_SPEED = 0.0018
-
-// Approach is slow and deliberate; departure ("quickly flies back behind
-// the planet") uses a much narrower window so it snaps away fast. Both are
-// tuned to stay well under 1/count of the loop so two crafts on the same
-// planet are never near the shared parking spot at once — numerically
-// verified.
-const APPROACH_WINDOW = 0.15
-const DEPART_WINDOW = 0.06
 
 // While nothing's selected, the whole ring slowly, continuously revolves
 // (a fraction of a full loop per frame) rather than sitting frozen until
@@ -158,25 +156,33 @@ const DEPART_WINDOW = 0.06
 // orbiting, not N craft parked. ~65s for a full revolution at 60fps: slow
 // and ambient, never fighting for attention with a focused item.
 const IDLE_ORBIT_SPEED = 0.00026
+// How close (real 3D distance to the camera, world units at viewScale=1)
+// an idling craft must swing before it's worth a discoverability label —
+// verified numerically to light up any one of Saturn's 4 items ~45% of
+// the time (never two at once), reading as a brief close pass rather
+// than a constant fixture. Camera sits ~24 units out; an idling craft's
+// own closest approach to it (not a fixed ring position — the planet
+// keeps slowly self-spinning even while entered) swings between ~18 and
+// ~30 depending on where it is in its orbit, so 18.5 sits just above
+// that minimum.
+const FLYBY_LABEL_DISTANCE = 18.5
 
 const CRAFT_SCALE_FAR = 0.5
-const CRAFT_SCALE_NEAR = 1.35
+const CRAFT_SCALE_NEAR = 1.6
 
-// Eased speed for a programmatic jump (dots, badges, a craft/marker click)
-// — much slower than drag-follow so the craft's full flight, especially
-// its final close approach to the camera, is slow enough to actually
-// watch rather than a blur.
-const GOTO_EASE = 0.016
-// Closing (see `closeSelection`) reuses this same eased-convergence
-// mechanism but for a much smaller nudge and with no "watch it arrive"
-// goal — kept at the original, snappier rate so retracting doesn't
-// inherit GOTO_EASE's slowdown too (an exponential ease's tail takes
-// almost as long regardless of how far it started, so sharing one rate
-// would have made every close take several seconds for no reason).
-const CLOSE_EASE = 0.032
+// Eased speed for `flightT` (see PlanetInstance) flying an item IN toward
+// the camera — slow and deliberate so the approach is actually watchable
+// rather than a blur.
+const FLIGHT_OPEN_EASE = 0.011
+// Flying back OUT to the ring on close reuses the same eased-convergence
+// mechanism but at its own, snappier rate — nobody asked for the retreat
+// to be slower too, and an exponential ease's tail-end duration barely
+// depends on how far it started, so sharing one rate would have made
+// every close take several seconds for no reason.
+const FLIGHT_CLOSE_EASE = 0.032
 // Per-frame step for the screen's own reveal timer, independent of
-// GOTO_EASE — reaches 1 in ~20 frames (~0.33s) once the plane has formed,
-// so the "flickering to life" moment always resolves quickly.
+// FLIGHT_OPEN_EASE — reaches 1 in ~20 frames (~0.33s) once the plane has
+// formed, so the "flickering to life" moment always resolves quickly.
 const REVEAL_TIMER_STEP = 1 / 20
 
 const SCREEN_HEIGHT = 3.4
@@ -459,27 +465,38 @@ class PlanetInstance {
   crewHalos: THREE.Mesh[] = []
   screens: THREE.Mesh[] = []
   lasers: THREE.Mesh[] = []
-  craftSpin: number[] = []
-  focusFactors: number[] = []
   revealTimer: number[] = []
   itemOrbitRadius = 0
 
-  progress = { current: 0.5, target: 0.5 }
-  goToEaseActive = false
-  /** True once the user has clicked (or arrowed to) a specific item on this
-   *  planet — before that, every craft just idles on the ring. */
+  /** The ring's own rotational phase (0-1, wraps). Only ever advanced by
+   *  `idleSelectionUpdate` — the instant something's selected it simply
+   *  stops being touched, which is what freezes every craft on the ring
+   *  in place for as long as `anySelected` is true. */
+  ringPhase = 0.5
+  /** True once the user has clicked a specific item on this planet —
+   *  before that, every craft just idles on the ring. */
   anySelected = false
   activeIndex = -1
-  /** The item `goTo()` last targeted — the one that should read as "open
-   *  and stable," independent of which side of the ring-position wraparound
-   *  its `t` value happens to converge on (see `activeUpdate`'s use of it:
-   *  the geometric approach/depart split isn't reliable as an "is this open
-   *  or closing" signal, since which side a settled item lands on depends
-   *  on incidental navigation direction, not actual open/close intent —
-   *  most visible on a single-item planet, where it was always the same
-   *  side, causing the hologram to read as permanently mid-close). -1 =
-   *  nothing targeted. */
+  /** The item that's genuinely selected/open right now — -1 once closing
+   *  has begun (see `closeSelection`), even while that item's craft is
+   *  still mid-flight back to the ring. Used for "is this open" checks
+   *  (the HUD, click-to-open-modal) that shouldn't count a closing item
+   *  as open anymore. */
   openIndex = -1
+  /** Which craft is currently animating between its ring slot and the
+   *  focus spot — open or closing, always at most one at a time. -1 =
+   *  every craft is just idling (or none exist yet). */
+  flightIndex = -1
+  /** true = flying from its ring slot toward focus (`flightT` 0→1); false
+   *  = flying back from focus toward its ring slot (`flightT` 1→0). */
+  flightOpening = false
+  /** 0 = sitting at its captured ring slot (`flightHomeLocalPos`/Quat), 1
+   *  = fully at the focus spot. A straight local-space lerp between the
+   *  two — never follows the ring around, so it can't swing behind the
+   *  planet the way riding the ring's own rotation could. */
+  flightT = 0
+  flightHomeLocalPos = new THREE.Vector3()
+  flightHomeQuat = new THREE.Quaternion()
 
   // Scratch objects reused every frame to avoid per-item GC churn.
   _ringPos = new THREE.Vector3()
@@ -661,8 +678,6 @@ class PlanetInstance {
       })
     })
 
-    this.focusFactors = new Array(this.count).fill(0)
-    this.craftSpin = new Array(this.count).fill(0)
     this.revealTimer = new Array(this.count).fill(0)
   }
 
@@ -702,54 +717,51 @@ class PlanetInstance {
     if (this.orbitLine) this.orbitLine.visible = visible
   }
 
-  // Brings local `index` to focus via the shortest direction around the
-  // loop.
+  // The ring stays completely frozen once something's selected (nothing
+  // resumes advancing `ringPhase` until it's fully deselected again — see
+  // `activeUpdate`), so the craft's actual ring slot at THIS instant is
+  // captured once and reused for the whole selection, including the
+  // return trip on close. It then flies there via a straight local-space
+  // lerp — never along the ring — so the path can't swing behind the
+  // planet the way following the ring's own rotation could.
   goTo(index: number) {
     if (this.count < 1) return
     this.anySelected = true
     this.openIndex = index
-    const step = 1 / this.count
-    const targetFrac = wrap01(index * step)
-    const currentFrac = wrap01(this.progress.target)
-    let delta = targetFrac - currentFrac
-    if (delta > 0.5) delta -= 1
-    if (delta < -0.5) delta += 1
-    this.progress.target += delta
-    this.goToEaseActive = true
+    if (this.flightIndex !== index) {
+      // Switching directly from a different open item: that one just
+      // snaps back to its ring slot (badges/dots/clicking a different
+      // craft are a secondary path here — the primary open/close flow
+      // this is built for only ever has one item in flight at a time).
+      this.flightIndex = index
+      this.flightT = 0
+      const theta = wrap01(this.ringPhase + index / this.count) * Math.PI * 2
+      this.flightHomeLocalPos.set(this.itemOrbitRadius * Math.sin(theta), 0, this.itemOrbitRadius * Math.cos(theta))
+      this.flightHomeQuat.setFromEuler(new THREE.Euler(-Math.PI / 2, -theta, 0))
+    }
+    this.flightOpening = true
   }
 
-  // Deselects WITHOUT an instant hide — clearing `openIndex` makes every
-  // item (including whichever was open) read as "departing," the exact
-  // same shrink-away animation a normal switch-to-a-different-item already
-  // runs, and nudging the ring onward is what actually drives that shrink
-  // (a lift value only decays once `masterT` itself moves past the
-  // item's window). `activeUpdate` hands `anySelected` back to false on
-  // its own once that departure finishes (see its own end), so continuous
-  // idle rotation resumes seamlessly from wherever the ring lands — no
+  // Deselects without an instant hide — `flightT` eases back from wherever
+  // it is toward 0 (see `activeUpdate`), flying the craft back to the
+  // exact ring slot `goTo` captured, and only hands `anySelected` back to
+  // false (resuming idle rotation) once it's actually arrived there. No
   // separate "resume" call needed. `resetSelection()`'s harder, immediate
   // hide stays reserved for `enterPlanet()`, where nothing was visually
   // open yet in the newly-entered planet's own context.
   closeSelection() {
     if (!this.anySelected || this.openIndex < 0) return
     this.openIndex = -1
-    // Just enough to carry the closing item's own `dist` past DEPART_WINDOW
-    // (so its screen actually shrinks away) without the ring swinging far
-    // enough to carry the NEXT item's `dist` under APPROACH_WINDOW too —
-    // otherwise closing one item could visibly tug its neighbor toward the
-    // focus spot. Safe for this file's actual item counts (4 on Saturn, 1
-    // on the Moon): for 4 items the neighbor sits 0.25 away, leaving
-    // 0.25 - APPROACH_WINDOW = 0.10 of headroom above DEPART_WINDOW's 0.06.
-    this.progress.target = this.progress.current + DEPART_WINDOW * 1.3
-    this.goToEaseActive = true
+    this.flightOpening = false
   }
 
   resetSelection() {
     this.anySelected = false
     this.activeIndex = -1
     this.openIndex = -1
-    this.progress.current = 0.5 / Math.max(this.count, 1)
-    this.progress.target = this.progress.current
-    this.goToEaseActive = false
+    this.flightIndex = -1
+    this.flightT = 0
+    this.ringPhase = 0.5 / Math.max(this.count, 1)
     this.screens.forEach((s) => {
       s.scale.set(0.0001, 0.0001, 1)
       s.visible = false
@@ -773,94 +785,59 @@ class PlanetInstance {
     ;(halo.material as THREE.MeshBasicMaterial).opacity = pulse
   }
 
-  // The full craft/laser/hologram choreography once at least one item has
-  // been selected — identical math to the original single-Saturn scene,
-  // scoped to this planet's own group and world-space focus offsets. Items
-  // not near the focus point just ride the ring via `_idlePosition`.
+  // The full craft/laser/hologram choreography for whichever ONE craft is
+  // currently in flight (open or closing, `this.flightIndex`) — every
+  // other item just idles, frozen, at the ring phase the flight began at
+  // (`this.ringPhase` isn't touched anywhere in here, only read).
   activeUpdate(time: number): number {
-    // `progress.current`/`target` only ever differ while `goToEaseActive`
-    // is true (there's no drag anymore to move `target` any other way —
-    // `idleSelectionUpdate` always keeps them equal, and `goTo`/
-    // `closeSelection` both set this flag the moment they move `target`),
-    // so which rate to use is just: opening (flying an item IN toward the
-    // camera) uses the slow, deliberate GOTO_EASE so the close approach is
-    // actually watchable; closing (openIndex already cleared by
-    // `closeSelection()`) uses its own quicker rate instead of also being
-    // dragged out by that same slowdown — nobody asked for the RETRACT to
-    // be slower, and an eased convergence's tail-end duration barely
-    // depends on how far it started, so sharing one rate would have made
-    // every close take several seconds too.
-    const ease = this.openIndex >= 0 ? GOTO_EASE : CLOSE_EASE
-    this.progress.current += (this.progress.target - this.progress.current) * ease
-    if (this.goToEaseActive && Math.abs(this.progress.target - this.progress.current) < 0.0005) {
-      this.goToEaseActive = false
-    }
-    const masterT = this.progress.current
+    const masterT = this.ringPhase
 
     this.group.updateMatrixWorld()
     this._craftFocusLocal.copy(this.group.position).add(this.craftFocusOffset())
     this.group.worldToLocal(this._craftFocusLocal)
     this._focusQuat.copy(this.group.quaternion).invert()
 
-    let bestIndex = 0
-    let bestFocus = -1
+    const flying = this.flightIndex
+    if (flying >= 0) {
+      // Opening (flying toward the camera) uses a slow, deliberate ease so
+      // the approach is actually watchable; closing uses its own quicker
+      // rate — nobody asked for the retreat to be slower too, and an
+      // eased convergence's tail-end duration barely depends on how far
+      // it started, so sharing one rate would have dragged out the
+      // retreat for no reason.
+      const ease = this.flightOpening ? FLIGHT_OPEN_EASE : FLIGHT_CLOSE_EASE
+      const target = this.flightOpening ? 1 : 0
+      this.flightT += (target - this.flightT) * ease
+      if (Math.abs(target - this.flightT) < 0.0015) this.flightT = target
+    }
 
     for (let i = 0; i < this.count; i++) {
-      const t = wrap01(masterT - i / this.count)
-      const approaching = t > 0.5
-      const distFromFocus = approaching ? 1 - t : t
-      const window_ = approaching ? APPROACH_WINDOW : DEPART_WINDOW
-      const lift = smoothstep(window_, 0, distFromFocus)
-
-      this.focusFactors[i] = lift
-      if (lift > bestFocus) {
-        bestFocus = lift
-        bestIndex = i
-      }
-
-      if (lift < 0.001) {
-        this._idlePosition(i, t, time)
+      if (i !== flying) {
+        this._idlePosition(i, wrap01(masterT + i / this.count), time)
         this.screens[i].visible = false
         this.lasers[i].visible = false
-        this.revealTimer[i] = 0 // fully departed — next approach starts its reveal fresh
+        this.revealTimer[i] = 0
         continue
       }
 
-      this.craftSpin[i] += CRAFT_SPIN_SPEED * (1 - lift)
-      const theta = t * Math.PI * 2
-      this._ringPos.set(this.itemOrbitRadius * Math.sin(theta), 0, this.itemOrbitRadius * Math.cos(theta))
-      this._ringEuler.set(-Math.PI / 2, -theta + this.craftSpin[i], 0)
-      this._ringQuat.setFromEuler(this._ringEuler)
+      const flightT = this.flightT
+      const opening = this.flightOpening
 
-      const craftMoveK = approaching ? smoothstep(0.04, 0.22, lift) : lift
-      this._localPos.copy(this._ringPos).lerp(this._craftFocusLocal, craftMoveK)
-      this._itemQuat.slerpQuaternions(this._ringQuat, this._focusQuat, craftMoveK)
+      // A straight local-space lerp from the captured ring slot to the
+      // focus spot — never along the ring, so it can't swing behind the
+      // planet the way following the ring's own rotation could.
+      this._localPos.lerpVectors(this.flightHomeLocalPos, this._craftFocusLocal, flightT)
+      this._itemQuat.slerpQuaternions(this.flightHomeQuat, this._focusQuat, flightT)
 
       const craft = this.crafts[i]
       craft.position.copy(this._localPos)
       craft.quaternion.copy(this._itemQuat)
-      craft.scale.setScalar((CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * craftMoveK) * this.viewScale)
+      craft.scale.setScalar((CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * flightT) * this.viewScale)
       const halo = this.crewHalos[i]
-      ;(halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - craftMoveK)
+      ;(halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - flightT)
 
-      // Whether THIS item's screen/laser should run the "opening" (laser
-      // fire, point→line→plane formation, static-then-reveal) choreography
-      // versus the "closing" collapse. This is deliberately NOT the same as
-      // the geometric `approaching` (which side of the ring-position wrap
-      // the craft physically arrives from) — which side a SETTLED item
-      // lands on depends on incidental navigation direction, not actual
-      // open/close intent, and using it directly here meant a planet whose
-      // only-ever selection happened to converge on the "depart" side (any
-      // single-item planet, always) would permanently render its hologram
-      // as if mid-close: laser never fires, plane never forms, and the
-      // close-flicker uniform stays live forever. `openIndex` is the actual
-      // semantic signal — this item is either the one the user just
-      // targeted (opening) or a previously-open one now being vacated
-      // (closing).
-      const opening = i === this.openIndex
-
-      const laserGrow = opening ? smoothstep(0.3, 0.38, lift) : 0
-      const laserVisibility = opening ? smoothstep(0.3, 0.34, lift) * (1 - smoothstep(0.66, 0.74, lift)) : 0
+      const laserGrow = opening ? smoothstep(0.3, 0.38, flightT) : 0
+      const laserVisibility = opening ? smoothstep(0.3, 0.34, flightT) * (1 - smoothstep(0.66, 0.74, flightT)) : 0
       const laser = this.lasers[i]
       const focusWorld = this._focusWorldScratch.copy(this.group.position).add(this.focusOffset())
       if (laserVisibility > 0.01) {
@@ -889,28 +866,27 @@ class PlanetInstance {
       let glow: number
       if (opening) {
         scaleX = laserGrow
-        scaleY = smoothstep(0.4, 0.5, lift)
-        glow = 1 - smoothstep(0.5, 0.54, lift)
+        scaleY = smoothstep(0.4, 0.5, flightT)
+        glow = 1 - smoothstep(0.5, 0.54, flightT)
       } else {
-        scaleY = smoothstep(0, 0.62, lift)
-        scaleX = smoothstep(0, 0.3, lift)
+        scaleY = smoothstep(0, 0.62, flightT)
+        scaleX = smoothstep(0, 0.3, flightT)
         glow = 0
       }
 
       // The image reveal/flicker-out runs on its own fixed-duration timer
-      // once the plane has formed (glow drops), rather than tracking the
-      // raw approach/depart `lift` directly — `lift`'s own convergence
-      // speed depends on GOTO_EASE, which after the slower "watch the
-      // craft fly" tuning could take seconds to cross the reveal
-      // thresholds, stretching the intentional brief "static flickering to
-      // life" moment into something that reads as stuck flickering. A
-      // bounded timer guarantees the flicker always resolves quickly.
+      // once the plane has formed (glow drops), rather than tracking
+      // `flightT` directly — `flightT`'s own convergence speed can take
+      // seconds (that's the point, so the approach is watchable), which
+      // would stretch the intentional brief "static flickering to life"
+      // moment into something that reads as stuck flickering. A bounded
+      // timer guarantees the flicker always resolves quickly regardless.
       if (glow > 0.5) {
         this.revealTimer[i] = 0
       } else {
         this.revealTimer[i] = Math.min(1, this.revealTimer[i] + REVEAL_TIMER_STEP)
       }
-      const reveal = opening ? this.revealTimer[i] : smoothstep(0.62, 0.82, lift)
+      const reveal = opening ? this.revealTimer[i] : smoothstep(0.62, 0.82, flightT)
 
       const focusScaleAdjust = this._focusScaleAdjustRef!.value
       screen.visible = true
@@ -932,6 +908,16 @@ class PlanetInstance {
         flicker = closeFlickerNoise > 0.1 ? 1 : 0.4
       }
       screenMat.uniforms.uFlicker.value = flicker
+
+      if (!opening && flightT <= 0.001) {
+        // Fully back at its ring slot after closing — hide and hand back
+        // off to idle rotation, which picks up next frame at the same
+        // `ringPhase` this flight started at (it was never touched).
+        screen.visible = false
+        laser.visible = false
+        this.flightIndex = -1
+        this.anySelected = false
+      }
     }
 
     for (const d of this.debris) {
@@ -940,31 +926,20 @@ class PlanetInstance {
       d.mesh.rotation.z += d.spin.z
     }
 
-    this.activeIndex = bestFocus > 0.001 ? bestIndex : -1
-
-    // Once a `closeSelection()`-triggered departure has fully finished
-    // (nothing left near the focus window, ring no longer easing) hand
-    // back off to `idleSelectionUpdate`'s continuous rotation — the App's
-    // own per-frame branch picks this up next frame.
-    if (this.anySelected && this.openIndex === -1 && !this.goToEaseActive && bestFocus < 0.001) {
-      this.anySelected = false
-    }
-
+    this.activeIndex = this.flightIndex >= 0 && this.flightT > 0.001 ? this.flightIndex : -1
     return this.activeIndex
   }
 
   // Pure idle pass — nothing selected yet, every item evenly spaced around
-  // its ring/orbit, none of them near the focus spot. `progress.current`
-  // keeps advancing here (instead of sitting still) so the ring visibly,
-  // continuously revolves; `activeUpdate`'s `goTo()` reads this same field
-  // to compute its shortest-path delta, so the moment something IS
-  // clicked, the eased flight-in picks up exactly where this left off —
-  // no jump.
+  // its ring/orbit. `ringPhase` keeps advancing here (instead of sitting
+  // still) so the ring visibly, continuously revolves; `goTo()` reads this
+  // same field to capture the flying item's exact current ring slot, so
+  // the moment something IS clicked, its flight starts from right where
+  // this left off — no jump.
   idleSelectionUpdate(time: number) {
-    this.progress.current = wrap01(this.progress.current + IDLE_ORBIT_SPEED)
-    this.progress.target = this.progress.current
+    this.ringPhase = wrap01(this.ringPhase + IDLE_ORBIT_SPEED)
     for (let i = 0; i < this.count; i++) {
-      this._idlePosition(i, wrap01(this.progress.current + i / this.count), time)
+      this._idlePosition(i, wrap01(this.ringPhase + i / this.count), time)
     }
   }
 
@@ -1324,6 +1299,34 @@ class App {
     return { top: minY, left: minX, width: maxX - minX, height: maxY - minY }
   }
 
+  // Idling craft (nothing selected) currently close enough to the camera
+  // to be worth a discoverability label, projected to viewport pixels.
+  // Empty the instant anything's selected — the flying craft's own label
+  // hides too then, not just the others, matching "hide once you've
+  // clicked into the preview."
+  getFlybyLabels(): { index: number; x: number; y: number }[] {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet || this.focusedPlanet.anySelected) return []
+    const planet = this.focusedPlanet
+    const rect = this.container.getBoundingClientRect()
+    const threshold = FLYBY_LABEL_DISTANCE * planet.viewScale
+    const out: { index: number; x: number; y: number }[] = []
+    for (let i = 0; i < planet.count; i++) {
+      const craft = planet.crafts[i]
+      if (!craft.visible) continue
+      craft.getWorldPosition(this._screenRectCorner)
+      const dist = this._screenRectCorner.distanceTo(this.camera.position)
+      if (dist >= threshold) continue
+      const ndc = this._screenRectCorner.project(this.camera)
+      if (ndc.z > 1) continue
+      out.push({
+        index: i,
+        x: rect.left + (ndc.x * 0.5 + 0.5) * rect.width,
+        y: rect.top + (1 - (ndc.y * 0.5 + 0.5)) * rect.height,
+      })
+    }
+    return out
+  }
+
   // There's no ring-drag anymore — switching between items is click-only
   // (a craft, the HUD panel, a badge, or a dot). `hasDragged` still exists
   // purely so an incidental finger/mouse wobble mid-click (or a
@@ -1534,6 +1537,7 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     goTo: (localIndex: number) => appRef.current?.goTo(localIndex),
     getFocusedScreenRect: () => appRef.current?.getFocusedScreenRect() ?? null,
     closeSelection: () => appRef.current?.closeSelection(),
+    getFlybyLabels: () => appRef.current?.getFlybyLabels() ?? [],
   }), [])
 
   useEffect(() => {

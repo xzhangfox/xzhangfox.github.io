@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import FadeIn from './FadeIn'
 import SolarSystemGallery, { type SolarSystemGalleryHandle, type PlanetSite, type ScreenRect } from './SolarSystemGallery'
@@ -92,6 +92,7 @@ export default function Projects() {
   const [hoverInfo, setHoverInfo] = useState<{ localIndex: number; clientX: number; clientY: number } | null>(null)
   const galleryRef = useRef<SolarSystemGalleryHandle>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const flybyLabelRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const openIdRef = useRef(openId)
   openIdRef.current = openId
 
@@ -111,9 +112,9 @@ export default function Projects() {
     [t, activePlanetId]
   )
 
-  // Clicking the craft-callout marker or the HUD panel opens the same
-  // project the same way a direct craft click would — same origin rect, so
-  // the modal still morphs from a real on-screen anchor.
+  // The HUD panel opens the same project the same way a direct craft
+  // click would — same origin rect, so the modal still morphs from a
+  // real on-screen anchor.
   const openActiveProject = useCallback(() => {
     if (activeIndex === null) return
     handleItemClick(activeIndex, galleryRef.current?.getFocusedScreenRect() ?? null)
@@ -138,6 +139,39 @@ export default function Projects() {
       openActiveProject()
     }
   }, [activeProject, closeActiveProject, openActiveProject])
+
+  // Flyby labels — a lightweight text tag on whichever idling craft is
+  // currently swinging close to the camera, so a project stays spottable
+  // mid-orbit. `getFlybyLabels()` itself goes empty the instant anything's
+  // selected, so these hide the moment you click into a preview, per
+  // spec. Driven by its own rAF loop (not React state) so tracking a
+  // moving craft at 60fps never forces a re-render.
+  useEffect(() => {
+    if (!activePlanetId) return
+    const count = currentProjects.length
+    let raf: number
+    const tick = () => {
+      const labels = galleryRef.current?.getFlybyLabels() ?? []
+      const wrapperRect = wrapperRef.current?.getBoundingClientRect()
+      for (let i = 0; i < count; i++) {
+        const el = flybyLabelRefs.current.get(i)
+        const m = wrapperRect ? labels.find((l) => l.index === i) : undefined
+        if (el) {
+          if (m && wrapperRect) {
+            el.style.display = ''
+            el.style.left = `${m.x - wrapperRect.left + 16}px`
+            el.style.top = `${m.y - wrapperRect.top - 11}px`
+          } else {
+            el.style.display = 'none'
+          }
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePlanetId])
 
   return (
     <section id="projects" className="relative py-32">
@@ -169,8 +203,9 @@ export default function Projects() {
           every planet slowly revolving on its own orbit. Click a planet (or
           its badge, top-left) to zoom in — only then do its own projects'
           craft appear, continuously orbiting until one is clicked (a
-          craft, its flyby marker, a badge, or a dot — click-only, no
-          drag). Only the back button returns to the overview. */}
+          craft, its flyby label, a badge, or a dot — click-only, no
+          drag). Clicking empty space while something's selected closes it.
+          Only the back button returns to the overview. */}
       <div ref={wrapperRef} className="relative h-[65vh] max-h-[760px] min-h-[420px] w-full overflow-hidden sm:h-[72vh]">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-bg to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-20 bg-gradient-to-t from-bg to-transparent" />
@@ -278,6 +313,25 @@ export default function Projects() {
             </AnimatePresence>
           </div>
         )}
+
+        {/* Flyby labels — one slot per project on this planet, shown only
+            while its craft is currently swinging close to the camera (and
+            nothing's selected). Clicking one starts the same fly-to-focus
+            sequence a direct craft click would. */}
+        {currentProjects.map((project, i) => (
+          <div
+            key={project.id}
+            ref={(el) => {
+              if (el) flybyLabelRefs.current.set(i, el)
+              else flybyLabelRefs.current.delete(i)
+            }}
+            onClick={() => galleryRef.current?.goTo(i)}
+            className="pointer-events-auto absolute z-10 cursor-pointer whitespace-nowrap rounded-md border border-gold/30 bg-black/80 px-2 py-1 text-[10px] font-medium text-white/90 backdrop-blur-sm"
+            style={{ display: 'none', left: 0, top: 0 }}
+          >
+            {project.title}
+          </div>
+        ))}
 
         {/* Simple hover tooltip — a craft idling on the ring, not yet
             clicked, just names itself. */}
