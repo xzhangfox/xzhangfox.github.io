@@ -49,7 +49,7 @@ export default function Navigation() {
             <span className="text-gold font-mono text-xs font-bold tracking-wider">XZ</span>
           </div>
           <span className="text-white/80 text-sm font-medium hidden sm:block group-hover:text-white transition-colors">
-            Xi Zhang
+            {t.nav.name}
           </span>
         </button>
 

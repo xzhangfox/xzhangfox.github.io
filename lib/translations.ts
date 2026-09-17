@@ -2,6 +2,7 @@ export type Language = 'en' | 'zh'
 
 export interface Dict {
   nav: {
+    name: string
     about: string
     experience: string
     projects: string
@@ -88,6 +89,7 @@ export interface Dict {
 export const translations: Record<Language, Dict> = {
   en: {
     nav: {
+      name: 'Xi Zhang',
       about: 'About',
       experience: 'Experience',
       projects: 'Projects',
@@ -246,6 +248,7 @@ export const translations: Record<Language, Dict> = {
   },
   zh: {
     nav: {
+      name: '张汐',
       about: '关于',
       experience: '工作经历',
       projects: '项目作品',

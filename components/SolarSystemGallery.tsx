@@ -41,12 +41,21 @@ interface HoverInfo {
   clientY: number
 }
 
+/** The clicked hologram screen's current on-screen (viewport-pixel) rect —
+ *  lets the caller morph a modal open from exactly where the screen was. */
+export interface ScreenRect {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
 interface SolarSystemGalleryProps {
   planets: PlanetSite[]
   aspect?: number
   borderRadius?: number
   swipeEase?: number
-  onItemClick?: (localIndex: number) => void
+  onItemClick?: (localIndex: number, rect: ScreenRect | null) => void
   onActiveIndexChange?: (localIndex: number | null) => void
   onActivePlanetChange?: (planetId: string | null) => void
   onHoverChange?: (info: HoverInfo | null) => void
@@ -201,8 +210,20 @@ const SCREEN_FRAGMENT = `
   }
 
   void main() {
-    float d = roundedBoxSDF(vUv - 0.5, vec2(0.5 - uBorderRadius), uBorderRadius);
+    float dClean = roundedBoxSDF(vUv - 0.5, vec2(0.5 - uBorderRadius), uBorderRadius);
+
+    // Fray the boundary itself rather than leaving it a perfectly crisp
+    // vector line — a coarse, slowly-crawling perturbation for a few small
+    // "torn" notches, plus fine high-frequency jitter for a grainy dissolve
+    // right at the line, so the silhouette itself reads as unstable light
+    // rather than a flat rounded-rect shape.
+    float frayCoarse = (hash(floor(vUv * vec2(22.0, 14.0)) + floor(uTime * 1.6)) - 0.5) * 0.05;
+    float frayFine = (hash(floor(vUv * vec2(90.0, 56.0)) + floor(uTime * 9.0)) - 0.5) * 0.014;
+    float d = dClean + frayCoarse + frayFine;
     if (d > 0.02) discard;
+    // A soft dissolve right at the torn edge instead of a hard cutoff —
+    // thins out to nothing rather than snapping off.
+    float dissolveAlpha = 1.0 - smoothstep(0.0, 0.02, d);
 
     // Ambient "unstable projection" glitch — independent of open/close
     // state. Rare, brief bursts, not a constant shimmer. Drives BOTH the
@@ -277,6 +298,7 @@ const SCREEN_FRAGMENT = `
     float edgeStrength = edge * 0.55 * (1.0 + glitchActive * 0.6);
     color = mix(color, edgeColor, clamp(edgeStrength, 0.0, 1.0));
     alpha = mix(alpha, 1.0, edge);
+    alpha *= dissolveAlpha;
 
     gl_FragColor = vec4(color, alpha);
   }
@@ -920,7 +942,7 @@ interface CameraTransition {
 class App {
   container: HTMLElement
   aspect: number
-  onItemClick?: (localIndex: number) => void
+  onItemClick?: (localIndex: number, rect: ScreenRect | null) => void
   onActiveIndexChange?: (localIndex: number | null) => void
   onActivePlanetChange?: (planetId: string | null) => void
   onHoverChange?: (info: HoverInfo | null) => void
@@ -930,6 +952,7 @@ class App {
   camera: THREE.PerspectiveCamera
   raycaster = new THREE.Raycaster()
   pointerNdc = new THREE.Vector2()
+  _screenRectCorner = new THREE.Vector3()
 
   planets: PlanetInstance[] = []
   planetsById = new Map<string, PlanetInstance>()
@@ -964,7 +987,7 @@ class App {
     aspect: number,
     borderRadius: number,
     swipeEase: number,
-    onItemClick?: (localIndex: number) => void,
+    onItemClick?: (localIndex: number, rect: ScreenRect | null) => void,
     onActiveIndexChange?: (localIndex: number | null) => void,
     onActivePlanetChange?: (planetId: string | null) => void,
     onHoverChange?: (info: HoverInfo | null) => void
@@ -1185,6 +1208,44 @@ class App {
     return findPlanetId(hits[0].object) ?? null
   }
 
+  // The focused, fully-open screen's CURRENT on-screen rect, in viewport
+  // pixels — used to morph the preview modal open from exactly where the
+  // hologram was, rather than a generic fade/scale. Computed by projecting
+  // the screen plane's four corners (it never rotates, so this is just its
+  // scaled half-extents around its own position) through the live camera.
+  getFocusedScreenRect(): ScreenRect | null {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet) return null
+    const planet = this.focusedPlanet
+    const idx = planet.activeIndex
+    if (idx < 0 || !planet.screens[idx]) return null
+    const screen = planet.screens[idx]
+    const halfW = ((SCREEN_HEIGHT * this.aspect) / 2) * screen.scale.x
+    const halfH = (SCREEN_HEIGHT / 2) * screen.scale.y
+    if (halfW <= 0 || halfH <= 0) return null
+
+    const rect = this.container.getBoundingClientRect()
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    for (const [sx, sy] of [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ]) {
+      this._screenRectCorner.set(screen.position.x + sx * halfW, screen.position.y + sy * halfH, screen.position.z)
+      const ndc = this._screenRectCorner.project(this.camera)
+      const px = rect.left + (ndc.x * 0.5 + 0.5) * rect.width
+      const py = rect.top + (1 - (ndc.y * 0.5 + 0.5)) * rect.height
+      minX = Math.min(minX, px)
+      maxX = Math.max(maxX, px)
+      minY = Math.min(minY, py)
+      maxY = Math.max(maxY, py)
+    }
+    return { top: minY, left: minX, width: maxX - minX, height: maxY - minY }
+  }
+
   onTouchDown(e: MouseEvent | TouchEvent) {
     this.isDown = true
     this.hasDragged = false
@@ -1229,7 +1290,7 @@ class App {
         const localIndex = this.hitTestItem(this.pointerDownX, this.pointerDownY)
         if (localIndex !== null) {
           if (this.focusedPlanet.anySelected && localIndex === this.focusedPlanet.activeIndex) {
-            this.onItemClick?.(localIndex)
+            this.onItemClick?.(localIndex, this.getFocusedScreenRect())
           } else {
             this.focusedPlanet.goTo(localIndex)
           }
@@ -1405,7 +1466,7 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
       aspect,
       borderRadius,
       swipeEase,
-      (i) => onItemClickRef.current?.(i),
+      (i, rect) => onItemClickRef.current?.(i, rect),
       (i) => onActiveIndexChangeRef.current?.(i),
       (id) => onActivePlanetChangeRef.current?.(id),
       (info) => onHoverChangeRef.current?.(info)

@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import FadeIn from './FadeIn'
-import SolarSystemGallery, { type SolarSystemGalleryHandle, type PlanetSite } from './SolarSystemGallery'
+import SolarSystemGallery, { type SolarSystemGalleryHandle, type PlanetSite, type ScreenRect } from './SolarSystemGallery'
 import ProjectPreviewModal, { type PreviewProject } from './ProjectPreviewModal'
 import { projects } from '@/lib/data'
 import { useLanguage } from '@/lib/i18n'
@@ -16,6 +16,9 @@ const MOON_PROJECT_IDS = ['flux-path']
 const PLANET_LABELS: Record<string, string> = { saturn: 'Saturn', moon: 'The Moon' }
 const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg', moon: '/textures/moon.jpg' }
 const CONTENT_PLANET_IDS = ['saturn', 'moon']
+// Per-project real app logos, where available — falls back to a cropped
+// screenshot (project.image) otherwise.
+const PROJECT_LOGOS: Record<string, string> = { 'flux-path': '/logos/flux-path.svg' }
 
 // Static (language-independent) and module-level so it never changes
 // identity across renders — SolarSystemGallery tears down and rebuilds its
@@ -79,6 +82,7 @@ export default function Projects() {
   }
 
   const [openId, setOpenId] = useState<string | null>(null)
+  const [openOriginRect, setOpenOriginRect] = useState<ScreenRect | null>(null)
   const openProject = items.find((p) => p.id === openId) ?? null
 
   // null activePlanetId = the solar-system overview; activeIndex is local
@@ -93,9 +97,12 @@ export default function Projects() {
   const hoveredProject = hoverInfo ? currentProjects[hoverInfo.localIndex] : undefined
 
   const handleItemClick = useCallback(
-    (index: number) => {
+    (index: number, rect: ScreenRect | null) => {
       const project = currentProjects[index]
-      if (project) setOpenId(project.id)
+      if (project) {
+        setOpenOriginRect(rect)
+        setOpenId(project.id)
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [t, activePlanetId]
@@ -205,7 +212,7 @@ export default function Projects() {
                 {currentProjects.map((project, i) => (
                   <PlanetBadge
                     key={project.id}
-                    textureUrl={project.image}
+                    textureUrl={PROJECT_LOGOS[project.id] ?? project.image}
                     label={project.title}
                     active={activeIndex === i}
                     onClick={() => galleryRef.current?.goTo(i)}
@@ -313,7 +320,16 @@ export default function Projects() {
       </div>
 
       <AnimatePresence>
-        {openProject && <ProjectPreviewModal project={openProject} onClose={() => setOpenId(null)} />}
+        {openProject && (
+          <ProjectPreviewModal
+            project={openProject}
+            originRect={openOriginRect}
+            onClose={() => {
+              setOpenId(null)
+              setOpenOriginRect(null)
+            }}
+          />
+        )}
       </AnimatePresence>
     </section>
   )
