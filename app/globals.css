@@ -110,22 +110,25 @@ body {
 /* Hologram edge — a persistent, laser-white torn-light border treatment for
    the project preview modal's morphing container, matching the WebGL
    hologram screen's own edge (see SolarSystemGallery's SCREEN_FRAGMENT: a
-   thin core line with a BROAD soft glow bleeding both directions from it,
-   not a crisp CSS border — its `edge` term is a smoothstep band ~0.035 UV
-   units wide, which at typical on-screen sizes is a good 10-16px of soft
-   falloff, not a hard 1-2px line) so there's no abrupt style swap when the
-   WebGL scene hands off to this DOM element, and it stays this way through
-   the fully expanded state. The border-radius that goes with this
-   (`rounded-[4%]` on the elements using it) is likewise chosen to match
-   the shader exactly: `uBorderRadius` is applied identically to both UV
-   axes on a non-square plane, so CSS's own per-axis percentage radius
-   (horizontal % of width, vertical % of height) reproduces the same
-   elliptical corner the shader draws, at any box aspect ratio. */
+   thin core line with a soft glow bleeding both directions from it, not a
+   crisp CSS border — its `edge` term is a smoothstep band ~0.018 UV units
+   wide, which at typical on-screen sizes is roughly 8px of soft falloff)
+   so there's no abrupt style swap when the WebGL scene hands off to this
+   DOM element, and it stays this way through the fully expanded state.
+   This is a separate element from the image/content beneath it, so its
+   flicker animation only ever touches the edge — the content never dims
+   with it, matching the shader (uFlicker now only modulates its own
+   `edge` term, not the revealed image). The border-radius that goes with
+   this (`rounded-[4%]` on the elements using it) is likewise chosen to
+   match the shader exactly: `uBorderRadius` is applied identically to
+   both UV axes on a non-square plane, so CSS's own per-axis percentage
+   radius (horizontal % of width, vertical % of height) reproduces the
+   same elliptical corner the shader draws, at any box aspect ratio. */
 .hologram-edge {
   border: 1px solid rgba(234, 246, 255, 0.75);
   box-shadow:
-    0 0 14px 2px rgba(234, 246, 255, 0.3),
-    inset 0 0 14px 2px rgba(234, 246, 255, 0.22);
+    0 0 7px 1px rgba(234, 246, 255, 0.3),
+    inset 0 0 7px 1px rgba(234, 246, 255, 0.22);
   filter: url(#hologram-fray);
   animation: hologram-flicker 3.4s infinite;
 }

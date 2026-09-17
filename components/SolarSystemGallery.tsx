@@ -70,7 +70,6 @@ interface SolarSystemGalleryProps {
   planets: PlanetSite[]
   aspect?: number
   borderRadius?: number
-  swipeEase?: number
   onItemClick?: (localIndex: number, rect: ScreenRect | null) => void
   onActiveIndexChange?: (localIndex: number | null) => void
   onActivePlanetChange?: (planetId: string | null) => void
@@ -263,8 +262,8 @@ const SCREEN_FRAGMENT = `
     // "torn" notches, plus fine high-frequency jitter for a grainy dissolve
     // right at the line, so the silhouette itself reads as unstable light
     // rather than a flat rounded-rect shape.
-    float frayCoarse = (hash(floor(vUv * vec2(22.0, 14.0)) + floor(uTime * 1.6)) - 0.5) * 0.05;
-    float frayFine = (hash(floor(vUv * vec2(90.0, 56.0)) + floor(uTime * 9.0)) - 0.5) * 0.014;
+    float frayCoarse = (hash(floor(vUv * vec2(22.0, 14.0)) + floor(uTime * 1.6)) - 0.5) * 0.022;
+    float frayFine = (hash(floor(vUv * vec2(90.0, 56.0)) + floor(uTime * 9.0)) - 0.5) * 0.007;
     float d = dClean + frayCoarse + frayFine;
     if (d > 0.02) discard;
     // A soft dissolve right at the torn edge instead of a hard cutoff —
@@ -325,7 +324,11 @@ const SCREEN_FRAGMENT = `
         float imgNoise = hash(floor(vUv * vec2(140.0, 90.0)) + floor(uTime * 30.0));
         base = mix(base, uLaserWhite * imgNoise, glitchActive * 0.55);
         float imgAlpha = mix(1.0, 0.55, glitchActive);
-        color = mix(color, base * uFlicker, reveal);
+        // The revealed image itself no longer dims/flickers with uFlicker —
+        // it holds steady once shown; only the edge glow below carries the
+        // flicker now, so the picture stays legible while the border still
+        // reads as unstable light.
+        color = mix(color, base, reveal);
         alpha = mix(alpha, imgAlpha, reveal);
 
         // A bright scan-band slowly sweeping down the revealed image —
@@ -334,16 +337,21 @@ const SCREEN_FRAGMENT = `
         float scanY = fract(uTime * 0.12);
         float scanDist = abs(vUv.y - (1.0 - scanY));
         float scanBand = smoothstep(0.05, 0.0, scanDist) * 0.32;
-        color += uLaserWhite * scanBand * reveal * uFlicker;
+        color += uLaserWhite * scanBand * reveal;
       }
     }
 
-    float edge = smoothstep(-0.045, -0.01, d);
+    // Narrower band than the original (was -0.045..-0.01) so the glow
+    // reads as a defined edge rather than a wide halo eating into the
+    // image. uFlicker lives ONLY here now — the image content above holds
+    // steady regardless of it, so what actually flickers is just this
+    // ring of light around the picture, not the picture itself.
+    float edge = smoothstep(-0.026, -0.008, d);
     vec3 edgeNoise = vec3(hash(vUv * 300.0 + uTime * 5.0));
     vec3 edgeColor = mix(uLaserWhite, edgeNoise, glitchActive * 0.7);
-    float edgeStrength = edge * 0.55 * (1.0 + glitchActive * 0.6);
+    float edgeStrength = edge * 0.55 * (1.0 + glitchActive * 0.6) * uFlicker;
     color = mix(color, edgeColor, clamp(edgeStrength, 0.0, 1.0));
-    alpha = mix(alpha, 1.0, edge);
+    alpha = mix(alpha, 1.0, edge * uFlicker);
     alpha *= dissolveAlpha;
 
     gl_FragColor = vec4(color, alpha);
@@ -477,7 +485,7 @@ class PlanetInstance {
   revealTimer: number[] = []
   itemOrbitRadius = 0
 
-  progress = { current: 0.5, target: 0.5, ease: 0.08 }
+  progress = { current: 0.5, target: 0.5 }
   goToEaseActive = false
   /** True once the user has clicked (or arrowed to) a specific item on this
    *  planet — before that, every craft just idles on the ring. */
@@ -531,11 +539,10 @@ class PlanetInstance {
    *  Saturn itself (the reference). */
   viewScale: number
 
-  constructor(site: PlanetSite, scene: THREE.Scene, aspect: number, borderRadius: number, swipeEase: number, seedIndex: number) {
+  constructor(site: PlanetSite, scene: THREE.Scene, aspect: number, borderRadius: number, seedIndex: number) {
     this.site = site
     this.scene = scene
     this.count = site.items?.length ?? 0
-    this.progress.ease = swipeEase
     this.orbitAngle = site.orbitPhase ?? seedIndex * 2.399963 // golden-angle-ish spread
     this.viewScale = site.radius / REFERENCE_RADIUS
 
@@ -732,12 +739,6 @@ class PlanetInstance {
     this.goToEaseActive = true
   }
 
-  onCheck() {
-    if (this.count < 1 || !this.anySelected) return
-    const step = 1 / this.count
-    this.progress.target = Math.round(this.progress.target / step) * step
-  }
-
   // Deselects WITHOUT an instant hide — clearing `openIndex` makes every
   // item (including whichever was open) read as "departing," the exact
   // same shrink-away animation a normal switch-to-a-different-item already
@@ -798,15 +799,19 @@ class PlanetInstance {
   // scoped to this planet's own group and world-space focus offsets. Items
   // not near the focus point just ride the ring via `_idlePosition`.
   activeUpdate(time: number): number {
-    // Opening (flying an item IN toward the camera) uses the slow,
-    // deliberate GOTO_EASE so that close approach is actually watchable.
-    // Closing (openIndex already cleared by `closeSelection()`) uses its
-    // own quicker rate instead of also being dragged out by that same
-    // slowdown — nobody asked for the RETRACT to be slower, and the
-    // eased convergence's tail-end duration barely depends on how far it
-    // started, so sharing one rate would have made every close take
-    // several seconds too.
-    const ease = !this.goToEaseActive ? this.progress.ease : this.openIndex >= 0 ? GOTO_EASE : CLOSE_EASE
+    // `progress.current`/`target` only ever differ while `goToEaseActive`
+    // is true (there's no drag anymore to move `target` any other way —
+    // `idleSelectionUpdate` always keeps them equal, and `goTo`/
+    // `closeSelection` both set this flag the moment they move `target`),
+    // so which rate to use is just: opening (flying an item IN toward the
+    // camera) uses the slow, deliberate GOTO_EASE so the close approach is
+    // actually watchable; closing (openIndex already cleared by
+    // `closeSelection()`) uses its own quicker rate instead of also being
+    // dragged out by that same slowdown — nobody asked for the RETRACT to
+    // be slower, and an eased convergence's tail-end duration barely
+    // depends on how far it started, so sharing one rate would have made
+    // every close take several seconds too.
+    const ease = this.openIndex >= 0 ? GOTO_EASE : CLOSE_EASE
     this.progress.current += (this.progress.target - this.progress.current) * ease
     if (this.goToEaseActive && Math.abs(this.progress.target - this.progress.current) < 0.0005) {
       this.goToEaseActive = false
@@ -1067,7 +1072,6 @@ class App {
   pointerDownX = 0
   pointerDownY = 0
   pointerDownTime = 0
-  dragStartProgress = 0
 
   boundOnResize: () => void
   boundOnTouchDown: (e: MouseEvent | TouchEvent) => void
@@ -1081,7 +1085,6 @@ class App {
     planetSites: PlanetSite[],
     aspect: number,
     borderRadius: number,
-    swipeEase: number,
     onItemClick?: (localIndex: number, rect: ScreenRect | null) => void,
     onActiveIndexChange?: (localIndex: number | null) => void,
     onActivePlanetChange?: (planetId: string | null) => void,
@@ -1105,7 +1108,7 @@ class App {
     this.buildLights()
 
     this.planets = planetSites.map((site, i) => {
-      const p = new PlanetInstance(site, this.scene, aspect, borderRadius, swipeEase, i)
+      const p = new PlanetInstance(site, this.scene, aspect, borderRadius, i)
       p._focusScaleAdjustRef = this.focusScaleAdjust
       this.planetsById.set(site.id, p)
       return p
@@ -1276,10 +1279,6 @@ class App {
     this.focusedPlanet.closeSelection()
   }
 
-  onCheck() {
-    this.focusedPlanet?.onCheck()
-  }
-
   setHover(localIndex: number) {
     if (localIndex === this.hoveredIndex) return
     this.hoveredIndex = localIndex
@@ -1381,6 +1380,11 @@ class App {
     return out
   }
 
+  // There's no ring-drag anymore — switching between items is click-only
+  // (a craft, its flyby marker, the arrived marker, the HUD panel, a
+  // badge, or a dot). `hasDragged` still exists purely so an incidental
+  // finger/mouse wobble mid-click (or a page-scroll gesture that happens
+  // to start over the canvas) doesn't register as a tap.
   onTouchDown(e: MouseEvent | TouchEvent) {
     this.isDown = true
     this.hasDragged = false
@@ -1389,49 +1393,36 @@ class App {
     this.pointerDownX = clientX
     this.pointerDownY = clientY
     this.pointerDownTime = performance.now()
-    if (this.viewMode === 'planet' && this.focusedPlanet) {
-      this.focusedPlanet.goToEaseActive = false
-      this.dragStartProgress = this.focusedPlanet.progress.target
-    }
   }
 
   onTouchMove(e: MouseEvent | TouchEvent) {
     if (!this.isDown) return
     const x = 'touches' in e ? e.touches[0].clientX : e.clientX
-    if (Math.abs(x - this.pointerDownX) > 6) this.hasDragged = true
-    if (this.viewMode === 'planet' && this.focusedPlanet && this.focusedPlanet.count > 0) {
-      const dx = this.pointerDownX - x
-      const delta = (dx / this.container.clientWidth) * (1 / this.focusedPlanet.count) * 1.6
-      this.focusedPlanet.anySelected = true
-      this.focusedPlanet.progress.target = this.dragStartProgress + delta
-    }
+    const y = 'touches' in e ? e.touches[0].clientY : e.clientY
+    if (Math.abs(x - this.pointerDownX) > 6 || Math.abs(y - this.pointerDownY) > 6) this.hasDragged = true
   }
 
   onTouchUp(e: MouseEvent | TouchEvent) {
     if (!this.isDown) return
     this.isDown = false
     const isQuickTap = !this.hasDragged && performance.now() - this.pointerDownTime < 500
+    if (!isQuickTap) return
 
     if (this.viewMode === 'overview') {
-      if (isQuickTap) {
-        const planetId = this.hitTestPlanet(this.pointerDownX, this.pointerDownY)
-        if (planetId) this.enterPlanet(planetId)
-      }
+      const planetId = this.hitTestPlanet(this.pointerDownX, this.pointerDownY)
+      if (planetId) this.enterPlanet(planetId)
       return
     }
 
     if (this.viewMode === 'planet' && this.focusedPlanet) {
-      if (isQuickTap) {
-        const localIndex = this.hitTestItem(this.pointerDownX, this.pointerDownY)
-        if (localIndex !== null) {
-          if (this.focusedPlanet.anySelected && localIndex === this.focusedPlanet.activeIndex) {
-            this.onItemClick?.(localIndex, this.getFocusedScreenRect())
-          } else {
-            this.focusedPlanet.goTo(localIndex)
-          }
+      const localIndex = this.hitTestItem(this.pointerDownX, this.pointerDownY)
+      if (localIndex !== null) {
+        if (this.focusedPlanet.anySelected && localIndex === this.focusedPlanet.activeIndex) {
+          this.onItemClick?.(localIndex, this.getFocusedScreenRect())
+        } else {
+          this.focusedPlanet.goTo(localIndex)
         }
       }
-      this.onCheck()
     }
   }
 
@@ -1439,7 +1430,7 @@ class App {
     if (this.isDown) return
     if (this.viewMode === 'planet') {
       const localIndex = this.hitTestItem(e.clientX, e.clientY)
-      this.container.style.cursor = localIndex !== null ? 'pointer' : 'grab'
+      this.container.style.cursor = localIndex !== null ? 'pointer' : 'default'
       this.setHover(localIndex ?? -1)
       this.onHoverChange?.(localIndex !== null ? { localIndex, clientX: e.clientX, clientY: e.clientY } : null)
     } else if (this.viewMode === 'overview') {
@@ -1573,7 +1564,7 @@ class App {
 }
 
 const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalleryProps>(function SolarSystemGallery(
-  { planets, aspect = 16 / 9, borderRadius = 0.04, swipeEase = 0.08, onItemClick, onActiveIndexChange, onActivePlanetChange, onHoverChange },
+  { planets, aspect = 16 / 9, borderRadius = 0.04, onItemClick, onActiveIndexChange, onActivePlanetChange, onHoverChange },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1603,7 +1594,6 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
       planets,
       aspect,
       borderRadius,
-      swipeEase,
       (i, rect) => onItemClickRef.current?.(i, rect),
       (i) => onActiveIndexChangeRef.current?.(i),
       (id) => onActivePlanetChangeRef.current?.(id),
@@ -1615,12 +1605,12 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
       appRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planets, aspect, borderRadius, swipeEase])
+  }, [planets, aspect, borderRadius])
 
   return (
     <div
       ref={containerRef}
-      className="h-full w-full cursor-grab touch-pan-y outline-none active:cursor-grabbing"
+      className="h-full w-full outline-none"
       tabIndex={0}
       role="region"
       aria-label="Solar system project gallery. Click a planet to enter it, then click a craft to preview a project."

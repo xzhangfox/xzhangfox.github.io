@@ -140,8 +140,8 @@ export default function ProjectPreviewModal({
         <defs>
           <filter id="hologram-fray" x="-20%" y="-20%" width="140%" height="140%">
             <feTurbulence type="fractalNoise" baseFrequency="0.9 0.7" numOctaves="2" seed="7" result="noise" />
-            <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.6" xChannelSelector="R" yChannelSelector="G">
-              <animate attributeName="scale" values="1.2;2.2;1;1.8;1.2" dur="1.8s" repeatCount="indefinite" calcMode="discrete" />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale="0.9" xChannelSelector="R" yChannelSelector="G">
+              <animate attributeName="scale" values="0.6;1.1;0.5;0.9;0.6" dur="1.8s" repeatCount="indefinite" calcMode="discrete" />
             </feDisplacementMap>
           </filter>
         </defs>
