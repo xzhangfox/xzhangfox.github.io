@@ -242,12 +242,32 @@ const SCREEN_FRAGMENT = `
         // here. uFlicker still dims it during the brief pre-close flicker,
         // but otherwise this holds rock-steady except for the synced
         // glitch burst below.
-        vec3 base = texture2D(uMap, uv).rgb;
+        // Chromatic aberration — the red/blue channels sample slightly
+        // outward from center, growing toward the edges, the classic
+        // "unstable projection" fringe. Clean at the center, colored fringe
+        // at the rim, reinforcing it as light rather than a flat image.
+        vec2 caCenter = vUv - 0.5;
+        float caDist = length(caCenter);
+        vec2 caDir = caDist > 0.0001 ? caCenter / caDist : vec2(0.0);
+        float caAmount = 0.007 * smoothstep(0.18, 0.5, caDist);
+        vec3 base = vec3(
+          texture2D(uMap, uv + caDir * caAmount).r,
+          texture2D(uMap, uv).g,
+          texture2D(uMap, uv - caDir * caAmount).b
+        );
         float imgNoise = hash(floor(vUv * vec2(140.0, 90.0)) + floor(uTime * 30.0));
         base = mix(base, uLaserWhite * imgNoise, glitchActive * 0.55);
         float imgAlpha = mix(1.0, 0.55, glitchActive);
         color = mix(color, base * uFlicker, reveal);
         alpha = mix(alpha, imgAlpha, reveal);
+
+        // A bright scan-band slowly sweeping down the revealed image —
+        // reads as an active projection/scan rather than instability, the
+        // way the static/glitch effects do.
+        float scanY = fract(uTime * 0.12);
+        float scanDist = abs(vUv.y - (1.0 - scanY));
+        float scanBand = smoothstep(0.05, 0.0, scanDist) * 0.32;
+        color += uLaserWhite * scanBand * reveal * uFlicker;
       }
     }
 
