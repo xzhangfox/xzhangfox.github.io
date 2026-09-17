@@ -37,21 +37,30 @@ export default function ProjectPreviewModal({
   const shots = project.gallery
   const shot = shots[index]
 
-  // Phase 1: the image container morphs from `originRect` to its natural
-  // resting spot in the layout below. Phase 2 (`expanded`) reveals
+  // Phase 1: TWO elements morph out of `originRect` at once — the image
+  // (to its natural resting spot inside the card) and the outer card
+  // itself (to its own full resting size). Both start from the exact same
+  // rect and run the same transition, so what reads as "the hologram
+  // screen's own frayed edge" (carried by the outer card, not the image —
+  // see `hologram-edge` below) is the thing that visibly deforms into the
+  // detail page's outermost border, rather than a plain border appearing
+  // separately once the image finishes. Phase 2 (`expanded`) reveals
   // everything else — header, description, tech, CTA — only once that
-  // finishes, so the open reads as "the thumbnail itself grows into the
+  // finishes, so the open reads as "the preview itself grows into the
   // page" rather than a card appearing with an image inside it.
   //
   // Framer Motion's declarative `animate` prop is used rather than the
-  // imperative `useAnimation()` controls: driving the container from a
+  // imperative `useAnimation()` controls: driving each container from a
   // FROM-transform state to an identity state via two ordinary state
   // updates (below) is the standard, well-tested pattern for this kind of
   // FLIP animation, and `motion.div` picks up the transition between them
   // on its own once mounted with `initial={false}`.
   const imgWrapRef = useRef<HTMLDivElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
   const [expanded, setExpanded] = useState(!originRect)
-  const [flip, setFlip] = useState<{ x: number; y: number; scaleX: number; scaleY: number }>({ x: 0, y: 0, scaleX: 1, scaleY: 1 })
+  const identityFlip = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
+  const [flip, setFlip] = useState(identityFlip)
+  const [cardFlip, setCardFlip] = useState(identityFlip)
   // getBoundingClientRect() reads the element's current RENDERED (post-
   // transform) box, not its pre-transform layout box — so measuring
   // "final rect" is only valid before any transform has been applied yet.
@@ -69,25 +78,30 @@ export default function ProjectPreviewModal({
   useLayoutEffect(() => {
     if (hasStartedRef.current) return
     hasStartedRef.current = true
-    const el = imgWrapRef.current
-    if (!el || !originRect) {
+    const imgEl = imgWrapRef.current
+    const cardEl = cardRef.current
+    if (!imgEl || !cardEl || !originRect) {
       setExpanded(true)
       return
     }
-    const finalRect = el.getBoundingClientRect()
-    const scaleX = originRect.width / finalRect.width
-    const scaleY = originRect.height / finalRect.height
-    const x = originRect.left + originRect.width / 2 - (finalRect.left + finalRect.width / 2)
-    const y = originRect.top + originRect.height / 2 - (finalRect.top + finalRect.height / 2)
+    const deltaFrom = (finalRect: DOMRect) => ({
+      x: originRect.left + originRect.width / 2 - (finalRect.left + finalRect.width / 2),
+      y: originRect.top + originRect.height / 2 - (finalRect.top + finalRect.height / 2),
+      scaleX: originRect.width / finalRect.width,
+      scaleY: originRect.height / finalRect.height,
+    })
     // Mount already at the origin transform (paired with `initial={false}`
     // below, so this first value is applied instantly, not animated to).
-    setFlip({ x, y, scaleX, scaleY })
+    setFlip(deltaFrom(imgEl.getBoundingClientRect()))
+    setCardFlip(deltaFrom(cardEl.getBoundingClientRect()))
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        setFlip({ x: 0, y: 0, scaleX: 1, scaleY: 1 })
+        setFlip(identityFlip)
+        setCardFlip(identityFlip)
         setTimeout(() => setExpanded(true), 570)
       })
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -130,15 +144,24 @@ export default function ProjectPreviewModal({
       </svg>
 
       <motion.div
-        layout
+        ref={cardRef}
+        initial={false}
+        animate={{ x: cardFlip.x, y: cardFlip.y, scaleX: cardFlip.scaleX, scaleY: cardFlip.scaleY }}
+        transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+        style={{ transformOrigin: 'center center' }}
         className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Card chrome — deferred until the image has fully arrived, so the
-            opening read is "the thumbnail itself grows," not "a card
-            appears with an image inside it." */}
+        {/* Card chrome fill — deferred until the image has fully arrived,
+            so the opening read is "the preview itself grows," not "a card
+            appears with an image inside it." The actual visible border is
+            `hologram-edge` below, not a plain CSS border here: it's the
+            same frayed, laser-white edge treatment the WebGL hologram
+            screen had, carried by THIS outer container's own FLIP so it
+            visibly deforms from the thumbnail's edge into the detail
+            page's outermost border rather than swapping to a new one. */}
         <motion.div
-          className="pointer-events-none absolute inset-0 rounded-2xl border border-white/8 bg-[#0E0E0E]"
+          className="pointer-events-none absolute inset-0 rounded-2xl bg-[#0E0E0E]"
           initial={{ opacity: originRect ? 0 : 1 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
@@ -150,6 +173,8 @@ export default function ProjectPreviewModal({
           transition={{ duration: 0.3 }}
           style={{ background: `radial-gradient(ellipse 80% 50% at 50% 0%, ${project.color}14 0%, transparent 70%)` }}
         />
+        <div className="pointer-events-none absolute inset-0 rounded-2xl hologram-edge" />
+        <div className="pointer-events-none absolute inset-x-0 hologram-scan" />
 
         <button
           onClick={onClose}
@@ -182,7 +207,7 @@ export default function ProjectPreviewModal({
             animate={{ x: flip.x, y: flip.y, scaleX: flip.scaleX, scaleY: flip.scaleY }}
             transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
             style={{ transformOrigin: 'center center' }}
-            className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface-elevated shadow-[0_0_24px_rgba(234,246,255,0.16)]"
+            className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface-elevated"
           >
             <AnimatePresence mode="wait">
               <motion.img
@@ -196,13 +221,6 @@ export default function ProjectPreviewModal({
                 transition={{ duration: 0.25 }}
               />
             </AnimatePresence>
-
-            {/* Persistent hologram-style edge — the same laser-white
-                torn-light look the WebGL screen had, kept all the way
-                through the fully expanded state so nothing swaps to a
-                plain modal border partway through the morph. */}
-            <div className="pointer-events-none absolute inset-0 rounded-xl hologram-edge" />
-            <div className="pointer-events-none absolute inset-x-0 hologram-scan" />
 
             {expanded && shots.length > 1 && (
               <>

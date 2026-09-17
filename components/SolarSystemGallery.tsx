@@ -42,6 +42,15 @@ export interface SolarSystemGalleryHandle {
    *  non-craft trigger (the HUD panel, the craft callout marker) can open
    *  the same project with the same FLIP-morph origin. */
   getFocusedScreenRect: () => ScreenRect | null
+  /** Deselects without an instant hide — the open item's screen shrinks
+   *  away exactly like switching to a different item would, and the ring
+   *  resumes its continuous idle rotation once that finishes. Call this
+   *  whenever the preview modal closes, by whatever means. */
+  closeSelection: () => void
+  /** Idling (unselected) craft currently swinging near the camera-facing
+   *  point of the ring, in live viewport pixels — for the transient
+   *  flyby marker/label. Meant to be polled from a caller-owned rAF loop. */
+  getFlybyMarkers: () => { index: number; x: number; y: number }[]
 }
 
 interface HoverInfo {
@@ -151,6 +160,20 @@ const SELF_SPIN_SPEED = 0.0018
 // verified.
 const APPROACH_WINDOW = 0.15
 const DEPART_WINDOW = 0.06
+
+// While nothing's selected, the whole ring slowly, continuously revolves
+// (a fraction of a full loop per frame) rather than sitting frozen until
+// the first click — this is what makes N items actually read as N craft
+// orbiting, not N craft parked. ~65s for a full revolution at 60fps: slow
+// and ambient, never fighting for attention with a focused item.
+const IDLE_ORBIT_SPEED = 0.00026
+// How close (in the same `t`-distance-from-front-of-ring units as
+// APPROACH_WINDOW/DEPART_WINDOW) an idling craft must swing to the
+// camera-facing point of the ring before it's "close enough to notice" —
+// wide enough to give the flyby marker/label a comfortable dwell time as
+// the craft passes, narrow enough that it's still a brief, passing cue
+// rather than a constant fixture.
+const FLYBY_WINDOW = 0.1
 
 const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.35
@@ -701,6 +724,31 @@ class PlanetInstance {
     this.progress.target = Math.round(this.progress.target / step) * step
   }
 
+  // Deselects WITHOUT an instant hide — clearing `openIndex` makes every
+  // item (including whichever was open) read as "departing," the exact
+  // same shrink-away animation a normal switch-to-a-different-item already
+  // runs, and nudging the ring onward is what actually drives that shrink
+  // (a lift value only decays once `masterT` itself moves past the
+  // item's window). `activeUpdate` hands `anySelected` back to false on
+  // its own once that departure finishes (see its own end), so continuous
+  // idle rotation resumes seamlessly from wherever the ring lands — no
+  // separate "resume" call needed. `resetSelection()`'s harder, immediate
+  // hide stays reserved for `enterPlanet()`, where nothing was visually
+  // open yet in the newly-entered planet's own context.
+  closeSelection() {
+    if (!this.anySelected || this.openIndex < 0) return
+    this.openIndex = -1
+    // Just enough to carry the closing item's own `dist` past DEPART_WINDOW
+    // (so its screen actually shrinks away) without the ring swinging far
+    // enough to carry the NEXT item's `dist` under APPROACH_WINDOW too —
+    // otherwise closing one item could visibly tug its neighbor toward the
+    // focus spot. Safe for this file's actual item counts (4 on Saturn, 1
+    // on the Moon): for 4 items the neighbor sits 0.25 away, leaving
+    // 0.25 - APPROACH_WINDOW = 0.10 of headroom above DEPART_WINDOW's 0.06.
+    this.progress.target = this.progress.current + DEPART_WINDOW * 1.3
+    this.goToEaseActive = true
+  }
+
   resetSelection() {
     this.anySelected = false
     this.activeIndex = -1
@@ -887,14 +935,30 @@ class PlanetInstance {
     }
 
     this.activeIndex = bestFocus > 0.001 ? bestIndex : -1
+
+    // Once a `closeSelection()`-triggered departure has fully finished
+    // (nothing left near the focus window, ring no longer easing) hand
+    // back off to `idleSelectionUpdate`'s continuous rotation — the App's
+    // own per-frame branch picks this up next frame.
+    if (this.anySelected && this.openIndex === -1 && !this.goToEaseActive && bestFocus < 0.001) {
+      this.anySelected = false
+    }
+
     return this.activeIndex
   }
 
   // Pure idle pass — nothing selected yet, every item evenly spaced around
-  // its ring/orbit, none of them near the focus spot.
+  // its ring/orbit, none of them near the focus spot. `progress.current`
+  // keeps advancing here (instead of sitting still) so the ring visibly,
+  // continuously revolves; `activeUpdate`'s `goTo()` reads this same field
+  // to compute its shortest-path delta, so the moment something IS
+  // clicked, the eased flight-in picks up exactly where this left off —
+  // no jump.
   idleSelectionUpdate(time: number) {
+    this.progress.current = wrap01(this.progress.current + IDLE_ORBIT_SPEED)
+    this.progress.target = this.progress.current
     for (let i = 0; i < this.count; i++) {
-      this._idlePosition(i, wrap01(i / this.count), time)
+      this._idlePosition(i, wrap01(this.progress.current + i / this.count), time)
     }
   }
 
@@ -1185,6 +1249,11 @@ class App {
     this.focusedPlanet.goTo(localIndex)
   }
 
+  closeSelection() {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet) return
+    this.focusedPlanet.closeSelection()
+  }
+
   onCheck() {
     this.focusedPlanet?.onCheck()
   }
@@ -1275,6 +1344,33 @@ class App {
       x: rect.left + (ndc.x * 0.5 + 0.5) * rect.width,
       y: rect.top + (1 - (ndc.y * 0.5 + 0.5)) * rect.height,
     }
+  }
+
+  // Whichever idling craft (nothing selected yet) are currently swinging
+  // near the camera-facing point of their ring, projected to viewport
+  // pixels — drives a transient "look, a project" marker+label per craft
+  // as it passes, independent of any click. Empty once something's
+  // selected (that's `getFocusedCraftScreenPos`'s job instead).
+  getFlybyMarkers(): { index: number; x: number; y: number }[] {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet || this.focusedPlanet.anySelected) return []
+    const planet = this.focusedPlanet
+    const rect = this.container.getBoundingClientRect()
+    const out: { index: number; x: number; y: number }[] = []
+    for (let i = 0; i < planet.count; i++) {
+      const t = wrap01(planet.progress.current + i / planet.count)
+      const dist = Math.min(t, 1 - t)
+      if (dist >= FLYBY_WINDOW) continue
+      const craft = planet.crafts[i]
+      craft.getWorldPosition(this._screenRectCorner)
+      const ndc = this._screenRectCorner.project(this.camera)
+      if (ndc.z > 1) continue
+      out.push({
+        index: i,
+        x: rect.left + (ndc.x * 0.5 + 0.5) * rect.width,
+        y: rect.top + (1 - (ndc.y * 0.5 + 0.5)) * rect.height,
+      })
+    }
+    return out
   }
 
   onTouchDown(e: MouseEvent | TouchEvent) {
@@ -1489,6 +1585,8 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     goTo: (localIndex: number) => appRef.current?.goTo(localIndex),
     getCraftScreenPos: () => appRef.current?.getFocusedCraftScreenPos() ?? null,
     getFocusedScreenRect: () => appRef.current?.getFocusedScreenRect() ?? null,
+    closeSelection: () => appRef.current?.closeSelection(),
+    getFlybyMarkers: () => appRef.current?.getFlybyMarkers() ?? [],
   }), [])
 
   useEffect(() => {

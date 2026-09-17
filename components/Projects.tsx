@@ -96,6 +96,10 @@ export default function Projects() {
   const craftMarkerGroupRef = useRef<SVGGElement>(null)
   const craftMarkerCircleRef = useRef<SVGCircleElement>(null)
   const leaderLineRef = useRef<SVGLineElement>(null)
+  const flybyCircleRefs = useRef<Map<number, SVGCircleElement>>(new Map())
+  const flybyLabelRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const openIdRef = useRef(openId)
+  openIdRef.current = openId
 
   const currentProjects = activePlanetId ? projectsByPlanet[activePlanetId] ?? [] : []
   const activeProject = activeIndex !== null ? currentProjects[activeIndex] : undefined
@@ -121,12 +125,35 @@ export default function Projects() {
     handleItemClick(activeIndex, galleryRef.current?.getFocusedScreenRect() ?? null)
   }, [activeIndex, handleItemClick])
 
+  // Closing by any means (✕, Escape, backdrop, or re-clicking the HUD
+  // label below) also tells the gallery to let the craft go — it shrinks
+  // away exactly like switching to a different item would, and every craft
+  // on that planet resumes its idle orbit once that settles.
+  const closeActiveProject = useCallback(() => {
+    setOpenId(null)
+    setOpenOriginRect(null)
+    galleryRef.current?.closeSelection()
+  }, [])
+
+  // The HUD panel doubles as a toggle: while its project's already open,
+  // clicking it again closes it instead of re-opening.
+  const handleHudClick = useCallback(() => {
+    if (activeProject && openIdRef.current === activeProject.id) {
+      closeActiveProject()
+    } else {
+      openActiveProject()
+    }
+  }, [activeProject, closeActiveProject, openActiveProject])
+
   // Polls the focused craft's live screen position on its own rAF loop
   // (not React state) so the marker/leader-line can track a moving craft
   // at 60fps without forcing the whole section to re-render every frame —
   // only the SVG attributes are touched directly. Runs only while a
   // project is actually focused; the getter itself returns null (hiding
-  // the marker) until the craft has essentially arrived.
+  // the marker) until the craft has essentially arrived. Hidden once the
+  // preview modal for it is actually open — only the HUD label stays up
+  // then (checked via a ref so the running loop doesn't need to restart
+  // every time the modal opens/closes).
   useEffect(() => {
     if (!activeProject) {
       if (craftMarkerGroupRef.current) craftMarkerGroupRef.current.style.display = 'none'
@@ -134,7 +161,7 @@ export default function Projects() {
     }
     let raf: number
     const tick = () => {
-      const pos = galleryRef.current?.getCraftScreenPos()
+      const pos = openIdRef.current === activeProject.id ? null : galleryRef.current?.getCraftScreenPos()
       const wrapperRect = wrapperRef.current?.getBoundingClientRect()
       const group = craftMarkerGroupRef.current
       const line = leaderLineRef.current
@@ -163,6 +190,48 @@ export default function Projects() {
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [activeProject?.id])
+
+  // Flyby markers — a lightweight circle+label per idling craft as it
+  // swings near the camera-facing point of the ring, independent of any
+  // click. Runs whenever a planet's entered (not gated on a project being
+  // focused — quite the opposite, `getFlybyMarkers()` itself returns
+  // nothing once something IS selected). Also driven by its own rAF loop
+  // rather than React state for the same 60fps-without-a-re-render reason.
+  useEffect(() => {
+    if (!activePlanetId) return
+    const count = currentProjects.length
+    let raf: number
+    const tick = () => {
+      const markers = galleryRef.current?.getFlybyMarkers() ?? []
+      const wrapperRect = wrapperRef.current?.getBoundingClientRect()
+      for (let i = 0; i < count; i++) {
+        const circle = flybyCircleRefs.current.get(i)
+        const label = flybyLabelRefs.current.get(i)
+        const m = wrapperRect ? markers.find((mm) => mm.index === i) : undefined
+        if (m && wrapperRect) {
+          const x = m.x - wrapperRect.left
+          const y = m.y - wrapperRect.top
+          if (circle) {
+            circle.style.display = ''
+            circle.setAttribute('cx', String(x))
+            circle.setAttribute('cy', String(y))
+          }
+          if (label) {
+            label.style.display = ''
+            label.style.left = `${x + 16}px`
+            label.style.top = `${y - 11}px`
+          }
+        } else {
+          if (circle) circle.style.display = 'none'
+          if (label) label.style.display = 'none'
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePlanetId])
 
   const goPrevNext = (dir: 1 | -1) => {
     const count = currentProjects.length
@@ -293,9 +362,9 @@ export default function Projects() {
                 transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
                 role="button"
                 tabIndex={0}
-                onClick={openActiveProject}
+                onClick={handleHudClick}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') openActiveProject()
+                  if (e.key === 'Enter' || e.key === ' ') handleHudClick()
                 }}
                 className="pointer-events-auto cursor-pointer border bg-black/45 px-3 py-2 backdrop-blur-sm transition-colors duration-200 hover:bg-black/60 sm:px-3.5 sm:py-2.5"
                 style={{
@@ -343,7 +412,46 @@ export default function Projects() {
               <animate attributeName="stroke-opacity" values="0.9;0.35;0.9" dur="1.8s" repeatCount="indefinite" />
             </circle>
           </g>
+
+          {/* Flyby markers — one per project on this planet, shown only
+              while its craft is currently swinging near the camera (and
+              nothing's selected yet). Clicking one starts the same
+              fly-to-focus sequence a direct craft click would. */}
+          {currentProjects.map((project, i) => (
+            <circle
+              key={project.id}
+              ref={(el) => {
+                if (el) flybyCircleRefs.current.set(i, el)
+                else flybyCircleRefs.current.delete(i)
+              }}
+              r={10}
+              fill="transparent"
+              stroke={project.color}
+              strokeWidth={1.2}
+              strokeDasharray="2 3"
+              style={{ display: 'none' }}
+              className="pointer-events-auto cursor-pointer"
+              onClick={() => galleryRef.current?.goTo(i)}
+            >
+              <animate attributeName="r" values="8;11;8" dur="1.4s" repeatCount="indefinite" />
+            </circle>
+          ))}
         </svg>
+
+        {currentProjects.map((project, i) => (
+          <div
+            key={project.id}
+            ref={(el) => {
+              if (el) flybyLabelRefs.current.set(i, el)
+              else flybyLabelRefs.current.delete(i)
+            }}
+            onClick={() => galleryRef.current?.goTo(i)}
+            className="pointer-events-auto absolute z-10 cursor-pointer whitespace-nowrap rounded-md border border-gold/30 bg-black/80 px-2 py-1 text-[10px] font-medium text-white/90 backdrop-blur-sm"
+            style={{ display: 'none', left: 0, top: 0 }}
+          >
+            {project.title}
+          </div>
+        ))}
 
         {/* Simple hover tooltip — a craft idling on the ring, not yet
             clicked, just names itself. */}
@@ -413,14 +521,7 @@ export default function Projects() {
 
       <AnimatePresence>
         {openProject && (
-          <ProjectPreviewModal
-            project={openProject}
-            originRect={openOriginRect}
-            onClose={() => {
-              setOpenId(null)
-              setOpenOriginRect(null)
-            }}
-          />
+          <ProjectPreviewModal project={openProject} originRect={openOriginRect} onClose={closeActiveProject} />
         )}
       </AnimatePresence>
     </section>
