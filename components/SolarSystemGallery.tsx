@@ -179,7 +179,7 @@ const FLIGHT_OPEN_EASE = 0.011
 // to be slower too, and an exponential ease's tail-end duration barely
 // depends on how far it started, so sharing one rate would have made
 // every close take several seconds for no reason.
-const FLIGHT_CLOSE_EASE = 0.032
+const FLIGHT_CLOSE_EASE = 0.06
 // Per-frame step for the screen's own reveal timer, independent of
 // FLIGHT_OPEN_EASE — reaches 1 in ~20 frames (~0.33s) once the plane has
 // formed, so the "flickering to life" moment always resolves quickly.
@@ -457,7 +457,12 @@ class PlanetInstance {
   mesh!: THREE.Mesh
   ring?: THREE.Mesh
   orbitLine?: THREE.LineLoop
-  debris: { mesh: THREE.Mesh; spin: THREE.Vector3 }[] = []
+  // `angle`/`radius`/`y` are the debris's own fixed orbital slot (set once
+  // at construction); its rendered position is recomputed every frame as
+  // `angle + ringPhase*2π`, the same shared rotation the craft ring reads
+  // — so dragging or idling the ring visibly carries the debris field
+  // around with it, not just the craft.
+  debris: { mesh: THREE.Mesh; spin: THREE.Vector3; angle: number; radius: number; y: number }[] = []
   orbitAngle: number
 
   count: number
@@ -619,6 +624,9 @@ class PlanetInstance {
       this.debris.push({
         mesh,
         spin: new THREE.Vector3((Math.random() - 0.5) * 0.01, (Math.random() - 0.5) * 0.01, (Math.random() - 0.5) * 0.01),
+        angle,
+        radius,
+        y: yJitter,
       })
     }
   }
@@ -930,11 +938,7 @@ class PlanetInstance {
       }
     }
 
-    for (const d of this.debris) {
-      d.mesh.rotation.x += d.spin.x
-      d.mesh.rotation.y += d.spin.y
-      d.mesh.rotation.z += d.spin.z
-    }
+    this._updateDebris()
 
     this.activeIndex = this.flightIndex >= 0 && this.flightT > 0.001 ? this.flightIndex : -1
     return this.activeIndex
@@ -945,11 +949,30 @@ class PlanetInstance {
   // still) so the ring visibly, continuously revolves; `goTo()` reads this
   // same field to capture the flying item's exact current ring slot, so
   // the moment something IS clicked, its flight starts from right where
-  // this left off — no jump.
+  // this left off — no jump. A drag (see App.onTouchMove) can also move
+  // `ringPhase` directly, which this and `_updateDebris` just read like
+  // any other change to it — idle rotation resumes from wherever a drag
+  // left it, no special-casing needed.
   idleSelectionUpdate(time: number) {
     this.ringPhase = wrap01(this.ringPhase + IDLE_ORBIT_SPEED)
     for (let i = 0; i < this.count; i++) {
       this._idlePosition(i, wrap01(this.ringPhase + i / this.count), time)
+    }
+    this._updateDebris()
+  }
+
+  // Self-spin (every piece tumbling in place) plus orbital repositioning
+  // around `ringPhase` — the same shared rotation the craft ring itself
+  // reads, so a drag (or the ring's own idle rotation) visibly carries the
+  // debris field around with it too, not just the craft.
+  _updateDebris() {
+    const rot = this.ringPhase * Math.PI * 2
+    for (const d of this.debris) {
+      d.mesh.rotation.x += d.spin.x
+      d.mesh.rotation.y += d.spin.y
+      d.mesh.rotation.z += d.spin.z
+      const a = d.angle + rot
+      d.mesh.position.set(d.radius * Math.sin(a), d.y, d.radius * Math.cos(a))
     }
   }
 
@@ -1036,6 +1059,11 @@ class App {
   pointerDownX = 0
   pointerDownY = 0
   pointerDownTime = 0
+  /** `ringPhase` at the moment a drag started — only set while idling (see
+   *  `onTouchDown`), so a drag-in-progress can compute an absolute new
+   *  phase from the total pointer delta rather than accumulating relative
+   *  deltas frame to frame. */
+  dragStartRingPhase = 0
 
   boundOnResize: () => void
   boundOnTouchDown: (e: MouseEvent | TouchEvent) => void
@@ -1337,11 +1365,15 @@ class App {
     return out
   }
 
-  // There's no ring-drag anymore — switching between items is click-only
-  // (a craft, the HUD panel, a badge, or a dot). `hasDragged` still exists
-  // purely so an incidental finger/mouse wobble mid-click (or a
-  // page-scroll gesture that happens to start over the canvas) doesn't
-  // register as a tap.
+  // Switching between items is click-only (a craft, the HUD panel, a
+  // badge, or a dot) — dragging left/right never selects anything. It
+  // does, while idling, spin the ring (and with it, via `_updateDebris`,
+  // the debris field) directly under the finger, purely a visual "nudge
+  // the ornament" gesture: it only ever touches `ringPhase`, the exact
+  // same field idle rotation itself advances, so releasing just lets idle
+  // rotation continue from wherever the drag left it — no separate
+  // "resume" handling needed. Disabled the instant anything's selected,
+  // matching "every craft freezes until the preview closes."
   onTouchDown(e: MouseEvent | TouchEvent) {
     this.isDown = true
     this.hasDragged = false
@@ -1350,6 +1382,9 @@ class App {
     this.pointerDownX = clientX
     this.pointerDownY = clientY
     this.pointerDownTime = performance.now()
+    if (this.viewMode === 'planet' && this.focusedPlanet && !this.focusedPlanet.anySelected) {
+      this.dragStartRingPhase = this.focusedPlanet.ringPhase
+    }
   }
 
   onTouchMove(e: MouseEvent | TouchEvent) {
@@ -1357,6 +1392,14 @@ class App {
     const x = 'touches' in e ? e.touches[0].clientX : e.clientX
     const y = 'touches' in e ? e.touches[0].clientY : e.clientY
     if (Math.abs(x - this.pointerDownX) > 6 || Math.abs(y - this.pointerDownY) > 6) this.hasDragged = true
+    if (this.hasDragged && this.viewMode === 'planet' && this.focusedPlanet && !this.focusedPlanet.anySelected) {
+      // A full-width drag spins just over half a revolution — enough to
+      // feel like a direct, grabby manipulation of the ring rather than a
+      // sluggish nudge.
+      const dx = x - this.pointerDownX
+      const delta = (dx / this.container.clientWidth) * 0.6
+      this.focusedPlanet.ringPhase = wrap01(this.dragStartRingPhase + delta)
+    }
   }
 
   onTouchUp(e: MouseEvent | TouchEvent) {
@@ -1393,7 +1436,8 @@ class App {
     if (this.isDown) return
     if (this.viewMode === 'planet') {
       const localIndex = this.hitTestItem(e.clientX, e.clientY)
-      this.container.style.cursor = localIndex !== null ? 'pointer' : 'default'
+      const canDrag = !!this.focusedPlanet && !this.focusedPlanet.anySelected
+      this.container.style.cursor = localIndex !== null ? 'pointer' : canDrag ? 'grab' : 'default'
       this.setHover(localIndex ?? -1)
       this.onHoverChange?.(localIndex !== null ? { localIndex, clientX: e.clientX, clientY: e.clientY } : null)
     } else if (this.viewMode === 'overview') {
@@ -1573,7 +1617,7 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
   return (
     <div
       ref={containerRef}
-      className="h-full w-full outline-none"
+      className="h-full w-full touch-pan-y outline-none active:cursor-grabbing"
       tabIndex={0}
       role="region"
       aria-label="Solar system project gallery. Click a planet to enter it, then click a craft to preview a project."
