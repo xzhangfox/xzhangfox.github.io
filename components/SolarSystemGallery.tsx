@@ -33,10 +33,6 @@ export interface SolarSystemGalleryHandle {
   /** Bring the item at this LOCAL index (within the currently-entered
    *  planet) into focus — ignored while in the overview. */
   goTo: (localIndex: number) => void
-  /** The currently-open item's craft, in live viewport pixels, once it's
-   *  mostly arrived — null before then or when nothing's open. Meant to be
-   *  polled from a caller-owned rAF loop, not reactively. */
-  getCraftScreenPos: () => { x: number; y: number } | null
   /** The focused, fully-open screen's current on-screen rect — the same
    *  origin rect a direct craft click passes to `onItemClick`, exposed so a
    *  non-craft trigger (the HUD panel, the craft callout marker) can open
@@ -47,10 +43,12 @@ export interface SolarSystemGalleryHandle {
    *  resumes its continuous idle rotation once that finishes. Call this
    *  whenever the preview modal closes, by whatever means. */
   closeSelection: () => void
-  /** Idling (unselected) craft currently swinging near the camera-facing
-   *  point of the ring, in live viewport pixels — for the transient
-   *  flyby marker/label. Meant to be polled from a caller-owned rAF loop. */
-  getFlybyMarkers: () => { index: number; x: number; y: number }[]
+  /** Every craft on the focused planet currently close enough to the
+   *  camera to mark, in live viewport pixels — one rule for both an
+   *  idling craft passing the front of the ring and the clicked one that's
+   *  arrived at focus; the caller tells them apart via `index ===
+   *  activeIndex`. Meant to be polled from a caller-owned rAF loop. */
+  getCraftMarkers: () => { index: number; x: number; y: number }[]
 }
 
 interface HoverInfo {
@@ -167,21 +165,37 @@ const DEPART_WINDOW = 0.06
 // orbiting, not N craft parked. ~65s for a full revolution at 60fps: slow
 // and ambient, never fighting for attention with a focused item.
 const IDLE_ORBIT_SPEED = 0.00026
-// How close (in the same `t`-distance-from-front-of-ring units as
-// APPROACH_WINDOW/DEPART_WINDOW) an idling craft must swing to the
-// camera-facing point of the ring before it's "close enough to notice" —
-// wide enough to give the flyby marker/label a comfortable dwell time as
-// the craft passes, narrow enough that it's still a brief, passing cue
-// rather than a constant fixture.
-const FLYBY_WINDOW = 0.1
+// How close (real 3D distance to the camera, world units at viewScale=1 —
+// see `getCraftMarkers`) a craft must be before it's worth marking with a
+// circle+label, whether it's idling past its closest approach to the
+// camera or is the one that was clicked and has arrived at focus. The
+// arrived craft always sits ~7.4 units out; an idling craft's own closest
+// approach (its ring's nearest point to the camera, which — because the
+// planet keeps slowly self-spinning even while entered — isn't a fixed
+// ring position, just whatever currently measures closest) swings between
+// ~18 and ~30 depending on where it is in its orbit. 18.5 sits just above
+// that idling minimum: comfortably clears the arrived craft's own
+// distance, and — numerically verified — lights up an idling craft for
+// only ~15% of its orbit (any one of Saturn's 4 items marked ~45% of the
+// time, never two at once), reading as a brief pass rather than a
+// constant fixture.
+const CRAFT_MARKER_DISTANCE = 18.5
 
 const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.35
 
-// Eased speed for a programmatic jump (arrow buttons, dots, badges) — much
-// slower than drag-follow so the craft's full flight is visible rather than
-// snapping straight to the next item.
-const GOTO_EASE = 0.032
+// Eased speed for a programmatic jump (dots, badges, a craft/marker click)
+// — much slower than drag-follow so the craft's full flight, especially
+// its final close approach to the camera, is slow enough to actually
+// watch rather than a blur.
+const GOTO_EASE = 0.016
+// Closing (see `closeSelection`) reuses this same eased-convergence
+// mechanism but for a much smaller nudge and with no "watch it arrive"
+// goal — kept at the original, snappier rate so retracting doesn't
+// inherit GOTO_EASE's slowdown too (an exponential ease's tail takes
+// almost as long regardless of how far it started, so sharing one rate
+// would have made every close take several seconds for no reason).
+const CLOSE_EASE = 0.032
 // Per-frame step for the screen's own reveal timer, independent of
 // GOTO_EASE — reaches 1 in ~20 frames (~0.33s) once the plane has formed,
 // so the "flickering to life" moment always resolves quickly.
@@ -784,7 +798,15 @@ class PlanetInstance {
   // scoped to this planet's own group and world-space focus offsets. Items
   // not near the focus point just ride the ring via `_idlePosition`.
   activeUpdate(time: number): number {
-    const ease = this.goToEaseActive ? GOTO_EASE : this.progress.ease
+    // Opening (flying an item IN toward the camera) uses the slow,
+    // deliberate GOTO_EASE so that close approach is actually watchable.
+    // Closing (openIndex already cleared by `closeSelection()`) uses its
+    // own quicker rate instead of also being dragged out by that same
+    // slowdown — nobody asked for the RETRACT to be slower, and the
+    // eased convergence's tail-end duration barely depends on how far it
+    // started, so sharing one rate would have made every close take
+    // several seconds too.
+    const ease = !this.goToEaseActive ? this.progress.ease : this.openIndex >= 0 ? GOTO_EASE : CLOSE_EASE
     this.progress.current += (this.progress.target - this.progress.current) * ease
     if (this.goToEaseActive && Math.abs(this.progress.target - this.progress.current) < 0.0005) {
       this.goToEaseActive = false
@@ -1324,44 +1346,30 @@ class App {
     return { top: minY, left: minX, width: maxX - minX, height: maxY - minY }
   }
 
-  // The open item's craft, projected to viewport pixels, once it's mostly
-  // arrived at the focus spot — anchors a discoverability marker (circle +
-  // leader line to the HUD panel) for planets where `viewScale` still
-  // leaves the craft visually tiny. Null before arrival (nothing to point
-  // at yet) or once nothing's open.
-  getFocusedCraftScreenPos(): { x: number; y: number } | null {
-    if (this.viewMode !== 'planet' || !this.focusedPlanet) return null
-    const planet = this.focusedPlanet
-    const idx = planet.openIndex
-    if (idx < 0 || idx >= planet.count) return null
-    if ((planet.focusFactors[idx] ?? 0) < 0.94) return null
-    const craft = planet.crafts[idx]
-    craft.getWorldPosition(this._screenRectCorner)
-    const ndc = this._screenRectCorner.project(this.camera)
-    if (ndc.z > 1) return null
-    const rect = this.container.getBoundingClientRect()
-    return {
-      x: rect.left + (ndc.x * 0.5 + 0.5) * rect.width,
-      y: rect.top + (1 - (ndc.y * 0.5 + 0.5)) * rect.height,
-    }
-  }
-
-  // Whichever idling craft (nothing selected yet) are currently swinging
-  // near the camera-facing point of their ring, projected to viewport
-  // pixels — drives a transient "look, a project" marker+label per craft
-  // as it passes, independent of any click. Empty once something's
-  // selected (that's `getFocusedCraftScreenPos`'s job instead).
-  getFlybyMarkers(): { index: number; x: number; y: number }[] {
-    if (this.viewMode !== 'planet' || !this.focusedPlanet || this.focusedPlanet.anySelected) return []
+  // Every craft on the focused planet currently close enough to the camera
+  // to be worth marking, projected to viewport pixels — ONE rule (real 3D
+  // distance from the craft to the camera, scaled by the planet's own
+  // viewScale so it means the same apparent closeness on every planet
+  // regardless of its actual size) used for every craft alike, whether
+  // it's just idling past the front of the ring or is the one that was
+  // clicked and has arrived at focus. Previously these were two unrelated
+  // proxies — a ring-phase window for idling craft, a focus-lift threshold
+  // for the opened one — which could disagree with each other about what
+  // "close" means; this is the single source both the flyby marker and the
+  // arrived-craft marker now read from (the caller tells them apart via
+  // `index === activeIndex`).
+  getCraftMarkers(): { index: number; x: number; y: number }[] {
+    if (this.viewMode !== 'planet' || !this.focusedPlanet) return []
     const planet = this.focusedPlanet
     const rect = this.container.getBoundingClientRect()
+    const threshold = CRAFT_MARKER_DISTANCE * planet.viewScale
     const out: { index: number; x: number; y: number }[] = []
     for (let i = 0; i < planet.count; i++) {
-      const t = wrap01(planet.progress.current + i / planet.count)
-      const dist = Math.min(t, 1 - t)
-      if (dist >= FLYBY_WINDOW) continue
       const craft = planet.crafts[i]
+      if (!craft.visible) continue
       craft.getWorldPosition(this._screenRectCorner)
+      const dist = this._screenRectCorner.distanceTo(this.camera.position)
+      if (dist >= threshold) continue
       const ndc = this._screenRectCorner.project(this.camera)
       if (ndc.z > 1) continue
       out.push({
@@ -1583,10 +1591,9 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     enterPlanet: (id: string) => appRef.current?.enterPlanet(id),
     leavePlanet: () => appRef.current?.leavePlanet(),
     goTo: (localIndex: number) => appRef.current?.goTo(localIndex),
-    getCraftScreenPos: () => appRef.current?.getFocusedCraftScreenPos() ?? null,
     getFocusedScreenRect: () => appRef.current?.getFocusedScreenRect() ?? null,
     closeSelection: () => appRef.current?.closeSelection(),
-    getFlybyMarkers: () => appRef.current?.getFlybyMarkers() ?? [],
+    getCraftMarkers: () => appRef.current?.getCraftMarkers() ?? [],
   }), [])
 
   useEffect(() => {

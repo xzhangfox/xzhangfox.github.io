@@ -100,6 +100,8 @@ export default function Projects() {
   const flybyLabelRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const openIdRef = useRef(openId)
   openIdRef.current = openId
+  const activeIndexRef = useRef(activeIndex)
+  activeIndexRef.current = activeIndex
 
   const currentProjects = activePlanetId ? projectsByPlanet[activePlanetId] ?? [] : []
   const activeProject = activeIndex !== null ? currentProjects[activeIndex] : undefined
@@ -145,30 +147,35 @@ export default function Projects() {
     }
   }, [activeProject, closeActiveProject, openActiveProject])
 
-  // Polls the focused craft's live screen position on its own rAF loop
-  // (not React state) so the marker/leader-line can track a moving craft
-  // at 60fps without forcing the whole section to re-render every frame —
-  // only the SVG attributes are touched directly. Runs only while a
-  // project is actually focused; the getter itself returns null (hiding
-  // the marker) until the craft has essentially arrived. Hidden once the
-  // preview modal for it is actually open — only the HUD label stays up
-  // then (checked via a ref so the running loop doesn't need to restart
-  // every time the modal opens/closes).
+  // One rAF loop reads `getCraftMarkers()` — the single, unified "is this
+  // craft close enough to the camera to mark" answer for every craft on
+  // the planet at once — and sorts the result into exactly two visual
+  // treatments per frame, entirely outside React state so tracking a
+  // moving craft at 60fps never forces the whole section to re-render:
+  //   - the ONE index that's also `activeIndex` (i.e. actually selected,
+  //     not just passing by) gets the bigger "arrived" marker with a
+  //     leader line to the HUD panel — unless its modal is already open,
+  //     in which case it's hidden too and only the HUD label remains;
+  //   - every other in-range index gets the small ambient flyby
+  //     circle+label, clickable to start flying it to focus.
+  // Runs whenever a planet's entered, regardless of selection state.
   useEffect(() => {
-    if (!activeProject) {
-      if (craftMarkerGroupRef.current) craftMarkerGroupRef.current.style.display = 'none'
-      return
-    }
+    if (!activePlanetId) return
+    const count = currentProjects.length
     let raf: number
     const tick = () => {
-      const pos = openIdRef.current === activeProject.id ? null : galleryRef.current?.getCraftScreenPos()
+      const markers = galleryRef.current?.getCraftMarkers() ?? []
       const wrapperRect = wrapperRef.current?.getBoundingClientRect()
+      const activeIdx = activeIndexRef.current
+
+      const arrived = activeIdx !== null ? markers.find((m) => m.index === activeIdx) : undefined
+      const arrivedModalOpen = activeIdx !== null && openIdRef.current === currentProjects[activeIdx]?.id
       const group = craftMarkerGroupRef.current
       const line = leaderLineRef.current
       const circle = craftMarkerCircleRef.current
-      if (pos && wrapperRect && group && line && circle) {
-        const x = pos.x - wrapperRect.left
-        const y = pos.y - wrapperRect.top
+      if (arrived && !arrivedModalOpen && wrapperRect && group && line && circle) {
+        const x = arrived.x - wrapperRect.left
+        const y = arrived.y - wrapperRect.top
         group.style.display = ''
         circle.setAttribute('cx', String(x))
         circle.setAttribute('cy', String(y))
@@ -185,45 +192,27 @@ export default function Projects() {
       } else if (group) {
         group.style.display = 'none'
       }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [activeProject?.id])
 
-  // Flyby markers — a lightweight circle+label per idling craft as it
-  // swings near the camera-facing point of the ring, independent of any
-  // click. Runs whenever a planet's entered (not gated on a project being
-  // focused — quite the opposite, `getFlybyMarkers()` itself returns
-  // nothing once something IS selected). Also driven by its own rAF loop
-  // rather than React state for the same 60fps-without-a-re-render reason.
-  useEffect(() => {
-    if (!activePlanetId) return
-    const count = currentProjects.length
-    let raf: number
-    const tick = () => {
-      const markers = galleryRef.current?.getFlybyMarkers() ?? []
-      const wrapperRect = wrapperRef.current?.getBoundingClientRect()
       for (let i = 0; i < count; i++) {
-        const circle = flybyCircleRefs.current.get(i)
-        const label = flybyLabelRefs.current.get(i)
-        const m = wrapperRect ? markers.find((mm) => mm.index === i) : undefined
+        const fCircle = flybyCircleRefs.current.get(i)
+        const fLabel = flybyLabelRefs.current.get(i)
+        const m = i !== activeIdx && wrapperRect ? markers.find((mm) => mm.index === i) : undefined
         if (m && wrapperRect) {
           const x = m.x - wrapperRect.left
           const y = m.y - wrapperRect.top
-          if (circle) {
-            circle.style.display = ''
-            circle.setAttribute('cx', String(x))
-            circle.setAttribute('cy', String(y))
+          if (fCircle) {
+            fCircle.style.display = ''
+            fCircle.setAttribute('cx', String(x))
+            fCircle.setAttribute('cy', String(y))
           }
-          if (label) {
-            label.style.display = ''
-            label.style.left = `${x + 16}px`
-            label.style.top = `${y - 11}px`
+          if (fLabel) {
+            fLabel.style.display = ''
+            fLabel.style.left = `${x + 16}px`
+            fLabel.style.top = `${y - 11}px`
           }
         } else {
-          if (circle) circle.style.display = 'none'
-          if (label) label.style.display = 'none'
+          if (fCircle) fCircle.style.display = 'none'
+          if (fLabel) fLabel.style.display = 'none'
         }
       }
       raf = requestAnimationFrame(tick)
@@ -232,16 +221,6 @@ export default function Projects() {
     return () => cancelAnimationFrame(raf)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePlanetId])
-
-  const goPrevNext = (dir: 1 | -1) => {
-    const count = currentProjects.length
-    if (count < 1) return
-    if (activeIndex === null) {
-      galleryRef.current?.goTo(dir === 1 ? 0 : count - 1)
-    } else {
-      galleryRef.current?.goTo((activeIndex + dir + count) % count)
-    }
-  }
 
   return (
     <section id="projects" className="relative py-32">
@@ -272,8 +251,9 @@ export default function Projects() {
       {/* Loads on a top-down overview of the whole system, Sun-centered,
           every planet slowly revolving on its own orbit. Click a planet (or
           its badge, top-left) to zoom in — only then do its own projects'
-          craft appear, idling on the ring until one is clicked. Swipe/arrows
-          stay scoped to whichever planet is entered; only the back button
+          craft appear, continuously orbiting until one is clicked (a
+          craft, its flyby marker, a badge, or a dot). Swipe/drag stays
+          scoped to whichever planet is entered; only the back button
           returns to the overview. */}
       <div ref={wrapperRef} className="relative h-[65vh] max-h-[760px] min-h-[420px] w-full overflow-hidden sm:h-[72vh]">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-bg to-transparent" />
@@ -462,31 +442,6 @@ export default function Projects() {
           >
             {hoveredProject.title}
           </div>
-        )}
-
-        {activePlanetId !== null && currentProjects.length > 1 && (
-          <>
-            <button
-              type="button"
-              onClick={() => goPrevNext(-1)}
-              aria-label="Previous project"
-              className="absolute left-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/15 text-white/35 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:bg-black/40 hover:text-gold sm:left-6 sm:h-11 sm:w-11"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={() => goPrevNext(1)}
-              aria-label="Next project"
-              className="absolute right-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/10 bg-black/15 text-white/35 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:bg-black/40 hover:text-gold sm:right-6 sm:h-11 sm:w-11"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
-          </>
         )}
 
         {activePlanetId !== null && currentProjects.length > 1 && (

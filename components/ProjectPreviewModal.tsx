@@ -128,16 +128,20 @@ export default function ProjectPreviewModal({
 
       {/* Turbulence filter that gives the hologram-edge overlay below its
           torn/frayed silhouette — a DOM analogue of the WebGL screen's
-          per-pixel noise-perturbed SDF border. The SMIL <animate> steps the
-          displacement in discrete jumps (calcMode="discrete") to echo the
-          shader's floor(uTime * rate) coarse/fine noise crawl rather than a
-          smooth wobble. */}
+          per-pixel noise-perturbed SDF border. Kept subtle (a small
+          displacement scale) since the shader's own fray is a fine grain
+          right at the line, not a coarse jitter — a heavier displacement
+          here would read as a different, chunkier effect instead of the
+          same one. The SMIL <animate> steps the displacement in discrete
+          jumps (calcMode="discrete") to echo the shader's
+          floor(uTime * rate) coarse/fine noise crawl rather than a smooth
+          wobble. */}
       <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
         <defs>
           <filter id="hologram-fray" x="-20%" y="-20%" width="140%" height="140%">
             <feTurbulence type="fractalNoise" baseFrequency="0.9 0.7" numOctaves="2" seed="7" result="noise" />
-            <feDisplacementMap in="SourceGraphic" in2="noise" scale="5" xChannelSelector="R" yChannelSelector="G">
-              <animate attributeName="scale" values="4;7;3;6;4" dur="1.8s" repeatCount="indefinite" calcMode="discrete" />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.6" xChannelSelector="R" yChannelSelector="G">
+              <animate attributeName="scale" values="1.2;2.2;1;1.8;1.2" dur="1.8s" repeatCount="indefinite" calcMode="discrete" />
             </feDisplacementMap>
           </filter>
         </defs>
@@ -149,7 +153,7 @@ export default function ProjectPreviewModal({
         animate={{ x: cardFlip.x, y: cardFlip.y, scaleX: cardFlip.scaleX, scaleY: cardFlip.scaleY }}
         transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
         style={{ transformOrigin: 'center center' }}
-        className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl"
+        className="relative flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-[4%]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Card chrome fill — deferred until the image has fully arrived,
@@ -161,19 +165,19 @@ export default function ProjectPreviewModal({
             visibly deforms from the thumbnail's edge into the detail
             page's outermost border rather than swapping to a new one. */}
         <motion.div
-          className="pointer-events-none absolute inset-0 rounded-2xl bg-[#0E0E0E]"
+          className="pointer-events-none absolute inset-0 rounded-[4%] bg-[#0E0E0E]"
           initial={{ opacity: originRect ? 0 : 1 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
         />
         <motion.div
-          className="pointer-events-none absolute inset-0 rounded-2xl"
+          className="pointer-events-none absolute inset-0 rounded-[4%]"
           initial={{ opacity: originRect ? 0 : 1 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
           style={{ background: `radial-gradient(ellipse 80% 50% at 50% 0%, ${project.color}14 0%, transparent 70%)` }}
         />
-        <div className="pointer-events-none absolute inset-0 rounded-2xl hologram-edge" />
+        <div className="pointer-events-none absolute inset-0 rounded-[4%] hologram-edge" />
         <div className="pointer-events-none absolute inset-x-0 hologram-scan" />
 
         <button
@@ -207,7 +211,7 @@ export default function ProjectPreviewModal({
             animate={{ x: flip.x, y: flip.y, scaleX: flip.scaleX, scaleY: flip.scaleY }}
             transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
             style={{ transformOrigin: 'center center' }}
-            className="relative aspect-video w-full overflow-hidden rounded-xl bg-surface-elevated"
+            className="relative aspect-video w-full overflow-hidden rounded-[4%] bg-surface-elevated"
           >
             <AnimatePresence mode="wait">
               <motion.img
