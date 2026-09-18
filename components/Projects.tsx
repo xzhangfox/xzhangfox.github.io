@@ -18,7 +18,10 @@ const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg'
 const CONTENT_PLANET_IDS = ['saturn', 'moon']
 // Per-project real app logos, where available — falls back to a cropped
 // screenshot (project.image) otherwise.
-const PROJECT_LOGOS: Record<string, string> = { 'flux-path': '/logos/flux-path.svg' }
+const PROJECT_LOGOS: Record<string, string> = {
+  'flux-path': '/logos/flux-path.svg',
+  'financial-tracker': '/logos/ai-bubble-monitor.svg',
+}
 
 // Static (language-independent) and module-level so it never changes
 // identity across renders — SolarSystemGallery tears down and rebuilds its
