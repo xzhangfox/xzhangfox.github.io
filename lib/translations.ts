@@ -118,10 +118,11 @@ export const translations: Record<Language, Dict> = {
       bioPre:
         "At Stout, I've architected enterprise AI platforms that process thousands of governed LLM interactions daily — blending RAG pipelines, graph databases, and full-stack delivery. Outside of work, I ship the",
       bioFlux: 'Flux',
-      bioSuffix: 'product suite: AI-powered platforms for career intelligence, financial management, and metabolic tracking.',
+      bioSuffix:
+        'product suite: AI-powered platforms spanning career intelligence, financial management, metabolic tracking, Bazi/Ziwei astrology, and market bubble monitoring.',
       stats: [
         { value: '5+', label: 'Years Experience', sub: 'at Stout' },
-        { value: '3', label: 'AI Platforms', sub: 'Built & Shipped' },
+        { value: '5', label: 'AI Platforms', sub: 'Built & Shipped' },
         { value: '∞', label: 'Tokens Processed', sub: 'in production' },
       ],
     },
@@ -275,10 +276,10 @@ export const translations: Record<Language, Dict> = {
         '我设计能将原始数据转化为智能的 AI 系统 —— 从大语言模型编排、RAG 检索增强管道，到可扩展的全栈平台。5 年多以来，一直在机器学习与产品工程的交汇处构建产品。',
       bioPre: '在 Stout，我构建了每天处理数千次受管控 LLM 交互的企业级 AI 平台 —— 融合 RAG 管道、图数据库与全栈交付。工作之外，我打造了',
       bioFlux: 'Flux',
-      bioSuffix: '产品套件：面向职业发展、财务管理和代谢追踪的 AI 平台。',
+      bioSuffix: '产品套件：涵盖职业发展、财务管理、代谢追踪、八字紫微命理与市场泡沫监测的 AI 平台。',
       stats: [
         { value: '5+', label: '工作年限', sub: '就职于 Stout' },
-        { value: '3', label: 'AI 平台', sub: '已构建并上线' },
+        { value: '5', label: 'AI 平台', sub: '已构建并上线' },
         { value: '∞', label: '处理 Token 数', sub: '生产环境中' },
       ],
     },
