@@ -23,6 +23,21 @@ export interface PlanetSite {
   ringTextureUrl?: string
   /** Undefined/empty = a decorative-only planet, not a gallery stop. */
   items?: GalleryItem[]
+  /** Dreamcore treatment: a hex glow/tint color applied as the planet's
+   *  own emissive tint plus a soft rim-glow "atmosphere" shell.
+   *  Undefined = no glow (the Sun already glows on its own). */
+  auraColor?: string
+  /** Emissive strength for the tint above — how strongly the planet's
+   *  own surface glows with `auraColor`, not just its rim. Defaults to a
+   *  gentle 0.35 when `auraColor` is set. */
+  auraIntensity?: number
+  /** How many 4-/5-pointed star sprites orbit in this planet's
+   *  decorative halo ring. 0/undefined = no ring. */
+  starRingCount?: number
+  /** The halo ring's band center, as a multiple of the planet's own
+   *  radius — kept well outside any content ring/debris band so the two
+   *  never overlap. Defaults to 3.2. */
+  starRingRadius?: number
 }
 
 export interface SolarSystemGalleryHandle {
@@ -681,6 +696,86 @@ function createOrbitRing(radius: number): THREE.LineLoop {
   return new THREE.LineLoop(geometry, material)
 }
 
+// A small 4- or 5-pointed star/sparkle sprite texture for the dreamcore
+// halo rings — generated lazily (never at module scope, `document` isn't
+// available wherever this module might get evaluated outside the
+// browser) and cached per point-count so every sprite across every
+// planet shares the same two textures.
+const starTextures: Partial<Record<4 | 5, THREE.CanvasTexture>> = {}
+function getStarTexture(points: 4 | 5): THREE.CanvasTexture {
+  const cached = starTextures[points]
+  if (cached) return cached
+  const size = 64
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const outerR = size * 0.46
+  const innerR = points === 4 ? outerR * 0.22 : outerR * 0.42
+  ctx.translate(size / 2, size / 2)
+  ctx.beginPath()
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outerR : innerR
+    const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2
+    const x = Math.cos(a) * r
+    const y = Math.sin(a) * r
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  }
+  ctx.closePath()
+  ctx.shadowColor = 'rgba(255,255,255,0.95)'
+  ctx.shadowBlur = size * 0.2
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  const texture = new THREE.CanvasTexture(canvas)
+  starTextures[points] = texture
+  return texture
+}
+
+// A soft additive rim-glow "atmosphere" shell around a planet — the
+// standard fresnel-on-backfaces trick (bright at the grazing silhouette,
+// near-invisible face-on, and naturally hidden across the planet's own
+// disc since its opaque mesh occludes the shell's near side): the same
+// fresnel shape the laser beam's material already uses, just on a sphere
+// instead of a pyramid.
+const AURA_VERTEX = `
+  varying vec3 vNormal;
+  varying vec3 vViewPos;
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vViewPos = -mvPosition.xyz;
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`
+const AURA_FRAGMENT = `
+  precision highp float;
+  uniform vec3 uColor;
+  uniform float uIntensity;
+  varying vec3 vNormal;
+  varying vec3 vViewPos;
+  void main() {
+    vec3 viewDir = normalize(vViewPos);
+    float fresnel = pow(1.0 - clamp(dot(normalize(vNormal), viewDir), 0.0, 1.0), 2.4);
+    gl_FragColor = vec4(uColor, fresnel * uIntensity);
+  }
+`
+function createAuraShell(radius: number, color: THREE.Color, intensity: number): THREE.Mesh {
+  const material = new THREE.ShaderMaterial({
+    vertexShader: AURA_VERTEX,
+    fragmentShader: AURA_FRAGMENT,
+    uniforms: {
+      uColor: { value: new THREE.Vector3(color.r, color.g, color.b) },
+      uIntensity: { value: intensity },
+    },
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.BackSide,
+  })
+  return new THREE.Mesh(new THREE.SphereGeometry(radius * 1.12, 32, 32), material)
+}
+
 // One planet in the scene: its mesh (+ optional ring/debris/orbit line),
 // continuously revolving around its orbit parent, and — if it carries
 // gallery items — the full craft/laser/hologram-screen mechanic. Craft stay
@@ -700,6 +795,22 @@ class PlanetInstance {
   // around with it, not just the craft.
   debris: { mesh: THREE.Mesh; spin: THREE.Vector3; angle: number; radius: number; y: number }[] = []
   orbitAngle: number
+
+  // Dreamcore ornamentation (see PlanetSite's auraColor/starRingCount):
+  // an optional rim-glow shell and a ring of twinkling star sprites,
+  // both purely decorative, updated every frame in advanceOrbit — unlike
+  // the craft ring these run for every planet regardless of focus, since
+  // they're visible in the overview too.
+  aura?: THREE.Mesh
+  auraBaseIntensity = 0
+  starRing: {
+    sprite: THREE.Sprite
+    angle: number
+    radius: number
+    y: number
+    baseOpacity: number
+    twinkleSeed: number
+  }[] = []
 
   count: number
   crafts: THREE.Group[] = []
@@ -826,6 +937,28 @@ class PlanetInstance {
     this.mesh.userData.planetId = site.id
     this.group.add(this.mesh)
 
+    if (site.auraColor && !isSun) {
+      const color = new THREE.Color(site.auraColor)
+      const intensity = site.auraIntensity ?? 0.35
+      // Tints the planet's own real texture rather than replacing it —
+      // the photographic surface detail still reads, just lit in the
+      // dreamcore hue instead of neutral white.
+      const mat = this.mesh.material as THREE.MeshStandardMaterial
+      mat.emissive = color
+      mat.emissiveIntensity = intensity
+      this.auraBaseIntensity = intensity * 1.8
+      this.aura = createAuraShell(site.radius, color, this.auraBaseIntensity)
+      this.group.add(this.aura)
+    }
+
+    if (site.starRingCount && site.starRingCount > 0) {
+      this.buildStarRing(
+        site.auraColor ? new THREE.Color(site.auraColor) : new THREE.Color(0xffffff),
+        site.starRingCount,
+        site.starRingRadius ?? 3.2
+      )
+    }
+
     if (site.orbitRadius > 0) {
       this.orbitLine = createOrbitRing(site.orbitRadius)
       if (site.orbitParent) {
@@ -892,6 +1025,36 @@ class PlanetInstance {
     }
   }
 
+  // A ring of twinkling 4-/5-pointed star sprites well outside any
+  // content ring/debris band (see PlanetSite.starRingRadius), a
+  // dreamcore halo rather than a realistic planetary ring.
+  buildStarRing(color: THREE.Color, count: number, radiusMultiplier: number) {
+    for (let i = 0; i < count; i++) {
+      const points: 4 | 5 = Math.random() < 0.5 ? 4 : 5
+      const material = new THREE.SpriteMaterial({
+        map: getStarTexture(points),
+        color,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+      const sprite = new THREE.Sprite(material)
+      const angle = Math.random() * Math.PI * 2
+      const radius = this.site.radius * radiusMultiplier * (0.85 + Math.random() * 0.3)
+      const yJitter = (Math.random() - 0.5) * this.site.radius * 0.6
+      sprite.scale.setScalar(this.site.radius * (0.14 + Math.random() * 0.18))
+      this.group.add(sprite)
+      this.starRing.push({
+        sprite,
+        angle,
+        radius,
+        y: yJitter,
+        baseOpacity: 0.55 + Math.random() * 0.45,
+        twinkleSeed: Math.random() * Math.PI * 2,
+      })
+    }
+  }
+
   buildItems(items: GalleryItem[], aspect: number, borderRadius: number) {
     const height = SCREEN_HEIGHT
     const width = height * aspect
@@ -950,7 +1113,7 @@ class PlanetInstance {
     this.revealTimer = new Array(this.count).fill(0)
   }
 
-  advanceOrbit(parentPos: THREE.Vector3) {
+  advanceOrbit(parentPos: THREE.Vector3, time: number) {
     this.orbitAngle += this.site.orbitSpeed
     this.group.position.set(
       parentPos.x + this.site.orbitRadius * Math.cos(this.orbitAngle),
@@ -958,6 +1121,28 @@ class PlanetInstance {
       parentPos.z + this.site.orbitRadius * Math.sin(this.orbitAngle)
     )
     this.group.rotation.y += SELF_SPIN_SPEED
+    this._updateOrnamentation(time)
+  }
+
+  // Dreamcore decoration, updated for every planet every frame regardless
+  // of focus — the halo ring and rim glow are visible in the overview
+  // too, not just once a planet's entered.
+  _updateOrnamentation(time: number) {
+    if (this.starRing.length) {
+      // Tied to orbitAngle (not a separate counter) so a drag that spins
+      // the orbit visibly spins the halo along with it too.
+      const rot = this.orbitAngle * 0.3
+      for (const s of this.starRing) {
+        const a = s.angle + rot
+        s.sprite.position.set(s.radius * Math.sin(a), s.y, s.radius * Math.cos(a))
+        const twinkle = 0.5 + 0.5 * Math.sin(time * 2.2 + s.twinkleSeed)
+        ;(s.sprite.material as THREE.SpriteMaterial).opacity = s.baseOpacity * (0.5 + 0.5 * twinkle)
+      }
+    }
+    if (this.aura) {
+      const mat = this.aura.material as THREE.ShaderMaterial
+      mat.uniforms.uIntensity.value = this.auraBaseIntensity * (0.85 + 0.15 * Math.sin(time * 1.3))
+    }
   }
 
   // Distance from this planet's own orbit parent (not necessarily the Sun —
@@ -1403,6 +1588,10 @@ class App {
    *  phase from the total pointer delta rather than accumulating relative
    *  deltas frame to frame. */
   dragStartRingPhase = 0
+  /** Every planet's own `orbitAngle` at the moment an overview drag
+   *  started — same reasoning as `dragStartRingPhase`, one snapshot per
+   *  planet so the whole system can be dragged as one rigid disk. */
+  dragStartOrbitAngles: number[] = []
 
   boundOnResize: () => void
   boundOnTouchDown: (e: MouseEvent | TouchEvent) => void
@@ -1728,6 +1917,8 @@ class App {
     this.pointerDownTime = performance.now()
     if (this.viewMode === 'planet' && this.focusedPlanet && !this.focusedPlanet.anySelected) {
       this.dragStartRingPhase = this.focusedPlanet.ringPhase
+    } else if (this.viewMode === 'overview') {
+      this.dragStartOrbitAngles = this.planets.map((p) => p.orbitAngle)
     }
   }
 
@@ -1743,6 +1934,15 @@ class App {
       const dx = x - this.pointerDownX
       const delta = (dx / this.container.clientWidth) * 0.6
       this.focusedPlanet.ringPhase = wrap01(this.dragStartRingPhase + delta)
+    } else if (this.hasDragged && this.viewMode === 'overview') {
+      // The whole system dragged as one rigid disk — every planet (and,
+      // since orbitAngle also drives it, its own halo ring) advances by
+      // the same angular delta, so relative spacing never changes.
+      const dx = x - this.pointerDownX
+      const delta = (dx / this.container.clientWidth) * Math.PI * 1.2
+      this.planets.forEach((p, i) => {
+        p.orbitAngle = this.dragStartOrbitAngles[i] + delta
+      })
     }
   }
 
@@ -1786,7 +1986,7 @@ class App {
       this.onHoverChange?.(localIndex !== null ? { localIndex, clientX: e.clientX, clientY: e.clientY } : null)
     } else if (this.viewMode === 'overview') {
       const planetId = this.hitTestPlanet(e.clientX, e.clientY)
-      this.container.style.cursor = planetId ? 'pointer' : 'default'
+      this.container.style.cursor = planetId ? 'pointer' : 'grab'
     }
   }
 
@@ -1835,7 +2035,7 @@ class App {
 
     for (const p of this.planets) {
       const parentPos = p.site.orbitParent ? this.planetsById.get(p.site.orbitParent)!.group.position : ORIGIN
-      p.advanceOrbit(parentPos)
+      p.advanceOrbit(parentPos, this.time)
     }
 
     if (this.viewMode === 'entering' || this.viewMode === 'leaving') {
