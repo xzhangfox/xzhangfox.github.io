@@ -398,15 +398,25 @@ const SCREEN_FRAGMENT = `
     // ring of light around the picture, not the picture itself.
     float edge = smoothstep(-0.026, -0.008, d);
     vec3 edgeNoise = vec3(hash(vUv * 300.0 + uTime * 5.0));
-    // A cyan-magenta gradient slowly chasing around the border's own
-    // perimeter (angle from center) rather than a flat white ring — the
-    // neon-sign-edge cyberpunk cue.
-    float edgeAngle = atan(vUv.y - 0.5, vUv.x - 0.5) / 6.2831853 + 0.5;
-    vec3 edgeBase = mix(uNeonA, uNeonB, fract(edgeAngle + uTime * 0.05));
-    vec3 edgeColor = mix(edgeBase, edgeNoise, glitchActive * 0.7);
-    float edgeStrength = edge * 0.55 * (1.0 + glitchActive * 0.6) * uFlicker;
+    // Square mosaic noise along the border instead of a smooth chasing
+    // gradient — blocks of a few different sizes, each independently
+    // flickering on/off and swapping between the neon duotone at a steady
+    // cadence, so the edge reads as corrupted/glitching pixels rather than
+    // a clean neon ring.
+    float mosaicTick = floor(uTime * 5.5);
+    // A coarse macro-cell picks this patch's block-size tier so the mosaic
+    // isn't uniform — three candidate densities mixed across the frame.
+    float tier = hash(floor(vUv * 6.0) + 41.0);
+    float density = tier < 0.33 ? 9.0 : (tier < 0.66 ? 16.0 : 26.0);
+    vec2 mosaicCell = floor(vUv * density);
+    float cellSeed = hash(mosaicCell * 1.37 + mosaicTick * 3.11);
+    float cellOn = step(0.42, cellSeed);
+    vec3 mosaicColor = mix(uNeonA, uNeonB, hash(mosaicCell * 0.71 + mosaicTick * 1.53 + 9.0));
+    vec3 edgeColor = mix(mosaicColor * cellOn, edgeNoise, glitchActive * 0.7);
+    float edgeStrength = edge * 0.6 * cellOn * (1.0 + glitchActive * 0.6) * uFlicker;
     color = mix(color, edgeColor, clamp(edgeStrength, 0.0, 1.0));
-    alpha = mix(alpha, 1.0, edge * uFlicker);
+    float edgeAlpha = edge * mix(0.3, 1.0, cellOn) * uFlicker;
+    alpha = mix(alpha, 1.0, edgeAlpha);
     alpha *= dissolveAlpha;
 
     gl_FragColor = vec4(color, alpha);
