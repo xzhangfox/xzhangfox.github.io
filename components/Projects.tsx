@@ -97,15 +97,12 @@ const PLANETS: PlanetSite[] = [
     orbitSpeed: 0.0003,
     hasRing: true,
     ringTextureUrl: '/textures/saturn-ring.png',
-    auraColor: '#ffd76a',
-    auraIntensity: 0.25,
+    auraColor: '#c8f23a',
+    auraIntensity: 0.28,
     // No star-sparkle halo here — Saturn already has its own real ring
     // and debris field, which get their own dazzling treatment directly
     // (see buildDebris/the ring's shader) instead of an added decoration.
-    items: SATURN_PROJECT_IDS.map((id) => {
-      const p = projects.find((p) => p.id === id)!
-      return { image: p.image, color: p.color }
-    }),
+    items: SATURN_PROJECT_IDS.map((id) => ({ image: projects.find((p) => p.id === id)!.image })),
   },
   {
     id: 'uranus',
@@ -137,15 +134,15 @@ const PLANETS: PlanetSite[] = [
     orbitSpeed: 0.01,
     orbitParent: 'earth',
     // The flagship example: bright fluorescent yellow with the densest,
-    // most prominent star-motif halo of any planet.
+    // most prominent star-motif halo of any planet — its rim cycles
+    // through a full yellow/green/blue/pink palette instead of the usual
+    // single-hue duotone.
     auraColor: '#fff44f',
+    auraColors: ['#fff44f', '#7dff6b', '#5fc9ff', '#ff6fd8'],
     auraIntensity: 0.55,
     starRingCount: 28,
     starRingRadius: 2.8,
-    items: MOON_PROJECT_IDS.map((id) => {
-      const p = projects.find((p) => p.id === id)!
-      return { image: p.image, color: p.color }
-    }),
+    items: MOON_PROJECT_IDS.map((id) => ({ image: projects.find((p) => p.id === id)!.image })),
   },
 ]
 
@@ -190,7 +187,7 @@ function PlanetBadge({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="pointer-events-auto h-8 w-8 flex-shrink-0 rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 sm:h-9 sm:w-9"
+      className="pointer-events-auto aspect-square h-8 w-8 flex-shrink-0 overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 sm:h-9 sm:w-9"
       style={{
         backgroundImage: `url(${textureUrl})`,
         backgroundSize: small ? '56%' : 'cover',
