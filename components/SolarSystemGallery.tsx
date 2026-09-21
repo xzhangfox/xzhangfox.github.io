@@ -5,6 +5,9 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 
 export interface GalleryItem {
   image: string
+  /** Hex color driving this item's own hologram neon duotone (see
+   *  buildItems). Undefined falls back to the default cyan/magenta pair. */
+  color?: string
 }
 
 export interface PlanetSite {
@@ -31,11 +34,6 @@ export interface PlanetSite {
    *  own surface glows with `auraColor`, not just its rim. Defaults to a
    *  gentle 0.35 when `auraColor` is set. */
   auraIntensity?: number
-  /** An explicit multi-hue palette (2-4 hex colors) for the rim-glow
-   *  shell's gradient, in place of the usual single hue auto-shifted into
-   *  a duotone — e.g. the Moon's yellow/green/blue/pink. The sphere's own
-   *  diffuse tint still comes from `auraColor` alone. */
-  auraColors?: string[]
   /** How many 4-/5-pointed star sprites orbit in this planet's
    *  decorative halo ring. 0/undefined = no ring. */
   starRingCount?: number
@@ -425,50 +423,6 @@ const SCREEN_FRAGMENT = `
   }
 `
 
-// The screen's own content (image + torn border) occupies the centered
-// inner fraction of the larger halo plane below — this fixes how much
-// margin surrounds it. Shared between the JS geometry sizing and the
-// shader's matching inner-box math so they can't drift apart.
-const SCREEN_HALO_CONTENT_SCALE = 0.72
-// A sparse ring of flickering square mosaic points in the margin just
-// outside the hologram's own edge — reuses the edge's block-noise math
-// but only ever lights up beyond the content box, fading out toward the
-// plane's outer rim, so it reads as an ambient "sensor field" halo
-// rather than a second border.
-const SCREEN_HALO_FRAGMENT = `
-  precision highp float;
-  uniform vec3 uNeonA;
-  uniform vec3 uNeonB;
-  uniform float uTime;
-  uniform float uFlicker;
-  uniform float uBorderRadius;
-  varying vec2 vUv;
-
-  float roundedBoxSDF(vec2 p, vec2 b, float r) {
-    vec2 d = abs(p) - b;
-    return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - r;
-  }
-  float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-  }
-
-  void main() {
-    const float scale = ${SCREEN_HALO_CONTENT_SCALE};
-    float inner = 0.5 * scale;
-    float d = roundedBoxSDF(vUv - 0.5, vec2(inner - uBorderRadius * scale), uBorderRadius * scale);
-    float fade = 1.0 - smoothstep(0.0, 0.22, d);
-    if (d <= 0.0 || fade <= 0.0) discard;
-
-    float tick = floor(uTime * 4.5);
-    vec2 cell = floor(vUv * 30.0);
-    float seed = hash(cell * 1.71 + tick * 2.63);
-    if (seed < 0.88) discard;
-
-    vec3 color = mix(uNeonA, uNeonB, hash(cell * 0.53 + tick * 1.9 + 3.0));
-    gl_FragColor = vec4(color, fade * uFlicker);
-  }
-`
-
 const RING_VERTEX = `
   uniform float uInner;
   uniform float uOuter;
@@ -851,20 +805,14 @@ const AURA_VERTEX = `
     gl_Position = projectionMatrix * mvPosition;
   }
 `
-// A cyberpunk gradient rather than one flat glow color: blends across up
-// to four accent hues along a slow-drifting diagonal, so the rim itself
-// reads as a living neon gradient (think cyan bleeding into magenta)
-// instead of a single uniform tint. Always four fixed stops — a plain
-// two-hue planet just gets two real colors with the middle stops
-// pre-interpolated in JS (see fourStopGradient), so this one shader
-// covers both cases without a dynamic uniform-array index (unreliable
-// across WebGL1 drivers).
+// A cyberpunk duotone rather than one flat glow color: blends between two
+// accent hues along a slow-drifting diagonal, so the rim itself reads as
+// a living neon gradient (think cyan bleeding into magenta) instead of a
+// single uniform tint.
 const AURA_FRAGMENT = `
   precision highp float;
-  uniform vec3 uColor0;
-  uniform vec3 uColor1;
-  uniform vec3 uColor2;
-  uniform vec3 uColor3;
+  uniform vec3 uColorA;
+  uniform vec3 uColorB;
   uniform float uIntensity;
   uniform float uTime;
   varying vec3 vNormal;
@@ -874,41 +822,17 @@ const AURA_FRAGMENT = `
     vec3 viewDir = normalize(vViewPos);
     float fresnel = pow(1.0 - clamp(dot(normalize(vNormal), viewDir), 0.0, 1.0), 2.4);
     float g = clamp(vLocalPos.y * 0.5 + 0.5 + sin(uTime * 0.3) * 0.18, 0.0, 1.0);
-    float scaled = g * 3.0;
-    vec3 c01 = mix(uColor0, uColor1, clamp(scaled, 0.0, 1.0));
-    vec3 c12 = mix(uColor1, uColor2, clamp(scaled - 1.0, 0.0, 1.0));
-    vec3 c23 = mix(uColor2, uColor3, clamp(scaled - 2.0, 0.0, 1.0));
-    vec3 color = scaled < 1.0 ? c01 : (scaled < 2.0 ? c12 : c23);
+    vec3 color = mix(uColorA, uColorB, g);
     gl_FragColor = vec4(color, fresnel * uIntensity);
   }
 `
-// Resamples 1-4 input colors into exactly four evenly-spaced stops via
-// piecewise-linear interpolation — two colors in still produces a plain
-// smooth two-tone gradient (matches the prior single-duotone look
-// exactly), while a full four-color palette (e.g. the Moon) is passed
-// through untouched.
-function fourStopGradient(colors: THREE.Color[]): [THREE.Color, THREE.Color, THREE.Color, THREE.Color] {
-  if (colors.length >= 4) return [colors[0], colors[1], colors[2], colors[3]]
-  if (colors.length === 1) return [colors[0], colors[0], colors[0], colors[0]]
-  const n = colors.length
-  const out: THREE.Color[] = []
-  for (let i = 0; i < 4; i++) {
-    const t = (i / 3) * (n - 1)
-    const idx = Math.min(Math.floor(t), n - 2)
-    out.push(colors[idx].clone().lerp(colors[idx + 1], t - idx))
-  }
-  return out as [THREE.Color, THREE.Color, THREE.Color, THREE.Color]
-}
-function createAuraShell(radius: number, colors: THREE.Color[], intensity: number): THREE.Mesh {
-  const [c0, c1, c2, c3] = fourStopGradient(colors)
+function createAuraShell(radius: number, colorA: THREE.Color, colorB: THREE.Color, intensity: number): THREE.Mesh {
   const material = new THREE.ShaderMaterial({
     vertexShader: AURA_VERTEX,
     fragmentShader: AURA_FRAGMENT,
     uniforms: {
-      uColor0: { value: new THREE.Vector3(c0.r, c0.g, c0.b) },
-      uColor1: { value: new THREE.Vector3(c1.r, c1.g, c1.b) },
-      uColor2: { value: new THREE.Vector3(c2.r, c2.g, c2.b) },
-      uColor3: { value: new THREE.Vector3(c3.r, c3.g, c3.b) },
+      uColorA: { value: new THREE.Vector3(colorA.r, colorA.g, colorA.b) },
+      uColorB: { value: new THREE.Vector3(colorB.r, colorB.g, colorB.b) },
       uIntensity: { value: intensity },
       uTime: { value: 0 },
     },
@@ -960,7 +884,6 @@ class PlanetInstance {
   crafts: THREE.Group[] = []
   crewHalos: THREE.Mesh[] = []
   screens: THREE.Mesh[] = []
-  screenHalos: THREE.Mesh[] = []
   lasers: THREE.Mesh[] = []
   revealTimer: number[] = []
   itemOrbitRadius = 0
@@ -1100,24 +1023,16 @@ class PlanetInstance {
       mat.emissive = color
       mat.emissiveIntensity = intensity * 0.18
       this.auraBaseIntensity = intensity * 1.8
-      let shellColors: THREE.Color[]
-      if (site.auraColors && site.auraColors.length > 1) {
-        // An explicit multi-hue palette instead of the usual single
-        // hue-shifted duotone.
-        shellColors = site.auraColors.map((hex) => new THREE.Color(hex))
-      } else {
-        // A second accent hue, hue-shifted off the planet's own color
-        // rather than hand-authored per planet, so the rim reads as a
-        // cyberpunk two-tone gradient instead of one flat glow — a
-        // complementary-ish shift (~115°) plus a slight push toward more
-        // saturated/brighter so the second color doesn't just read as a
-        // duller version of the first.
-        const hsl = { h: 0, s: 0, l: 0 }
-        color.getHSL(hsl)
-        const color2 = new THREE.Color().setHSL((hsl.h + 0.32) % 1, Math.min(hsl.s + 0.15, 1), Math.min(hsl.l + 0.08, 0.75))
-        shellColors = [color, color2]
-      }
-      this.aura = createAuraShell(site.radius, shellColors, this.auraBaseIntensity)
+      // A second accent hue, hue-shifted off the planet's own color
+      // rather than hand-authored per planet, so the rim reads as a
+      // cyberpunk two-tone gradient instead of one flat glow — a
+      // complementary-ish shift (~115°) plus a slight push toward more
+      // saturated/brighter so the second color doesn't just read as a
+      // duller version of the first.
+      const hsl = { h: 0, s: 0, l: 0 }
+      color.getHSL(hsl)
+      const color2 = new THREE.Color().setHSL((hsl.h + 0.32) % 1, Math.min(hsl.s + 0.15, 1), Math.min(hsl.l + 0.08, 0.75))
+      this.aura = createAuraShell(site.radius, color, color2, this.auraBaseIntensity)
       this.group.add(this.aura)
     }
 
@@ -1242,15 +1157,10 @@ class PlanetInstance {
     const height = SCREEN_HEIGHT
     const width = height * aspect
     const screenGeometry = new THREE.PlaneGeometry(width, height)
-    const haloGeometry = new THREE.PlaneGeometry(width / SCREEN_HALO_CONTENT_SCALE, height / SCREEN_HALO_CONTENT_SCALE)
     const loader = new THREE.TextureLoader()
-    // Shared by every item on this planet — the hologram's own neon
-    // duotone matches the planet's own halo color instead of each
-    // project's individual brand color, so a planet reads as one
-    // consistent cyberpunk identity end to end.
-    const [neonA, neonB] = this.site.auraColor ? neonDuotoneFrom(this.site.auraColor) : [NEON_CYAN, NEON_MAGENTA]
 
     items.forEach((item, index) => {
+      const [neonA, neonB] = item.color ? neonDuotoneFrom(item.color) : [NEON_CYAN, NEON_MAGENTA]
       const { group: craft, halo } = createCraft(index)
       craft.userData.index = index
       craft.visible = false
@@ -1293,31 +1203,6 @@ class PlanetInstance {
       screen.scale.set(0.0001, 0.0001, 1)
       this.scene.add(screen)
       this.screens.push(screen)
-
-      // A sparse field of flickering mosaic light-points just outside the
-      // screen's own torn border — extra "sensor field" dressing beyond
-      // the edge itself, drawn on a larger plane behind the screen so it
-      // only ever shows in the margin the screen doesn't already cover.
-      const haloMaterial = new THREE.ShaderMaterial({
-        vertexShader: SCREEN_VERTEX,
-        fragmentShader: SCREEN_HALO_FRAGMENT,
-        transparent: true,
-        depthWrite: false,
-        uniforms: {
-          uBorderRadius: { value: borderRadius },
-          uTime: { value: 0 },
-          uFlicker: { value: 0 },
-          uNeonA: { value: new THREE.Vector3(neonA.r, neonA.g, neonA.b) },
-          uNeonB: { value: new THREE.Vector3(neonB.r, neonB.g, neonB.b) },
-        },
-      })
-      const screenHalo = new THREE.Mesh(haloGeometry, haloMaterial)
-      screenHalo.userData.index = index
-      screenHalo.visible = false
-      screenHalo.renderOrder = -1
-      screenHalo.scale.set(0.0001, 0.0001, 1)
-      this.scene.add(screenHalo)
-      this.screenHalos.push(screenHalo)
 
       loader.load(item.image, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace
@@ -1520,7 +1405,6 @@ class PlanetInstance {
       if (i !== flying) {
         this._idlePosition(i, wrap01(masterT + i / this.count), time)
         this.screens[i].visible = false
-        this.screenHalos[i].visible = false
         this.lasers[i].visible = false
         this.revealTimer[i] = 0
         continue
@@ -1609,17 +1493,6 @@ class PlanetInstance {
       screenMat.uniforms.uReveal.value = reveal
       screenMat.uniforms.uTime.value = time
       screenMat.uniforms.uFlicker.value = flicker
-
-      const screenHalo = this.screenHalos[i]
-      screenHalo.visible = true
-      screenHalo.position.copy(focusWorld)
-      screenHalo.scale.copy(screen.scale)
-      const haloMat = screenHalo.material as THREE.ShaderMaterial
-      haloMat.uniforms.uTime.value = time
-      // Fades in alongside the image reveal rather than showing during
-      // the plain-laser forming phase, and still carries the same
-      // flicker as the screen's own edge so they read as one system.
-      haloMat.uniforms.uFlicker.value = flicker * reveal
 
       if (laserVisibility > 0.01) {
         this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
@@ -1754,11 +1627,6 @@ class PlanetInstance {
     })
     this.crafts.forEach((c) => this.group.remove(c))
     this.screens.forEach((s) => {
-      this.scene.remove(s)
-      s.geometry.dispose()
-      ;(s.material as THREE.Material).dispose()
-    })
-    this.screenHalos.forEach((s) => {
       this.scene.remove(s)
       s.geometry.dispose()
       ;(s.material as THREE.Material).dispose()
