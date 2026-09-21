@@ -940,12 +940,20 @@ class PlanetInstance {
     if (site.auraColor && !isSun) {
       const color = new THREE.Color(site.auraColor)
       const intensity = site.auraIntensity ?? 0.35
-      // Tints the planet's own real texture rather than replacing it —
-      // the photographic surface detail still reads, just lit in the
-      // dreamcore hue instead of neutral white.
       const mat = this.mesh.material as THREE.MeshStandardMaterial
+      // Tints the DIFFUSE color, not a flat emissive wash — emissive
+      // light is uniform regardless of the scene's own directional
+      // light, so a strong emissive tint erased the lit/shadowed
+      // gradient a sphere needs to read as 3D and left every planet
+      // looking like a flat colored disc. Lerping `color` toward the hue
+      // instead still gets multiplied by the real directional/ambient
+      // lighting per pixel, so the sphere keeps its terminator (bright
+      // side, dark side) while still reading in the dreamcore hue. A
+      // much smaller emissive is kept on top, just enough for a glow
+      // accent, not enough to flatten the shading again.
+      mat.color = new THREE.Color(1, 1, 1).lerp(color, Math.min(intensity * 1.3, 0.75))
       mat.emissive = color
-      mat.emissiveIntensity = intensity
+      mat.emissiveIntensity = intensity * 0.18
       this.auraBaseIntensity = intensity * 1.8
       this.aura = createAuraShell(site.radius, color, this.auraBaseIntensity)
       this.group.add(this.aura)
