@@ -99,8 +99,9 @@ const PLANETS: PlanetSite[] = [
     ringTextureUrl: '/textures/saturn-ring.png',
     auraColor: '#ffd76a',
     auraIntensity: 0.25,
-    starRingCount: 18,
-    starRingRadius: 3.3,
+    // No star-sparkle halo here — Saturn already has its own real ring
+    // and debris field, which get their own dazzling treatment directly
+    // (see buildDebris/the ring's shader) instead of an added decoration.
     items: SATURN_PROJECT_IDS.map((id) => ({ image: projects.find((p) => p.id === id)!.image })),
   },
   {

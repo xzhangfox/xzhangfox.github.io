@@ -392,10 +392,21 @@ const RING_VERTEX = `
 const RING_FRAGMENT = `
   precision highp float;
   uniform sampler2D uRingMap;
+  uniform float uTime;
   varying float vRadialU;
   void main() {
     vec4 tex = texture2D(uRingMap, vec2(vRadialU, 0.5));
     if (tex.a < 0.02) discard;
+    // Dazzling rather than the flat, muted photographic tan it starts
+    // as: push saturation and brightness up, then sweep a soft shimmer
+    // band across the radius over time, like light catching dust.
+    vec3 color = tex.rgb;
+    float luma = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(vec3(luma), color, 1.6);
+    color *= 1.25;
+    float shimmer = smoothstep(0.1, 0.0, abs(fract(vRadialU * 3.0 - uTime * 0.15) - 0.5)) * 0.35;
+    color += shimmer;
+    tex = vec4(color, tex.a);
     gl_FragColor = tex;
   }
 `
@@ -988,7 +999,12 @@ class PlanetInstance {
         new THREE.ShaderMaterial({
           vertexShader: RING_VERTEX,
           fragmentShader: RING_FRAGMENT,
-          uniforms: { uRingMap: { value: ringTex }, uInner: { value: ringInner }, uOuter: { value: ringOuter } },
+          uniforms: {
+            uRingMap: { value: ringTex },
+            uInner: { value: ringInner },
+            uOuter: { value: ringOuter },
+            uTime: { value: 0 },
+          },
           transparent: true,
           depthWrite: false,
           side: THREE.DoubleSide,
@@ -1010,10 +1026,18 @@ class PlanetInstance {
     const geometry = new THREE.IcosahedronGeometry(1, 0)
     const count = 55
     for (let i = 0; i < count; i++) {
+      // Dazzling gem/crystal chunks, not dull rock: mostly gold to match
+      // the ring, with the occasional icy-cyan glint, saturated and
+      // glowing rather than the flat muted brown they started as.
+      const gold = Math.random() < 0.8
+      const hue = gold ? 0.1 + Math.random() * 0.06 : 0.52 + Math.random() * 0.08
+      const baseColor = new THREE.Color().setHSL(hue, 0.55 + Math.random() * 0.35, 0.45 + Math.random() * 0.25)
       const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color().setHSL(0.09 + Math.random() * 0.05, 0.15 + Math.random() * 0.1, 0.3 + Math.random() * 0.3),
-        roughness: 0.9,
-        metalness: 0.05,
+        color: baseColor,
+        roughness: 0.2 + Math.random() * 0.25,
+        metalness: 0.6 + Math.random() * 0.3,
+        emissive: baseColor,
+        emissiveIntensity: 0.25 + Math.random() * 0.3,
       })
       const mesh = new THREE.Mesh(geometry, material)
       const angle = Math.random() * Math.PI * 2
@@ -1150,6 +1174,9 @@ class PlanetInstance {
     if (this.aura) {
       const mat = this.aura.material as THREE.ShaderMaterial
       mat.uniforms.uIntensity.value = this.auraBaseIntensity * (0.85 + 0.15 * Math.sin(time * 1.3))
+    }
+    if (this.ring) {
+      ;(this.ring.material as THREE.ShaderMaterial).uniforms.uTime.value = time
     }
   }
 
