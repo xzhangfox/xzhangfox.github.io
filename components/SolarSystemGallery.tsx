@@ -400,9 +400,10 @@ const SCREEN_FRAGMENT = `
     vec3 edgeNoise = vec3(hash(vUv * 300.0 + uTime * 5.0));
     // Square mosaic noise along the border instead of a smooth chasing
     // gradient — blocks of a few different sizes, each independently
-    // flickering on/off and swapping between the neon duotone at a steady
-    // cadence, so the edge reads as corrupted/glitching pixels rather than
-    // a clean neon ring.
+    // flickering on/off at a steady cadence, so the edge reads as
+    // corrupted/glitching pixels rather than a clean ring. Laser white
+    // rather than a neon tint — the border reads as the same light as the
+    // beam and the forming-plane glow, not a separately-colored accent.
     float mosaicTick = floor(uTime * 5.5);
     // A coarse macro-cell picks this patch's block-size tier so the mosaic
     // isn't uniform — three candidate densities mixed across the frame.
@@ -411,8 +412,7 @@ const SCREEN_FRAGMENT = `
     vec2 mosaicCell = floor(vUv * density);
     float cellSeed = hash(mosaicCell * 1.37 + mosaicTick * 3.11);
     float cellOn = step(0.42, cellSeed);
-    vec3 mosaicColor = mix(uNeonA, uNeonB, hash(mosaicCell * 0.71 + mosaicTick * 1.53 + 9.0));
-    vec3 edgeColor = mix(mosaicColor * cellOn, edgeNoise, glitchActive * 0.7);
+    vec3 edgeColor = mix(uLaserWhite * cellOn, edgeNoise, glitchActive * 0.7);
     float edgeStrength = edge * 0.6 * cellOn * (1.0 + glitchActive * 0.6) * uFlicker;
     color = mix(color, edgeColor, clamp(edgeStrength, 0.0, 1.0));
     float edgeAlpha = edge * mix(0.3, 1.0, cellOn) * uFlicker;
@@ -420,6 +420,52 @@ const SCREEN_FRAGMENT = `
     alpha *= dissolveAlpha;
 
     gl_FragColor = vec4(color, alpha);
+  }
+`
+
+// The screen's own content (image + torn border) occupies the centered
+// inner fraction of the larger halo plane below — this fixes how much
+// margin surrounds it. Shared between the JS geometry sizing and the
+// shader's matching inner-box math so they can't drift apart.
+const SCREEN_HALO_CONTENT_SCALE = 0.72
+// A handful of small, lazily-twinkling laser-white points scattered in
+// the margin just outside the hologram's own edge — projector light
+// scatter/dust rather than a second border, so just a few soft dots
+// fading out toward the plane's rim, not a dense field.
+const SCREEN_HALO_FRAGMENT = `
+  precision highp float;
+  uniform vec3 uLaserWhite;
+  uniform float uTime;
+  uniform float uFlicker;
+  varying vec2 vUv;
+
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+
+  void main() {
+    const float inner = 0.5 * ${SCREEN_HALO_CONTENT_SCALE};
+    vec2 p = vUv - 0.5;
+    float d = max(abs(p.x), abs(p.y)) - inner;
+    // Only the margin band outside the content box, fading out toward
+    // the plane's own outer edge.
+    float fade = 1.0 - smoothstep(0.0, 0.16, d);
+    if (d <= 0.0 || fade <= 0.0) discard;
+
+    float tick = floor(uTime * 2.2);
+    vec2 cellUv = vUv * 9.0;
+    vec2 cell = floor(cellUv);
+    vec2 cellLocal = fract(cellUv) - 0.5;
+    // Sparse — only a small handful of cells are ever lit at once, each
+    // a small soft point rather than a filled block.
+    float seed = hash(cell * 1.7 + tick * 2.6);
+    if (seed < 0.94) discard;
+    float twinkle = hash(cell * 0.9 + tick * 1.3 + 4.0);
+    float dot = 1.0 - smoothstep(0.0, 0.16, length(cellLocal));
+    if (dot <= 0.0) discard;
+
+    float alpha = dot * fade * (0.5 + 0.5 * twinkle) * uFlicker;
+    gl_FragColor = vec4(uLaserWhite, alpha);
   }
 `
 
@@ -884,6 +930,7 @@ class PlanetInstance {
   crafts: THREE.Group[] = []
   crewHalos: THREE.Mesh[] = []
   screens: THREE.Mesh[] = []
+  screenHalos: THREE.Mesh[] = []
   lasers: THREE.Mesh[] = []
   revealTimer: number[] = []
   itemOrbitRadius = 0
@@ -1157,6 +1204,7 @@ class PlanetInstance {
     const height = SCREEN_HEIGHT
     const width = height * aspect
     const screenGeometry = new THREE.PlaneGeometry(width, height)
+    const haloGeometry = new THREE.PlaneGeometry(width / SCREEN_HALO_CONTENT_SCALE, height / SCREEN_HALO_CONTENT_SCALE)
     const loader = new THREE.TextureLoader()
 
     items.forEach((item, index) => {
@@ -1203,6 +1251,28 @@ class PlanetInstance {
       screen.scale.set(0.0001, 0.0001, 1)
       this.scene.add(screen)
       this.screens.push(screen)
+
+      // A few small laser-white points scattered just outside the
+      // screen's own edge — drawn on a larger plane behind it so they
+      // only ever show in the margin the screen doesn't already cover.
+      const haloMaterial = new THREE.ShaderMaterial({
+        vertexShader: SCREEN_VERTEX,
+        fragmentShader: SCREEN_HALO_FRAGMENT,
+        transparent: true,
+        depthWrite: false,
+        uniforms: {
+          uTime: { value: 0 },
+          uFlicker: { value: 0 },
+          uLaserWhite: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
+        },
+      })
+      const screenHalo = new THREE.Mesh(haloGeometry, haloMaterial)
+      screenHalo.userData.index = index
+      screenHalo.visible = false
+      screenHalo.renderOrder = -1
+      screenHalo.scale.set(0.0001, 0.0001, 1)
+      this.scene.add(screenHalo)
+      this.screenHalos.push(screenHalo)
 
       loader.load(item.image, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace
@@ -1264,6 +1334,7 @@ class PlanetInstance {
     this.crafts.forEach((c) => (c.visible = visible))
     if (!visible) {
       this.screens.forEach((s) => (s.visible = false))
+      this.screenHalos.forEach((s) => (s.visible = false))
       this.lasers.forEach((l) => (l.visible = false))
     }
   }
@@ -1337,6 +1408,10 @@ class PlanetInstance {
       s.scale.set(0.0001, 0.0001, 1)
       s.visible = false
     })
+    this.screenHalos.forEach((s) => {
+      s.scale.set(0.0001, 0.0001, 1)
+      s.visible = false
+    })
     this.lasers.forEach((l) => (l.visible = false))
   }
 
@@ -1405,6 +1480,7 @@ class PlanetInstance {
       if (i !== flying) {
         this._idlePosition(i, wrap01(masterT + i / this.count), time)
         this.screens[i].visible = false
+        this.screenHalos[i].visible = false
         this.lasers[i].visible = false
         this.revealTimer[i] = 0
         continue
@@ -1493,6 +1569,17 @@ class PlanetInstance {
       screenMat.uniforms.uReveal.value = reveal
       screenMat.uniforms.uTime.value = time
       screenMat.uniforms.uFlicker.value = flicker
+
+      const screenHalo = this.screenHalos[i]
+      screenHalo.visible = true
+      screenHalo.position.copy(focusWorld)
+      screenHalo.scale.copy(screen.scale)
+      const haloMat = screenHalo.material as THREE.ShaderMaterial
+      haloMat.uniforms.uTime.value = time
+      // Fades in alongside the image reveal rather than showing during
+      // the plain-laser forming phase, and carries the same flicker as
+      // the screen's own edge so they read as one system.
+      haloMat.uniforms.uFlicker.value = flicker * reveal
 
       if (laserVisibility > 0.01) {
         this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
@@ -1627,6 +1714,11 @@ class PlanetInstance {
     })
     this.crafts.forEach((c) => this.group.remove(c))
     this.screens.forEach((s) => {
+      this.scene.remove(s)
+      s.geometry.dispose()
+      ;(s.material as THREE.Material).dispose()
+    })
+    this.screenHalos.forEach((s) => {
       this.scene.remove(s)
       s.geometry.dispose()
       ;(s.material as THREE.Material).dispose()

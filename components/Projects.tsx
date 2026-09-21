@@ -97,7 +97,10 @@ const PLANETS: PlanetSite[] = [
     orbitSpeed: 0.0003,
     hasRing: true,
     ringTextureUrl: '/textures/saturn-ring.png',
-    auraColor: '#ffd76a',
+    // A richer, more saturated gold than the original pastel — same hue,
+    // pulled toward mid-lightness where a fully-saturated hue reads as
+    // vivid rather than washed out.
+    auraColor: '#ffcf00',
     auraIntensity: 0.25,
     // No star-sparkle halo here — Saturn already has its own real ring
     // and debris field, which get their own dazzling treatment directly
