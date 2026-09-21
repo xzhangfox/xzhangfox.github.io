@@ -385,15 +385,24 @@ const RING_FRAGMENT = `
   }
 `
 
-// A small shared craft design: elongated body + two wings + a glowing
-// engine + a soft pulsing halo ring, instanced once per project (engine
-// tint varies slightly by index).
+// A small shared craft design, loosely modeled on a chunky sci-fi
+// cargo-hauler reference (rounded hull, a big glowing sensor "eye" at the
+// nose, small swept fins, a couple of antenna spikes) rather than the
+// original plain cone+flat-wings silhouette: a rounded capsule hull, a
+// glowing nose lens (doubling as where the laser visually originates,
+// since the nose is already the craft's established forward axis — see
+// NOSE_FLIP_QUAT), swept fins, antenna spikes, a dimmer rear thruster
+// glow, and a soft pulsing halo ring. Instanced once per project (the
+// lens/engine tint varies by index).
 function createCraftGeometry() {
-  const body = new THREE.ConeGeometry(0.09, 0.34, 6)
+  const body = new THREE.CapsuleGeometry(0.075, 0.2, 4, 8)
   body.rotateX(Math.PI / 2)
-  const wing = new THREE.BoxGeometry(0.3, 0.015, 0.1)
-  const halo = new THREE.RingGeometry(0.17, 0.205, 28)
-  return { body, wing, halo }
+  const fin = new THREE.BoxGeometry(0.22, 0.012, 0.08)
+  const antenna = new THREE.CylinderGeometry(0.004, 0.006, 0.13, 4)
+  const lens = new THREE.CircleGeometry(0.05, 20)
+  const lensRim = new THREE.RingGeometry(0.05, 0.066, 20)
+  const halo = new THREE.RingGeometry(0.19, 0.225, 28)
+  return { body, fin, antenna, lens, lensRim, halo }
 }
 const CRAFT_GEO = createCraftGeometry()
 
@@ -403,18 +412,51 @@ function createCraft(index: number): { group: THREE.Group; halo: THREE.Mesh } {
   const body = new THREE.Mesh(CRAFT_GEO.body, bodyMat)
   group.add(body)
 
-  const wingMat = new THREE.MeshStandardMaterial({ color: 0x82899a, roughness: 0.5, metalness: 0.6 })
-  const wingL = new THREE.Mesh(CRAFT_GEO.wing, wingMat)
-  wingL.position.set(-0.09, 0, -0.02)
-  const wingR = wingL.clone()
-  wingR.position.x = 0.09
-  group.add(wingL, wingR)
+  const finMat = new THREE.MeshStandardMaterial({ color: 0x82899a, roughness: 0.5, metalness: 0.6 })
+  const finL = new THREE.Mesh(CRAFT_GEO.fin, finMat)
+  finL.position.set(-0.1, -0.008, 0.03)
+  finL.rotation.z = 0.22
+  const finR = finL.clone()
+  finR.position.x = 0.1
+  finR.rotation.z = -0.22
+  group.add(finL, finR)
+
+  const antennaMat = new THREE.MeshStandardMaterial({ color: 0x5c6270, roughness: 0.6, metalness: 0.5 })
+  const antennaL = new THREE.Mesh(CRAFT_GEO.antenna, antennaMat)
+  antennaL.position.set(-0.07, 0.05, 0.02)
+  antennaL.rotation.set(0.3, 0, 0.35)
+  const antennaR = antennaL.clone()
+  antennaR.position.x = 0.07
+  antennaR.rotation.z = -0.35
+  group.add(antennaL, antennaR)
 
   const engineHue = 0.5 + ((index * 0.21) % 1) * 0.12
   const engineColor = new THREE.Color().setHSL(engineHue, 0.9, 0.6)
+  // The nose "eye" — a bright sensor/laser lens in this project's own
+  // accent hue, right at the tip the craft is already oriented to point
+  // (see NOSE_FLIP_QUAT), so the beam visually originates from it.
+  const lens = new THREE.Mesh(
+    CRAFT_GEO.lens,
+    new THREE.MeshStandardMaterial({
+      color: engineColor,
+      emissive: engineColor,
+      emissiveIntensity: 2.4,
+      roughness: 0.3,
+      side: THREE.DoubleSide,
+    })
+  )
+  lens.position.z = 0.176
+  const lensRim = new THREE.Mesh(
+    CRAFT_GEO.lensRim,
+    new THREE.MeshStandardMaterial({ color: 0x1a1c20, roughness: 0.5, metalness: 0.6, side: THREE.DoubleSide })
+  )
+  lensRim.position.z = 0.175
+  group.add(lens, lensRim)
+
+  // A dimmer rear thruster glow, echoing the nose lens's own hue.
   const engine = new THREE.Mesh(
-    new THREE.SphereGeometry(0.04, 8, 8),
-    new THREE.MeshStandardMaterial({ color: engineColor, emissive: engineColor, emissiveIntensity: 2.2, roughness: 0.4 })
+    new THREE.SphereGeometry(0.032, 8, 8),
+    new THREE.MeshStandardMaterial({ color: engineColor, emissive: engineColor, emissiveIntensity: 1.6, roughness: 0.4 })
   )
   engine.position.z = -0.19
   group.add(engine)
