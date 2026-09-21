@@ -402,15 +402,97 @@ function createCraftGeometry() {
   const lens = new THREE.CircleGeometry(0.05, 20)
   const lensRim = new THREE.RingGeometry(0.05, 0.066, 20)
   const halo = new THREE.RingGeometry(0.19, 0.225, 28)
-  return { body, fin, antenna, lens, lensRim, halo }
+  const greeble = new THREE.BoxGeometry(0.028, 0.014, 0.02)
+  const vent = new THREE.BoxGeometry(0.05, 0.008, 0.03)
+  const spine = new THREE.BoxGeometry(0.018, 0.03, 0.09)
+  const windowStrip = new THREE.BoxGeometry(0.012, 0.006, 0.11)
+  return { body, fin, antenna, lens, lensRim, halo, greeble, vent, spine, windowStrip }
 }
 const CRAFT_GEO = createCraftGeometry()
 
+// A small procedural texture (faint grain + panel-line grid) for the
+// hull material — called lazily from inside createCraft (never at module
+// scope, since `document` doesn't exist wherever this module might get
+// evaluated outside the browser) and cached so every craft instance
+// shares the one canvas instead of each generating its own. Turns the
+// hull from a single flat color into something that reads as worn,
+// paneled metal.
+let hullTexture: THREE.CanvasTexture | null = null
+function getHullTexture(): THREE.CanvasTexture {
+  if (hullTexture) return hullTexture
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#b7c0cb'
+  ctx.fillRect(0, 0, size, size)
+  const imgData = ctx.getImageData(0, 0, size, size)
+  for (let i = 0; i < imgData.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * 20
+    imgData.data[i] = Math.min(255, Math.max(0, imgData.data[i] + n))
+    imgData.data[i + 1] = Math.min(255, Math.max(0, imgData.data[i + 1] + n))
+    imgData.data[i + 2] = Math.min(255, Math.max(0, imgData.data[i + 2] + n))
+  }
+  ctx.putImageData(imgData, 0, 0)
+  ctx.strokeStyle = 'rgba(35,38,44,0.55)'
+  ctx.lineWidth = 1
+  for (let y = 14; y < size; y += 28) {
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(size, y)
+    ctx.stroke()
+  }
+  for (let x = 20; x < size; x += 42) {
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, size)
+    ctx.stroke()
+  }
+  hullTexture = new THREE.CanvasTexture(canvas)
+  hullTexture.wrapS = THREE.RepeatWrapping
+  hullTexture.wrapT = THREE.RepeatWrapping
+  hullTexture.repeat.set(3, 1)
+  return hullTexture
+}
+
 function createCraft(index: number): { group: THREE.Group; halo: THREE.Mesh } {
   const group = new THREE.Group()
-  const bodyMat = new THREE.MeshStandardMaterial({ color: 0xb9c2cc, roughness: 0.35, metalness: 0.75 })
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: 0xb9c2cc,
+    map: getHullTexture(),
+    roughness: 0.4,
+    roughnessMap: getHullTexture(),
+    metalness: 0.75,
+  })
   const body = new THREE.Mesh(CRAFT_GEO.body, bodyMat)
   group.add(body)
+
+  // A raised dorsal spine and a few small greebled panels/vents break up
+  // the capsule's smooth surface into something that reads as an
+  // assembled hull rather than a bare primitive.
+  // Positioned at roughly the hull's own radius (0.075) so each sits
+  // half-embedded, half-protruding — clearly raised off the surface
+  // rather than buried inside it.
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x33373f, roughness: 0.55, metalness: 0.65 })
+  const spine = new THREE.Mesh(CRAFT_GEO.spine, darkMat)
+  spine.position.set(0, 0.078, -0.01)
+  group.add(spine)
+
+  const greebleMat = new THREE.MeshStandardMaterial({ color: 0x4a4f58, roughness: 0.6, metalness: 0.55 })
+  const greebleSpecs: [number, number, number][] = [
+    [-0.046, 0.06, 0.06],
+    [0.053, 0.053, -0.04],
+    [-0.066, -0.036, -0.09],
+  ]
+  for (const [x, y, z] of greebleSpecs) {
+    const g = new THREE.Mesh(CRAFT_GEO.greeble, greebleMat)
+    g.position.set(x, y, z)
+    group.add(g)
+  }
+  const vent = new THREE.Mesh(CRAFT_GEO.vent, darkMat)
+  vent.position.set(0, -0.078, -0.11)
+  group.add(vent)
 
   const finMat = new THREE.MeshStandardMaterial({ color: 0x82899a, roughness: 0.5, metalness: 0.6 })
   const finL = new THREE.Mesh(CRAFT_GEO.fin, finMat)
@@ -452,6 +534,15 @@ function createCraft(index: number): { group: THREE.Group; halo: THREE.Mesh } {
   )
   lensRim.position.z = 0.175
   group.add(lens, lensRim)
+
+  // A thin glowing "window strip" along the flank, in the same accent
+  // hue — echoes the reference ship's lit cabin windows.
+  const windowStrip = new THREE.Mesh(
+    CRAFT_GEO.windowStrip,
+    new THREE.MeshStandardMaterial({ color: engineColor, emissive: engineColor, emissiveIntensity: 1.8, roughness: 0.3 })
+  )
+  windowStrip.position.set(0.077, 0.01, 0.02)
+  group.add(windowStrip)
 
   // A dimmer rear thruster glow, echoing the nose lens's own hue.
   const engine = new THREE.Mesh(

@@ -21,6 +21,9 @@ const CONTENT_PLANET_IDS = ['saturn', 'moon']
 const PROJECT_LOGOS: Record<string, string> = {
   'flux-path': '/logos/flux-path.svg',
   'financial-tracker': '/logos/ai-bubble-monitor.svg',
+  'flux-nutrition': '/logos/flux-nutrition.svg',
+  'flux-career': '/logos/flux-career.svg',
+  'flux-finance': '/logos/flux-finance.svg',
 }
 
 // Static (language-independent) and module-level so it never changes
