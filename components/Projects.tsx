@@ -102,7 +102,10 @@ const PLANETS: PlanetSite[] = [
     // No star-sparkle halo here — Saturn already has its own real ring
     // and debris field, which get their own dazzling treatment directly
     // (see buildDebris/the ring's shader) instead of an added decoration.
-    items: SATURN_PROJECT_IDS.map((id) => ({ image: projects.find((p) => p.id === id)!.image })),
+    items: SATURN_PROJECT_IDS.map((id) => {
+      const p = projects.find((p) => p.id === id)!
+      return { image: p.image, color: p.color }
+    }),
   },
   {
     id: 'uranus',
@@ -139,9 +142,25 @@ const PLANETS: PlanetSite[] = [
     auraIntensity: 0.55,
     starRingCount: 28,
     starRingRadius: 2.8,
-    items: MOON_PROJECT_IDS.map((id) => ({ image: projects.find((p) => p.id === id)!.image })),
+    items: MOON_PROJECT_IDS.map((id) => {
+      const p = projects.find((p) => p.id === id)!
+      return { image: p.image, color: p.color }
+    }),
   },
 ]
+
+// Badge border/glow per planet, matched to that planet's own aura color
+// (see PLANETS above) instead of a flat gold — the overview badges and the
+// once-entered project badges should read as an extension of the planet's
+// own cyberpunk identity, not a generic UI chrome color.
+const PLANET_COLORS: Record<string, string> = Object.fromEntries(
+  PLANETS.filter((p) => p.auraColor).map((p) => [p.id, p.auraColor as string])
+)
+
+function hexToRgb(hex: string) {
+  const n = parseInt(hex.replace('#', ''), 16)
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`
+}
 
 function PlanetBadge({
   textureUrl,
@@ -149,6 +168,7 @@ function PlanetBadge({
   active,
   onClick,
   small,
+  color,
 }: {
   textureUrl: string
   label: string
@@ -159,7 +179,11 @@ function PlanetBadge({
    *  linework — false (default) for a planet's photographic texture,
    *  which should fill the circle edge-to-edge as before. */
   small?: boolean
+  /** This badge's own planet/project accent color — falls back to gold
+   *  when unset (e.g. the Sun, which has no aura). */
+  color?: string
 }) {
+  const rgb = hexToRgb(color ?? '#C9A84C')
   return (
     <button
       type="button"
@@ -170,8 +194,8 @@ function PlanetBadge({
       style={{
         backgroundImage: `url(${textureUrl})`,
         backgroundSize: small ? '56%' : 'cover',
-        borderColor: active ? 'var(--gold)' : 'rgba(201,168,76,0.35)',
-        boxShadow: active ? '0 0 14px rgba(201,168,76,0.45)' : '0 0 8px rgba(201,168,76,0.15)',
+        borderColor: active ? `rgba(${rgb}, 0.9)` : `rgba(${rgb}, 0.35)`,
+        boxShadow: active ? `0 0 14px rgba(${rgb}, 0.55)` : `0 0 8px rgba(${rgb}, 0.18)`,
       }}
     />
   )
@@ -352,6 +376,7 @@ export default function Projects() {
                     key={id}
                     textureUrl={PLANET_TEXTURES[id]}
                     label={PLANET_LABELS[id]}
+                    color={PLANET_COLORS[id]}
                     onClick={() => galleryRef.current?.enterPlanet(id)}
                   />
                 ))}
@@ -382,6 +407,7 @@ export default function Projects() {
                     textureUrl={PROJECT_LOGOS[project.id] ?? project.image}
                     small={!!PROJECT_LOGOS[project.id]}
                     label={project.title}
+                    color={project.color}
                     active={activeIndex === i}
                     onClick={() => galleryRef.current?.goTo(i)}
                   />

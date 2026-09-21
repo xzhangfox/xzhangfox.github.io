@@ -5,6 +5,9 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 
 export interface GalleryItem {
   image: string
+  /** Hex color driving this item's own hologram neon duotone (see
+   *  buildItems). Undefined falls back to the default cyan/magenta pair. */
+  color?: string
 }
 
 export interface PlanetSite {
@@ -188,6 +191,18 @@ const LASER_WHITE = new THREE.Color(0xeaf6ff)
 // as neon rather than a plain light.
 const NEON_CYAN = new THREE.Color(0x1af2ff)
 const NEON_MAGENTA = new THREE.Color(0xff2ec4)
+
+// Derives a hologram's neon duotone from a single project color, the same
+// hue-shift trick used for the planet aura's two-tone gradient — keeps every
+// project's screen visually distinct instead of sharing the one global pair.
+function neonDuotoneFrom(hex: string): [THREE.Color, THREE.Color] {
+  const a = new THREE.Color(hex)
+  const hsl = { h: 0, s: 0, l: 0 }
+  a.getHSL(hsl)
+  const boosted = new THREE.Color().setHSL(hsl.h, Math.min(hsl.s + 0.35, 1), Math.min(Math.max(hsl.l, 0.45), 0.62))
+  const b = new THREE.Color().setHSL((hsl.h + 0.32) % 1, Math.min(hsl.s + 0.35, 1), Math.min(Math.max(hsl.l, 0.45), 0.62))
+  return [boosted, b]
+}
 
 const SELF_SPIN_SPEED = 0.0018
 
@@ -1135,6 +1150,7 @@ class PlanetInstance {
     const loader = new THREE.TextureLoader()
 
     items.forEach((item, index) => {
+      const [neonA, neonB] = item.color ? neonDuotoneFrom(item.color) : [NEON_CYAN, NEON_MAGENTA]
       const { group: craft, halo } = createCraft(index)
       craft.userData.index = index
       craft.visible = false
@@ -1167,8 +1183,8 @@ class PlanetInstance {
           uFlicker: { value: 1 },
           uTime: { value: 0 },
           uLaserWhite: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
-          uNeonA: { value: new THREE.Vector3(NEON_CYAN.r, NEON_CYAN.g, NEON_CYAN.b) },
-          uNeonB: { value: new THREE.Vector3(NEON_MAGENTA.r, NEON_MAGENTA.g, NEON_MAGENTA.b) },
+          uNeonA: { value: new THREE.Vector3(neonA.r, neonA.g, neonA.b) },
+          uNeonB: { value: new THREE.Vector3(neonB.r, neonB.g, neonB.b) },
         },
       })
       const screen = new THREE.Mesh(screenGeometry, screenMaterial)
