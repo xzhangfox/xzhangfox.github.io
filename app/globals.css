@@ -107,28 +107,30 @@ body {
   background: rgba(255, 255, 255, 0.05);
 }
 
-/* Hologram edge — a persistent, laser-white torn-light border treatment for
-   the project preview modal's morphing container, matching the WebGL
+/* Hologram edge — a persistent cyan-magenta neon border treatment for the
+   project preview modal's morphing container, matching the WebGL
    hologram screen's own edge (see SolarSystemGallery's SCREEN_FRAGMENT: a
    thin core line with a soft glow bleeding both directions from it, not a
-   crisp CSS border — its `edge` term is a smoothstep band ~0.018 UV units
-   wide, which at typical on-screen sizes is roughly 8px of soft falloff)
-   so there's no abrupt style swap when the WebGL scene hands off to this
-   DOM element, and it stays this way through the fully expanded state.
-   This is a separate element from the image/content beneath it, so its
-   flicker animation only ever touches the edge — the content never dims
-   with it, matching the shader (uFlicker now only modulates its own
-   `edge` term, not the revealed image). The border-radius that goes with
-   this (`rounded-[4%]` on the elements using it) is likewise chosen to
-   match the shader exactly: `uBorderRadius` is applied identically to
-   both UV axes on a non-square plane, so CSS's own per-axis percentage
-   radius (horizontal % of width, vertical % of height) reproduces the
-   same elliptical corner the shader draws, at any box aspect ratio. */
+   crisp CSS border, now tinted cyan-magenta — cyberpunk duotone — rather
+   than flat white) so there's no abrupt style swap when the WebGL scene
+   hands off to this DOM element, and it stays this way through the fully
+   expanded state. CSS can't cheaply replicate the shader's own animated
+   chase around the perimeter, so this approximates it with a violet core
+   line (cyan/magenta's blend) plus two separately-tinted glows. This is a
+   separate element from the image/content beneath it, so its flicker
+   animation only ever touches the edge — the content never dims with it.
+   The border-radius that goes with this (`rounded-[4%]` on the elements
+   using it) is likewise chosen to match the shader exactly: `uBorderRadius`
+   is applied identically to both UV axes on a non-square plane, so CSS's
+   own per-axis percentage radius (horizontal % of width, vertical % of
+   height) reproduces the same elliptical corner the shader draws, at any
+   box aspect ratio. */
 .hologram-edge {
-  border: 1px solid rgba(234, 246, 255, 0.75);
+  border: 1px solid rgba(190, 140, 255, 0.82);
   box-shadow:
-    0 0 7px 1px rgba(234, 246, 255, 0.3),
-    inset 0 0 7px 1px rgba(234, 246, 255, 0.22);
+    0 0 8px 1px rgba(26, 242, 255, 0.32),
+    0 0 8px 1px rgba(255, 46, 196, 0.28),
+    inset 0 0 7px 1px rgba(190, 140, 255, 0.24);
   filter: url(#hologram-fray);
   animation: hologram-flicker 3.4s infinite;
 }
@@ -142,7 +144,7 @@ body {
 .hologram-scan {
   top: -16%;
   height: 14%;
-  background: linear-gradient(to bottom, transparent, rgba(234, 246, 255, 0.4), transparent);
+  background: linear-gradient(to bottom, transparent, rgba(26, 242, 255, 0.38), rgba(255, 46, 196, 0.38), transparent);
   mix-blend-mode: screen;
   animation: hologram-scan-sweep 3.2s linear infinite;
 }

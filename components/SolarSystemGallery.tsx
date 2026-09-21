@@ -179,10 +179,15 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0)
 const NOSE_FLIP_QUAT = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, Math.PI)
 const ORIGIN = new THREE.Vector3(0, 0, 0)
 
-// Shared by the laser material and the screen's glow/edge/static tint so the
+// Shared by the laser material and the screen's glow/scan-band tint so the
 // beam and the hologram it projects read as one continuous piece of light —
 // "laser white."
 const LASER_WHITE = new THREE.Color(0xeaf6ff)
+// The screen's own edge/static tint — a cyberpunk cyan-magenta duotone
+// instead of flat white, so the hologram's border and forming-static read
+// as neon rather than a plain light.
+const NEON_CYAN = new THREE.Color(0x1af2ff)
+const NEON_MAGENTA = new THREE.Color(0xff2ec4)
 
 const SELF_SPIN_SPEED = 0.0018
 
@@ -265,6 +270,8 @@ const SCREEN_FRAGMENT = `
   uniform float uFlicker;
   uniform float uTime;
   uniform vec3 uLaserWhite;
+  uniform vec3 uNeonA;
+  uniform vec3 uNeonB;
   varying vec2 vUv;
 
   float roundedBoxSDF(vec2 p, vec2 b, float r) {
@@ -312,9 +319,12 @@ const SCREEN_FRAGMENT = `
       if (reveal < 0.999) {
         // Pure noise/scanline hologram static — the preview image is never
         // sampled here, so nothing of it can leak through before reveal.
+        // Tinted cyan-to-magenta across the frame rather than flat white,
+        // a cyberpunk duotone static instead of a plain TV-snow look.
         float noise = hash(floor(vUv * vec2(160.0, 100.0)) + floor(uTime * 22.0));
         float scan = 0.6 + 0.4 * sin(vUv.y * 380.0 - uTime * 46.0);
-        color = uLaserWhite * (noise * 0.7 + 0.3) * scan * uFlicker;
+        vec3 staticTint = mix(uNeonA, uNeonB, vUv.x);
+        color = staticTint * (noise * 0.7 + 0.3) * scan * uFlicker;
       }
       if (reveal > 0.001) {
         vec2 ratio = vec2(
@@ -344,6 +354,10 @@ const SCREEN_FRAGMENT = `
         );
         float imgNoise = hash(floor(vUv * vec2(140.0, 90.0)) + floor(uTime * 30.0));
         base = mix(base, uLaserWhite * imgNoise, glitchActive * 0.55);
+        // Fine persistent scanlines across the whole revealed image — the
+        // classic CRT/hologram cyberpunk texture, not just the sweeping
+        // band below.
+        base *= 0.9 + 0.1 * sin(vUv.y * 240.0);
         float imgAlpha = mix(1.0, 0.55, glitchActive);
         // The revealed image itself no longer dims/flickers with uFlicker —
         // it holds steady once shown; only the edge glow below carries the
@@ -369,7 +383,12 @@ const SCREEN_FRAGMENT = `
     // ring of light around the picture, not the picture itself.
     float edge = smoothstep(-0.026, -0.008, d);
     vec3 edgeNoise = vec3(hash(vUv * 300.0 + uTime * 5.0));
-    vec3 edgeColor = mix(uLaserWhite, edgeNoise, glitchActive * 0.7);
+    // A cyan-magenta gradient slowly chasing around the border's own
+    // perimeter (angle from center) rather than a flat white ring — the
+    // neon-sign-edge cyberpunk cue.
+    float edgeAngle = atan(vUv.y - 0.5, vUv.x - 0.5) / 6.2831853 + 0.5;
+    vec3 edgeBase = mix(uNeonA, uNeonB, fract(edgeAngle + uTime * 0.05));
+    vec3 edgeColor = mix(edgeBase, edgeNoise, glitchActive * 0.7);
     float edgeStrength = edge * 0.55 * (1.0 + glitchActive * 0.6) * uFlicker;
     color = mix(color, edgeColor, clamp(edgeStrength, 0.0, 1.0));
     alpha = mix(alpha, 1.0, edge * uFlicker);
@@ -752,32 +771,45 @@ function getStarTexture(points: 4 | 5): THREE.CanvasTexture {
 const AURA_VERTEX = `
   varying vec3 vNormal;
   varying vec3 vViewPos;
+  varying vec3 vLocalPos;
   void main() {
     vNormal = normalize(normalMatrix * normal);
+    vLocalPos = normalize(position);
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     vViewPos = -mvPosition.xyz;
     gl_Position = projectionMatrix * mvPosition;
   }
 `
+// A cyberpunk duotone rather than one flat glow color: blends between two
+// accent hues along a slow-drifting diagonal, so the rim itself reads as
+// a living neon gradient (think cyan bleeding into magenta) instead of a
+// single uniform tint.
 const AURA_FRAGMENT = `
   precision highp float;
-  uniform vec3 uColor;
+  uniform vec3 uColorA;
+  uniform vec3 uColorB;
   uniform float uIntensity;
+  uniform float uTime;
   varying vec3 vNormal;
   varying vec3 vViewPos;
+  varying vec3 vLocalPos;
   void main() {
     vec3 viewDir = normalize(vViewPos);
     float fresnel = pow(1.0 - clamp(dot(normalize(vNormal), viewDir), 0.0, 1.0), 2.4);
-    gl_FragColor = vec4(uColor, fresnel * uIntensity);
+    float g = clamp(vLocalPos.y * 0.5 + 0.5 + sin(uTime * 0.3) * 0.18, 0.0, 1.0);
+    vec3 color = mix(uColorA, uColorB, g);
+    gl_FragColor = vec4(color, fresnel * uIntensity);
   }
 `
-function createAuraShell(radius: number, color: THREE.Color, intensity: number): THREE.Mesh {
+function createAuraShell(radius: number, colorA: THREE.Color, colorB: THREE.Color, intensity: number): THREE.Mesh {
   const material = new THREE.ShaderMaterial({
     vertexShader: AURA_VERTEX,
     fragmentShader: AURA_FRAGMENT,
     uniforms: {
-      uColor: { value: new THREE.Vector3(color.r, color.g, color.b) },
+      uColorA: { value: new THREE.Vector3(colorA.r, colorA.g, colorA.b) },
+      uColorB: { value: new THREE.Vector3(colorB.r, colorB.g, colorB.b) },
       uIntensity: { value: intensity },
+      uTime: { value: 0 },
     },
     transparent: true,
     blending: THREE.AdditiveBlending,
@@ -966,7 +998,16 @@ class PlanetInstance {
       mat.emissive = color
       mat.emissiveIntensity = intensity * 0.18
       this.auraBaseIntensity = intensity * 1.8
-      this.aura = createAuraShell(site.radius, color, this.auraBaseIntensity)
+      // A second accent hue, hue-shifted off the planet's own color
+      // rather than hand-authored per planet, so the rim reads as a
+      // cyberpunk two-tone gradient instead of one flat glow — a
+      // complementary-ish shift (~115°) plus a slight push toward more
+      // saturated/brighter so the second color doesn't just read as a
+      // duller version of the first.
+      const hsl = { h: 0, s: 0, l: 0 }
+      color.getHSL(hsl)
+      const color2 = new THREE.Color().setHSL((hsl.h + 0.32) % 1, Math.min(hsl.s + 0.15, 1), Math.min(hsl.l + 0.08, 0.75))
+      this.aura = createAuraShell(site.radius, color, color2, this.auraBaseIntensity)
       this.group.add(this.aura)
     }
 
@@ -1126,6 +1167,8 @@ class PlanetInstance {
           uFlicker: { value: 1 },
           uTime: { value: 0 },
           uLaserWhite: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
+          uNeonA: { value: new THREE.Vector3(NEON_CYAN.r, NEON_CYAN.g, NEON_CYAN.b) },
+          uNeonB: { value: new THREE.Vector3(NEON_MAGENTA.r, NEON_MAGENTA.g, NEON_MAGENTA.b) },
         },
       })
       const screen = new THREE.Mesh(screenGeometry, screenMaterial)
@@ -1174,6 +1217,7 @@ class PlanetInstance {
     if (this.aura) {
       const mat = this.aura.material as THREE.ShaderMaterial
       mat.uniforms.uIntensity.value = this.auraBaseIntensity * (0.85 + 0.15 * Math.sin(time * 1.3))
+      mat.uniforms.uTime.value = time
     }
     if (this.ring) {
       ;(this.ring.material as THREE.ShaderMaterial).uniforms.uTime.value = time
