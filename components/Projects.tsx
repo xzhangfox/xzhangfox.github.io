@@ -62,16 +62,33 @@ const PLANETS: PlanetSite[] = [
   },
 ]
 
-function PlanetBadge({ textureUrl, label, active, onClick }: { textureUrl: string; label: string; active?: boolean; onClick: () => void }) {
+function PlanetBadge({
+  textureUrl,
+  label,
+  active,
+  onClick,
+  small,
+}: {
+  textureUrl: string
+  label: string
+  active?: boolean
+  onClick: () => void
+  /** True for a project's own vector icon, rendered smaller with
+   *  breathing room inside the badge for sharper, less-cramped-looking
+   *  linework — false (default) for a planet's photographic texture,
+   *  which should fill the circle edge-to-edge as before. */
+  small?: boolean
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="pointer-events-auto h-8 w-8 flex-shrink-0 rounded-full border bg-cover bg-center transition-all duration-300 sm:h-9 sm:w-9"
+      className="pointer-events-auto h-8 w-8 flex-shrink-0 rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 sm:h-9 sm:w-9"
       style={{
         backgroundImage: `url(${textureUrl})`,
+        backgroundSize: small ? '56%' : 'cover',
         borderColor: active ? 'var(--gold)' : 'rgba(201,168,76,0.35)',
         boxShadow: active ? '0 0 14px rgba(201,168,76,0.45)' : '0 0 8px rgba(201,168,76,0.15)',
       }}
@@ -282,6 +299,7 @@ export default function Projects() {
                   <PlanetBadge
                     key={project.id}
                     textureUrl={PROJECT_LOGOS[project.id] ?? project.image}
+                    small={!!PROJECT_LOGOS[project.id]}
                     label={project.title}
                     active={activeIndex === i}
                     onClick={() => galleryRef.current?.goTo(i)}
