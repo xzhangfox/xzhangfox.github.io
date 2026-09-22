@@ -823,29 +823,60 @@ function createOrbitRing(radius: number): THREE.LineLoop {
   return new THREE.LineLoop(geometry, material)
 }
 
-// A soft, feathered circular sprite for the galaxy backdrop's dust —
-// generated lazily (same reasoning as the star textures below) and
-// cached once. A tight core with a fast falloff (not a wide, slow
-// bloom) so each point still reads as a small glowing dot rather than
-// a soft blob that bleeds into its neighbors.
-let galaxyDustTexture: THREE.CanvasTexture | null = null
-function getGalaxyDustTexture(): THREE.CanvasTexture {
-  if (galaxyDustTexture) return galaxyDustTexture
-  const size = 128
-  const canvas = document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')!
-  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
-  gradient.addColorStop(0, 'rgba(255,255,255,1)')
-  gradient.addColorStop(0.16, 'rgba(255,255,255,0.7)')
-  gradient.addColorStop(0.45, 'rgba(255,255,255,0.08)')
-  gradient.addColorStop(1, 'rgba(255,255,255,0)')
-  ctx.fillStyle = gradient
-  ctx.fillRect(0, 0, size, size)
-  galaxyDustTexture = new THREE.CanvasTexture(canvas)
-  return galaxyDustTexture
-}
+// The galaxy backdrop's dust sprite — procedural (no baked texture), so
+// its own edge sharpness can react continuously to camera distance: far
+// dust keeps the original soft, wide-falloff haze, while dust that
+// sweeps close (see the scroll-driven camera tilt) tightens into a
+// bigger, more defined disc, bright enough at full-near to read as
+// covering whatever's behind it rather than just adding a glow on top.
+const GALAXY_DUST_VERTEX = `
+  attribute vec3 color;
+  uniform float uBaseSize;
+  uniform float uPixelScale;
+  uniform float uNearDist;
+  uniform float uFarDist;
+  uniform float uNearBoost;
+  varying vec3 vColor;
+  varying float vNear;
+  void main() {
+    vColor = color;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    float camDist = max(-mvPosition.z, 0.001);
+    // 0 at/beyond uFarDist, 1 at/inside uNearDist.
+    float near = 1.0 - smoothstep(uNearDist, uFarDist, camDist);
+    vNear = near;
+    // Capped — without this, a particle passing very close to the
+    // camera during the scroll sweep would blow up past the screen's
+    // own size instead of just reading as "close."
+    gl_PointSize = min(uBaseSize * (1.0 + uNearBoost * near) * (uPixelScale / camDist), 140.0);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`
+const GALAXY_DUST_FRAGMENT = `
+  precision highp float;
+  uniform float uFarOpacity;
+  uniform float uNearOpacity;
+  varying vec3 vColor;
+  varying float vNear;
+  void main() {
+    float d = length(gl_PointCoord - vec2(0.5)) * 2.0;
+    // Far: a small solid core fading out over most of the sprite (the
+    // original hazy bloom). Near: a large solid core with only a thin,
+    // crisp rim — reads as a defined, in-focus disc rather than a soft
+    // bokeh circle.
+    float edgeStart = mix(0.12, 0.68, vNear);
+    float edgeEnd = mix(0.5, 0.76, vNear);
+    float shape = 1.0 - smoothstep(edgeStart, edgeEnd, d);
+    float alpha = shape * mix(uFarOpacity, uNearOpacity, vNear);
+    if (alpha <= 0.003) discard;
+    // vColor is linear (THREE.Color's own storage) — built-in materials
+    // get this same encode automatically via a shader chunk; a bare
+    // ShaderMaterial doesn't, and skipping it renders every midtone
+    // noticeably too dark (a warm tan reading as a dim gray smudge).
+    vec3 outColor = mix(pow(vColor, vec3(0.41666)) * 1.055 - vec3(0.055), vColor * 12.92, vec3(lessThanEqual(vColor, vec3(0.0031308))));
+    gl_FragColor = vec4(outColor, alpha);
+  }
+`
 
 // A small 4- or 5-pointed star/sparkle sprite texture for the dreamcore
 // halo rings — generated lazily (never at module scope, `document` isn't
@@ -2027,6 +2058,10 @@ class App {
   pointerNdc = new THREE.Vector2()
   _screenRectCorner = new THREE.Vector3()
   _flybyDistScratch: number[] = []
+  /** The galaxy backdrop's dust materials (see buildGalaxyBackdrop) —
+   *  kept around so onResize can keep their pixel-size calibration
+   *  correct after a viewport change. */
+  galaxyDustMaterials: THREE.ShaderMaterial[] = []
 
   planets: PlanetInstance[] = []
   planetsById = new Map<string, PlanetInstance>()
@@ -2234,13 +2269,13 @@ class App {
 
   // A hazy, diagonal band of soft warm/cool dust behind every planet —
   // referencing Flux Path's own painterly cosmic-dust backdrop rather
-  // than a sharp geometric effect. Deliberately understated: a soft
-  // radial-gradient sprite (no hard edges), additive blending, and a low
-  // per-tier opacity so overlapping dust blends into an ambient haze —
-  // read as atmosphere, not compete with the planets/starfield in front
-  // of it for attention.
+  // than a sharp geometric effect. Deliberately understated at a
+  // distance (see GALAXY_DUST_FRAGMENT's far-state falloff/opacity), but
+  // reactive to the camera: the scroll-driven tilt sweeps different
+  // parts of this same fixed band close to the camera, and GALAXY_DUST_
+  // VERTEX/FRAGMENT grow and sharpen whatever's currently near it, so it
+  // reads as the nebula itself drifting close rather than a flat backdrop.
   buildGalaxyBackdrop() {
-    const texture = getGalaxyDustTexture()
     // An arbitrary, fixed, non-axis-aligned tilt so the band sweeps
     // diagonally across the sky rather than sitting flat on one axis.
     const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.55, 0.7, 0.4).normalize())
@@ -2253,6 +2288,11 @@ class App {
       { size: 14, count: 130, opacity: 0.16 },
       { size: 7, count: 220, opacity: 0.22 },
     ]
+    // Matches THREE.PointsMaterial's own (undocumented, no-FOV-term)
+    // sizeAttenuation formula exactly — `size * pixelRatio * (height*0.5
+    // / -mvPosition.z)` — so swapping in this custom shader doesn't
+    // silently change how big the dust reads at a given distance.
+    const pixelScale = this.container.clientHeight * this.renderer.getPixelRatio() * 0.5
     const v = new THREE.Vector3()
     for (const tier of tiers) {
       const positions = new Float32Array(tier.count * 3)
@@ -2278,20 +2318,35 @@ class App {
       const geometry = new THREE.BufferGeometry()
       geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-      const points = new THREE.Points(
-        geometry,
-        new THREE.PointsMaterial({
-          size: tier.size,
-          map: texture,
-          vertexColors: true,
-          sizeAttenuation: true,
-          transparent: true,
-          opacity: tier.opacity,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        })
-      )
+      const material = new THREE.ShaderMaterial({
+        vertexShader: GALAXY_DUST_VERTEX,
+        fragmentShader: GALAXY_DUST_FRAGMENT,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.NormalBlending,
+        uniforms: {
+          uBaseSize: { value: tier.size },
+          uPixelScale: { value: pixelScale },
+          // Points beyond ~110 units from the camera read exactly as
+          // before; the "near" boost maxes out inside ~25 — a window
+          // near the back half of the scroll (the overview camera
+          // itself orbits at 150-250+ units) so only whichever dust the
+          // tilt actually sweeps toward the lens reacts, not the whole
+          // band at once.
+          uNearDist: { value: 25 },
+          uFarDist: { value: 110 },
+          uNearBoost: { value: 2.2 },
+          uFarOpacity: { value: tier.opacity },
+          uNearOpacity: { value: 0.85 },
+        },
+      })
+      const points = new THREE.Points(geometry, material)
+      // Drawn after the starfield (added first, in buildStarfield) so a
+      // near/sharp/opaque dust point actually reads as covering the
+      // stars behind it rather than the reverse.
+      points.renderOrder = 1
       this.scene.add(points)
+      this.galaxyDustMaterials.push(material)
     }
   }
 
@@ -2611,6 +2666,12 @@ class App {
       -CRAFT_OFFSET_FRACTION_X * (craftVisibleWidth / 2),
       -CRAFT_OFFSET_FRACTION_Y * (craftVisibleHeight / 2)
     )
+
+    // Keeps the galaxy dust's own screen-space size calibration (see
+    // buildGalaxyBackdrop) correct after a viewport/device-pixel-ratio
+    // change instead of drifting off from whatever it was built with.
+    const pixelScale = height * this.renderer.getPixelRatio() * 0.5
+    for (const mat of this.galaxyDustMaterials) mat.uniforms.uPixelScale.value = pixelScale
 
     this.updateOverviewDistance()
   }
