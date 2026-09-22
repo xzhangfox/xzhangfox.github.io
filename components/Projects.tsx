@@ -140,11 +140,14 @@ const PLANETS: PlanetSite[] = [
     orbitSpeed: 0.01,
     orbitParent: 'earth',
     // The flagship example: bright fluorescent yellow with the densest,
-    // most prominent star-motif halo of any planet.
+    // most prominent star-motif halo of any planet — a third of its stars
+    // are the ornate embroidered-medallion sprite rather than the plain
+    // 4-/5-point one, for a richer, more varied field.
     auraColor: '#fff44f',
     auraIntensity: 0.55,
     starRingCount: 28,
     starRingRadius: 2.8,
+    ornateStars: true,
     items: MOON_PROJECT_IDS.map((id) => {
       const p = projects.find((p) => p.id === id)!
       return { image: p.image, color: p.color }
@@ -309,6 +312,39 @@ export default function Projects() {
     return () => cancelAnimationFrame(raf)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePlanetId])
+
+  // Tilts the whole gallery's camera from a top-down view toward a
+  // look-up one as the section scrolls through the viewport — 0 right as
+  // it enters from below, 1 once it's scrolled fully past. A plain
+  // scroll listener (rAF-throttled) rather than an IntersectionObserver
+  // since this needs the continuous position, not just enter/exit.
+  useEffect(() => {
+    let raf = 0
+    let ticking = false
+    const compute = () => {
+      ticking = false
+      const el = wrapperRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const vh = window.innerHeight
+      const total = rect.height + vh
+      const t = total > 0 ? Math.min(1, Math.max(0, (vh - rect.top) / total)) : 0
+      galleryRef.current?.setScrollTilt(t)
+    }
+    const onScroll = () => {
+      if (ticking) return
+      ticking = true
+      raf = requestAnimationFrame(compute)
+    }
+    compute()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('resize', onScroll)
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      window.removeEventListener('resize', onScroll)
+      cancelAnimationFrame(raf)
+    }
+  }, [])
 
   return (
     <section id="projects" className="relative py-32">

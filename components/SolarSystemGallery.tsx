@@ -41,6 +41,11 @@ export interface PlanetSite {
    *  radius — kept well outside any content ring/debris band so the two
    *  never overlap. Defaults to 3.2. */
   starRingRadius?: number
+  /** A fraction of this ring's stars use the ornate compound-star sprite
+   *  (embroidered-medallion look: layered spikes, a beaded center hub, a
+   *  dotted boundary ring) instead of the plain 4-/5-point sprite, for a
+   *  richer, more varied halo. Undefined/false = plain stars only. */
+  ornateStars?: boolean
 }
 
 export interface SolarSystemGalleryHandle {
@@ -72,6 +77,10 @@ export interface SolarSystemGalleryHandle {
    *  backdrop. Call with true right when the modal opens, false right
    *  when it closes (by any means). */
   setPreviewOpen: (open: boolean) => void
+  /** The gallery's own scroll progress through the viewport, 0..1 — tilts
+   *  the camera from a top-down view toward a look-up one as it rises
+   *  (see App.pitch). Caller-driven (a scroll listener), not polled. */
+  setScrollTilt: (t: number) => void
 }
 
 interface HoverInfo {
@@ -173,6 +182,17 @@ const CRAFT_OFFSET_FRACTION_Y = 0.4
 // reference every other planet's `viewScale` is computed against, so every
 // planet's actual sphere reads at the same apparent size once entered.
 const REFERENCE_RADIUS = 3.2
+// A focused planet's own scroll-driven tilt swings the camera around it at
+// this fixed distance (the original offset's own length, so the baseline
+// close-up framing — reached exactly once an item is flying/open, see
+// PlanetInstance.cameraOffset — still lands at the same spot as before).
+const CAMERA_DIST = BASE_CAMERA_OFFSET.length()
+// The page-scroll-driven camera pitch range — see `App.pitch` and
+// `updateOverviewCamera`/`PlanetInstance.cameraOffset`. Near +90° reads as
+// looking straight down; swinging toward and past 0 carries the camera
+// below the orbital plane, looking up.
+const TILT_PITCH_TOP = THREE.MathUtils.degToRad(78)
+const TILT_PITCH_BOTTOM = THREE.MathUtils.degToRad(-28)
 const IDENTITY_QUAT = new THREE.Quaternion()
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 // The craft mesh's own nose (its cone body, see createCraftGeometry) points
@@ -252,16 +272,12 @@ const MAX_VIEWPORT_WIDTH_FRACTION = 0.84
 const ENTER_SECONDS = 1.6
 const LEAVE_SECONDS = 1.3
 
-// Overview framing — a true top-down shot (camera directly above the Sun,
+// Overview framing — a top-down shot at rest (camera above the Sun,
 // looking straight down) so every orbit, which is geometrically a circle in
 // the XZ plane, actually reads as a circle rather than being foreshortened
-// into an ellipse by a tilted viewing angle.
+// into an ellipse. The page's scroll position then tilts this toward a
+// look-up angle (see `pitch`/`updateOverviewCamera`).
 const OVERVIEW_MARGIN = 1.35
-// Looking straight down (-Y) makes the default (0,1,0) up-vector parallel
-// to the view direction, which is a degenerate/undefined case for
-// Object3D.lookAt(). Using world -Z as "up on screen" instead keeps the
-// orientation well-defined and gives a conventional top-down map layout.
-const OVERVIEW_UP = new THREE.Vector3(0, 0, -1)
 
 const SCREEN_VERTEX = `
   varying vec2 vUv;
@@ -833,6 +849,96 @@ function getStarTexture(points: 4 | 5): THREE.CanvasTexture {
   return texture
 }
 
+// A richer compound star sprite — modeled on an embroidered star-medallion
+// badge (long tapered primary spikes, shorter twisted/segmented secondary
+// spikes woven between them, a beaded ring hub, and a dotted boundary
+// circle) — used to sprinkle some visually "complex" stars in among the
+// plain 4-/5-point ones for halo rings that opt into it (see
+// PlanetSite.ornateStars), rather than replacing them outright.
+const ornateStarTextures: Partial<Record<8 | 12, THREE.CanvasTexture>> = {}
+function getOrnateStarTexture(points: 8 | 12): THREE.CanvasTexture {
+  const cached = ornateStarTextures[points]
+  if (cached) return cached
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  ctx.translate(size / 2, size / 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.strokeStyle = '#ffffff'
+  ctx.shadowColor = 'rgba(255,255,255,0.9)'
+  ctx.shadowBlur = size * 0.05
+
+  const outerR = size * 0.46
+  const midR = outerR * 0.62
+  const hubR = size * 0.13
+
+  // Primary spikes: tapered triangles from a small waist near the hub out
+  // to a sharp tip, one per point.
+  for (let i = 0; i < points; i++) {
+    const a = (i / points) * Math.PI * 2 - Math.PI / 2
+    const perpA = a + Math.PI / 2
+    const waist = outerR * 0.045
+    const waistX = Math.cos(perpA) * waist
+    const waistY = Math.sin(perpA) * waist
+    const baseX = Math.cos(a) * hubR * 0.55
+    const baseY = Math.sin(a) * hubR * 0.55
+    ctx.beginPath()
+    ctx.moveTo(Math.cos(a) * outerR, Math.sin(a) * outerR)
+    ctx.lineTo(baseX + waistX, baseY + waistY)
+    ctx.lineTo(baseX - waistX, baseY - waistY)
+    ctx.closePath()
+    ctx.fill()
+  }
+
+  // Secondary spikes, offset half a step between the primaries, drawn as
+  // a dashed/segmented stroke to read as twisted rope stitching rather
+  // than a solid blade.
+  ctx.globalAlpha = 0.75
+  ctx.lineWidth = size * 0.018
+  for (let i = 0; i < points; i++) {
+    const a = ((i + 0.5) / points) * Math.PI * 2 - Math.PI / 2
+    const dashes = 4
+    for (let d = 0; d < dashes; d++) {
+      const r0 = (d / dashes) * midR
+      const r1 = ((d + 0.65) / dashes) * midR
+      ctx.beginPath()
+      ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0)
+      ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1)
+      ctx.stroke()
+    }
+  }
+  ctx.globalAlpha = 1
+
+  // Outer boundary — a fine ring of small beads, echoing the embroidered
+  // badge's stitched border.
+  const ringDots = points * 2
+  const ringDotR = size * 0.013
+  for (let i = 0; i < ringDots; i++) {
+    const a = (i / ringDots) * Math.PI * 2
+    ctx.beginPath()
+    ctx.arc(Math.cos(a) * outerR * 1.08, Math.sin(a) * outerR * 1.08, ringDotR, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  // Center hub — a beaded rosette ring around a solid core.
+  const hubDots = 10
+  for (let i = 0; i < hubDots; i++) {
+    const a = (i / hubDots) * Math.PI * 2
+    ctx.beginPath()
+    ctx.arc(Math.cos(a) * hubR * 0.65, Math.sin(a) * hubR * 0.65, hubR * 0.32, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.beginPath()
+  ctx.arc(0, 0, hubR * 0.42, 0, Math.PI * 2)
+  ctx.fill()
+
+  const texture = new THREE.CanvasTexture(canvas)
+  ornateStarTextures[points] = texture
+  return texture
+}
+
 // A soft additive rim-glow "atmosphere" shell around a planet — the
 // standard fresnel-on-backfaces trick (bright at the grazing silhouette,
 // near-invisible face-on, and naturally hidden across the planet's own
@@ -985,14 +1091,47 @@ class PlanetInstance {
   // this once the beam's direction is oblique).
   _laserCorners = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
   // A reusable (never-rendered) camera purely for its lookAt math — see
-  // `computeOverviewQuat`'s own comment on why a plain Object3D's lookAt
+  // `updateOverviewCamera`'s own comment on why a plain Object3D's lookAt
   // silently computes the wrong rotation and a Camera's doesn't. Reused
   // every frame (not recreated) since this runs inside `activeUpdate`,
   // unlike the once-per-resize overview version.
   _aimScratchCam = new THREE.PerspectiveCamera()
+  // A second, separate scratch camera for `cameraQuat` below — kept apart
+  // from `_aimScratchCam` (used for the craft's own aim-at-screen
+  // rotation) purely so the two never risk clobbering each other's
+  // in-flight state within the same frame.
+  _tiltAimCam = new THREE.PerspectiveCamera()
+  _tiltDirScratch = new THREE.Vector3()
+  _cameraQuatScratch = new THREE.Quaternion()
 
+  // The baseline (Saturn-tuned) offset, blended toward a scroll-driven
+  // tilted position by how far this planet's own active item is from
+  // idle — `flightT` is already exactly that progress (0 idling, 1 fully
+  // flying/open), so the hologram/laser/craft system (none of which
+  // tracks this rotation) only ever sees the untouched original geometry
+  // once something's actually open; the tilt is purely an ambient
+  // "browsing" effect that eases out of the way the moment an item flies.
   cameraOffset(): THREE.Vector3 {
-    return this._cameraOffsetScratch.copy(BASE_CAMERA_OFFSET).multiplyScalar(this.viewScale)
+    const base = this._cameraOffsetScratch.copy(BASE_CAMERA_OFFSET).multiplyScalar(this.viewScale)
+    const idle = 1 - this.flightT
+    if (idle <= 0.001 || !this._pitchRef) return base
+    const pitch = this._pitchRef.value
+    const dist = CAMERA_DIST * this.viewScale
+    this._tiltDirScratch.set(0, Math.sin(pitch) * dist, Math.cos(pitch) * dist)
+    return base.lerp(this._tiltDirScratch, idle)
+  }
+  // The camera's own orientation to match `cameraOffset` above — identity
+  // (looking straight down local -Z, i.e. at the planet, matching the
+  // original fixed framing) once idle=0, easing toward an actual lookAt
+  // quaternion for the tilted offset as this planet idles.
+  cameraQuat(): THREE.Quaternion {
+    const idle = 1 - this.flightT
+    if (idle <= 0.001 || !this._pitchRef) return this._cameraQuatScratch.copy(IDENTITY_QUAT)
+    const pitch = this._pitchRef.value
+    this._tiltAimCam.up.set(0, Math.cos(pitch), -Math.sin(pitch))
+    this._tiltAimCam.position.set(0, Math.sin(pitch), Math.cos(pitch))
+    this._tiltAimCam.lookAt(0, 0, 0)
+    return this._cameraQuatScratch.copy(IDENTITY_QUAT).slerp(this._tiltAimCam.quaternion, idle)
   }
   focusOffset(): THREE.Vector3 {
     return this._focusOffsetScratch.copy(BASE_FOCUS_OFFSET).multiplyScalar(this.viewScale)
@@ -1015,6 +1154,9 @@ class PlanetInstance {
    *  onResize) — shared and resize-driven since the geometry producing it
    *  is identical for every planet. */
   _craftOffsetXYRef: { value: THREE.Vector2 } | null = null
+  /** Same idea again, for the scroll-driven camera pitch (see App.pitch)
+   *  that `cameraOffset`/`cameraQuat` blend in above. */
+  _pitchRef: { value: number } | null = null
 
   /** Scales the camera/focus/craft-parking offsets and the hologram screen
    *  so every planet fills the same apparent size once entered and its
@@ -1087,7 +1229,8 @@ class PlanetInstance {
       this.buildStarRing(
         site.auraColor ? new THREE.Color(site.auraColor) : new THREE.Color(0xffffff),
         site.starRingCount,
-        site.starRingRadius ?? 3.2
+        site.starRingRadius ?? 3.2,
+        site.ornateStars
       )
     }
 
@@ -1170,14 +1313,18 @@ class PlanetInstance {
     }
   }
 
-  // A ring of twinkling 4-/5-pointed star sprites well outside any
-  // content ring/debris band (see PlanetSite.starRingRadius), a
-  // dreamcore halo rather than a realistic planetary ring.
-  buildStarRing(color: THREE.Color, count: number, radiusMultiplier: number) {
+  // A ring of twinkling star sprites well outside any content ring/debris
+  // band (see PlanetSite.starRingRadius), a dreamcore halo rather than a
+  // realistic planetary ring — plain 4-/5-point sprites, with a minority
+  // swapped for the ornate compound-star sprite when the site opts in
+  // (see PlanetSite.ornateStars), so the ring reads as varied rather than
+  // uniformly simple or uniformly busy.
+  buildStarRing(color: THREE.Color, count: number, radiusMultiplier: number, ornate?: boolean) {
     for (let i = 0; i < count; i++) {
-      const points: 4 | 5 = Math.random() < 0.5 ? 4 : 5
+      const useOrnate = !!ornate && Math.random() < 0.35
+      const map = useOrnate ? getOrnateStarTexture(Math.random() < 0.5 ? 8 : 12) : getStarTexture(Math.random() < 0.5 ? 4 : 5)
       const material = new THREE.SpriteMaterial({
-        map: getStarTexture(points),
+        map,
         color,
         transparent: true,
         blending: THREE.AdditiveBlending,
@@ -1187,7 +1334,7 @@ class PlanetInstance {
       const angle = Math.random() * Math.PI * 2
       const radius = this.site.radius * radiusMultiplier * (0.85 + Math.random() * 0.3)
       const yJitter = (Math.random() - 0.5) * this.site.radius * 0.6
-      sprite.scale.setScalar(this.site.radius * (0.14 + Math.random() * 0.18))
+      sprite.scale.setScalar(this.site.radius * (useOrnate ? 0.2 + Math.random() * 0.22 : 0.14 + Math.random() * 0.18))
       this.group.add(sprite)
       this.starRing.push({
         sprite,
@@ -1771,6 +1918,16 @@ class App {
   // is, so the craft lands in the same RELATIVE spot regardless of
   // aspect ratio, not a fixed offset that drifts off-screen on mobile.
   craftOffsetXY = { value: new THREE.Vector2(0, 0) }
+  /** 0..1, set from outside via `setScrollTilt` (the gallery's own scroll
+   *  progress through the viewport) — drives the shared camera pitch
+   *  every planet's `cameraOffset`/`cameraQuat` and the overview camera
+   *  read each frame. */
+  scrollTilt = 0
+  /** The actual current camera pitch (radians), derived from `scrollTilt`
+   *  each frame — a shared ref object (same pattern as
+   *  `focusScaleAdjust`/`craftOffsetXY`) so every PlanetInstance reads the
+   *  live value without the App needing a per-planet setter. */
+  pitch = { value: TILT_PITCH_TOP }
   hoveredIndex = -1
   time = 0
 
@@ -1828,6 +1985,7 @@ class App {
       const p = new PlanetInstance(site, this.scene, aspect, borderRadius, i)
       p._focusScaleAdjustRef = this.focusScaleAdjust
       p._craftOffsetXYRef = this.craftOffsetXY
+      p._pitchRef = this.pitch
       this.planetsById.set(site.id, p)
       return p
     })
@@ -1886,19 +2044,37 @@ class App {
   }
 
   _overviewExtent = 60
+  _overviewDistance = 50
+  // A throwaway camera instance purely for its lookAt math — a plain
+  // Object3D.lookAt() computes rotation differently (it swaps the
+  // eye/target order internally), which silently pointed the camera the
+  // wrong way (up and away from the scene) when this used one. Reused
+  // every frame, not recreated, since `updateOverviewCamera` now runs
+  // every tick (see scroll-driven tilt) rather than only on resize.
+  _overviewAimCam = new THREE.PerspectiveCamera()
 
-  computeOverviewQuat(): THREE.Quaternion {
-    // Object3D.lookAt() computes rotation differently for a plain Object3D
-    // than for a Camera (it swaps the eye/target order internally) — using
-    // a plain Object3D here silently pointed the camera the wrong way
-    // (up and away from the scene rather than down at it), which is why
-    // the overview rendered nothing at all. A throwaway camera instance
-    // gets the camera-specific (correct) branch.
-    const scratch = new THREE.PerspectiveCamera()
-    scratch.up.copy(OVERVIEW_UP)
-    scratch.position.copy(this.overviewCameraPos)
-    scratch.lookAt(0, 0, 0)
-    return scratch.quaternion
+  // The overview camera's own vertical tilt: at `pitch` near +90° this is
+  // the original fixed top-down shot; swinging `pitch` down through level
+  // and into negative values carries the camera below the orbital plane,
+  // looking up — driven by `this.pitch.value` (see `pitch`, set from the
+  // page's scroll position). Recomputed every frame, not just on resize,
+  // so it tracks scroll continuously.
+  updateOverviewCamera() {
+    const pitch = this.pitch.value
+    const d = this._overviewDistance
+    this.overviewCameraPos.set(0, Math.sin(pitch) * d, Math.cos(pitch) * d)
+    // The up vector sweeps together with position — always perpendicular
+    // to the view direction within the same vertical plane — so there's
+    // no gimbal flip at any pitch in range (matches (0,0,-1), the prior
+    // fixed top-down `OVERVIEW_UP`, exactly at pitch=90°).
+    this._overviewAimCam.up.set(0, Math.cos(pitch), -Math.sin(pitch))
+    this._overviewAimCam.position.copy(this.overviewCameraPos)
+    this._overviewAimCam.lookAt(0, 0, 0)
+    this.overviewQuat.copy(this._overviewAimCam.quaternion)
+    if (this.viewMode === 'overview') {
+      this.camera.position.copy(this.overviewCameraPos)
+      this.camera.quaternion.copy(this.overviewQuat)
+    }
   }
 
   updateOverviewDistance() {
@@ -1906,13 +2082,8 @@ class App {
     const vFov = THREE.MathUtils.degToRad(CAMERA_FOV)
     const distForWidth = this._overviewExtent / (Math.tan(vFov / 2) * Math.min(aspect, 1))
     const distForHeight = this._overviewExtent / Math.tan(vFov / 2)
-    const distance = Math.max(distForWidth, distForHeight, 50)
-    this.overviewCameraPos.set(0, distance, 0)
-    if (this.viewMode === 'overview') {
-      this.camera.position.copy(this.overviewCameraPos)
-      this.overviewQuat.copy(this.computeOverviewQuat())
-      this.camera.quaternion.copy(this.overviewQuat)
-    }
+    this._overviewDistance = Math.max(distForWidth, distForHeight, 50)
+    this.updateOverviewCamera()
   }
 
   buildStarfield() {
@@ -1999,6 +2170,10 @@ class App {
 
   setPreviewOpen(open: boolean) {
     if (this.focusedPlanet) this.focusedPlanet.previewOpen = open
+  }
+
+  setScrollTilt(t: number) {
+    this.scrollTilt = clamp(t, 0, 1)
   }
 
   setHover(localIndex: number) {
@@ -2229,6 +2404,8 @@ class App {
 
   update() {
     this.time += 0.016
+    this.pitch.value = THREE.MathUtils.lerp(TILT_PITCH_TOP, TILT_PITCH_BOTTOM, this.scrollTilt)
+    this.updateOverviewCamera()
 
     for (const p of this.planets) {
       const parentPos = p.site.orbitParent ? this.planetsById.get(p.site.orbitParent)!.group.position : ORIGIN
@@ -2243,7 +2420,7 @@ class App {
       if (tr.toPlanet) {
         this._toCamPosScratch.copy(tr.toPlanet.group.position).add(tr.toPlanet.cameraOffset())
         this.camera.position.lerpVectors(tr.fromPos, this._toCamPosScratch, e)
-        this.camera.quaternion.slerpQuaternions(tr.fromQuat, IDENTITY_QUAT, e)
+        this.camera.quaternion.slerpQuaternions(tr.fromQuat, tr.toPlanet.cameraQuat(), e)
       } else {
         this.camera.position.lerpVectors(tr.fromPos, this.overviewCameraPos, e)
         this.camera.quaternion.slerpQuaternions(tr.fromQuat, this.overviewQuat, e)
@@ -2251,7 +2428,7 @@ class App {
       if (localT >= 1) {
         if (tr.toPlanet) {
           this.camera.position.copy(this._toCamPosScratch)
-          this.camera.quaternion.copy(IDENTITY_QUAT)
+          this.camera.quaternion.copy(tr.toPlanet.cameraQuat())
           this.focusedPlanet = tr.toPlanet
           this.viewMode = 'planet'
           this.onActivePlanetChange?.(this.focusedPlanet.site.id)
@@ -2266,7 +2443,7 @@ class App {
       }
     } else if (this.viewMode === 'planet' && this.focusedPlanet) {
       this.camera.position.copy(this.focusedPlanet.group.position).add(this.focusedPlanet.cameraOffset())
-      this.camera.quaternion.copy(IDENTITY_QUAT)
+      this.camera.quaternion.copy(this.focusedPlanet.cameraQuat())
     }
 
     // The planet whose craft need positioning this frame — the focused one
@@ -2347,6 +2524,7 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     closeSelection: () => appRef.current?.closeSelection(),
     getFlybyLabels: () => appRef.current?.getFlybyLabels() ?? [],
     setPreviewOpen: (open: boolean) => appRef.current?.setPreviewOpen(open),
+    setScrollTilt: (t: number) => appRef.current?.setScrollTilt(t),
   }), [])
 
   useEffect(() => {
