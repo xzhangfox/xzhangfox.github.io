@@ -126,7 +126,7 @@ export const projects: Project[] = [
       { src: '/images/projects/financial-tracker/trend.png', caption: 'Interactive trailing-history trend chart' },
     ],
     highlights: ['7 indicators, 3 frameworks, one daily score', 'Zero-lookahead scoring — no hindsight bias', 'Fully automated, self-updating pipeline'],
-    color: '#4ADE80',
+    color: '#D4A843',
     gridHeight: 480,
   },
 ]
