@@ -825,9 +825,9 @@ function createOrbitRing(radius: number): THREE.LineLoop {
 
 // A soft, feathered circular sprite for the galaxy backdrop's dust —
 // generated lazily (same reasoning as the star textures below) and
-// cached once. A plain radial gradient, no hard edge at all, so
-// thousands of overlapping points read as a hazy cloud rather than a
-// field of discrete dots.
+// cached once. A tight core with a fast falloff (not a wide, slow
+// bloom) so each point still reads as a small glowing dot rather than
+// a soft blob that bleeds into its neighbors.
 let galaxyDustTexture: THREE.CanvasTexture | null = null
 function getGalaxyDustTexture(): THREE.CanvasTexture {
   if (galaxyDustTexture) return galaxyDustTexture
@@ -838,7 +838,8 @@ function getGalaxyDustTexture(): THREE.CanvasTexture {
   const ctx = canvas.getContext('2d')!
   const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
   gradient.addColorStop(0, 'rgba(255,255,255,1)')
-  gradient.addColorStop(0.3, 'rgba(255,255,255,0.55)')
+  gradient.addColorStop(0.16, 'rgba(255,255,255,0.7)')
+  gradient.addColorStop(0.45, 'rgba(255,255,255,0.08)')
   gradient.addColorStop(1, 'rgba(255,255,255,0)')
   ctx.fillStyle = gradient
   ctx.fillRect(0, 0, size, size)
@@ -2243,7 +2244,10 @@ class App {
     // An arbitrary, fixed, non-axis-aligned tilt so the band sweeps
     // diagonally across the sky rather than sitting flat on one axis.
     const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.55, 0.7, 0.4).normalize())
-    const tint = [0xf0d080, 0xffe9b8, 0xc9a6ff, 0x8fd6ff].map((c) => new THREE.Color(c))
+    // Two closely-related warm tones, not four — enough variation to
+    // read as dust rather than a flat wash, without competing with the
+    // planets' own (much more saturated) accent colors elsewhere in the UI.
+    const tint = [0xf0d8a8, 0xd9c9a0].map((c) => new THREE.Color(c))
     const tiers: { size: number; count: number; opacity: number }[] = [
       { size: 26, count: 60, opacity: 0.12 },
       { size: 14, count: 130, opacity: 0.16 },
