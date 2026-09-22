@@ -190,32 +190,32 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI Dietary & Metabolic Tracker',
           description:
-            'Multimodal Vision AI food logging with bounding box analytics, mathematical metabolic modeling (TDEE/PSMF), and 60fps data dashboards.',
-          highlights: ['Real-time Vision AI logging', 'Custom metabolic engines', '60fps on data dashboards'],
+            'Snap a photo and Gemini Vision draws a bounding box around every item on your plate, gram by gram. “Dr. Flux,” an AI nutritionist, reads your live macro telemetry and calorie budget to coach you in real time — backed by real TDEE/PSMF metabolic math, not guesswork.',
+          highlights: ['Vision AI turns one photo into a full macro breakdown', '“Dr. Flux” AI coach reads your live telemetry', 'Real TDEE/PSMF metabolic math, not guesswork'],
         },
         {
           subtitle: 'Bazi & Ziwei Astrology Engine',
           description:
-            'Deterministic Bazi (Four Pillars) and Ziwei Doushu charting engine with real-time 3D celestial visualization and an AI assistant for interpretation — no LLM guesswork on the math.',
-          highlights: ['Deterministic Bazi + Ziwei calculations', '3D interactive star chart', 'AI-powered chart interpretation'],
+            'Six reading systems — Bazi, Ziwei, Tarot, Face Reading, Human Design, and a three-lens Affinity Reading — all running on deterministic Chinese-astrology math (real planetary positions, not LLM guesses), with a live 3D star chart and “The Chartkeeper,” an AI that reads your actual computed chart. Invite a friend to a blind, 60-second Mirror Draw before it scores your compatibility.',
+          highlights: ['Six reading systems on one real-time 3D star chart', 'Deterministic Bazi + Ziwei — real astronomy, not AI guesses', 'Two-person Mirror Draw before your Affinity Reading'],
         },
         {
           subtitle: 'AI Career Intelligence Platform',
           description:
-            'Multi-model AI system with smart fallback routing, ATS match-scoring via NLP entity extraction, and geospatial job market visualization.',
-          highlights: ['40% reduction in AI latency', 'PDF/DOCX NLP extraction', 'D3.js geospatial maps'],
+            'A force-directed D3 graph maps your next five job titles by real market gravity, a world map plots where they’re hiring, and an AI match engine scores your resume against a live job description — then rewrites the resume and cover letter for you, on a multi-model pipeline with automatic fallback routing.',
+          highlights: ['D3 force graph of your real career trajectory', 'AI ATS match scoring plus a full resume rewrite', '40% lower AI latency via smart model fallback'],
         },
         {
           subtitle: 'AI Financial Management Platform',
           description:
-            'Vision AI receipt intelligence pipeline, real-time equity dashboard with Google Search Grounding, and optimized Recharts data visualization.',
-          highlights: ['90% reduction in manual entry', 'Sub-second market data', '40% render speed gain'],
+            'Snap a receipt and Gemini Flash itemizes it straight into your ledger — no manual entry. A resource-allocation donut and a velocity trend chart track spend in real time, a full calendar heat-maps every day’s total, and a Google Search-grounded feed keeps market data current to the second.',
+          highlights: ['Receipt photo to itemized ledger, zero typing', 'Real-time resource-allocation and velocity charts', 'Google Search-grounded, sub-second market data'],
         },
         {
           subtitle: 'AI Bubble Monitor',
           description:
-            'A daily, rules-based read on whether AI-linked markets show classic speculative-bubble warning signs — built on Dalio, Shiller, and Minsky’s frameworks, scored as percentile ranks with no lookahead.',
-          highlights: ['7 percentile-ranked bubble indicators', 'Zero-lookahead daily scoring', 'Fully automated data pipeline'],
+            'A composite bubble-score gauge distills 7 percentile-ranked indicators across the Dalio, Shiller, and Minsky frameworks into one daily read — zero lookahead, fully automated, with an interactive trailing-history chart showing exactly how today’s score got there.',
+          highlights: ['7 indicators, 3 frameworks, one daily score', 'Zero-lookahead scoring — no hindsight bias', 'Fully automated, self-updating pipeline'],
         },
       ],
     },
@@ -344,29 +344,33 @@ export const translations: Record<Language, Dict> = {
       items: [
         {
           subtitle: 'AI 饮食与代谢追踪应用',
-          description: '多模态视觉 AI 食物记录，具备目标检测分析、TDEE/PSMF 代谢数学建模，以及 60fps 流畅数据仪表盘。',
-          highlights: ['实时视觉 AI 记录', '自定义代谢计算引擎', '仪表盘 60fps 流畅体验'],
+          description:
+            '拍一张照片，Gemini Vision 就能给餐盘里的每样食物画出识别框，精确到克。AI 营养师"Dr. Flux"实时读取你的宏量营养素和热量缺口数据，给出即时建议 —— 背后是真正的 TDEE/PSMF 代谢数学模型，而非凭空猜测。',
+          highlights: ['拍照即出完整宏量营养分析', 'AI 教练 "Dr. Flux" 读取实时数据给建议', 'Mifflin-St Jeor TDEE/PSMF 代谢建模'],
         },
         {
           subtitle: '八字与紫微命理引擎',
-          description: '确定性的八字与紫微斗数排盘引擎，结合实时 3D 星图可视化与 AI 智能解读助手 —— 命理计算全部基于传统公式，而非 AI 猜测。',
-          highlights: ['确定性八字 + 紫微排盘', '3D 交互式星图', 'AI 智能命盘解读'],
+          description:
+            '八字、紫微、塔罗、面相、人类图，外加融合八字+星座+MBTI 三重视角的缘分分析 —— 六套命理系统运行在确定性的中式命理演算之上（基于真实天文历法，而非 AI 瞎猜），搭配实时 3D 星图和会读取你真实命盘数据的 AI 助手"玄机子"。想看缘分分析前，还能先和好友玩一局盲画 60 秒的「镜像共绘」小游戏。',
+          highlights: ['六套命理系统，一张实时 3D 星图', '确定性八字 + 紫微排盘 —— 真天文历法而非 AI 猜测', '缘分分析前先来一局双人镜像共绘'],
         },
         {
           subtitle: 'AI 求职智能平台',
-          description: '多模型 AI 系统，具备智能故障转移路由、基于 NLP 实体抽取的 ATS 匹配评分，以及地理空间职位市场可视化。',
-          highlights: ['AI 延迟降低 40%', 'PDF/DOCX 简历 NLP 解析', 'D3.js 地理空间地图'],
+          description:
+            'D3 力导向图谱按真实市场引力展示你的下五个职业方向，世界地图标出各地招聘热点，AI 匹配引擎将简历与真实职位描述对比打分 —— 然后直接帮你重写简历和求职信，背后是带自动故障转移的多模型 AI 流水线。',
+          highlights: ['D3 力导向图谱展示真实职业路径', 'AI ATS 匹配评分 + 简历/求职信重写', '智能模型故障转移，AI 延迟降低 40%'],
         },
         {
           subtitle: 'AI 财务管理平台',
-          description: '基于视觉 AI 的收据智能识别管道、结合 Google 搜索实时数据的股票仪表盘，以及优化的 Recharts 数据可视化。',
-          highlights: ['人工录入减少 90%', '秒级以内的市场数据', '渲染速度提升 40%'],
+          description:
+            '拍一张收据，Gemini Flash 直接把它拆解记入账本 —— 无需手动录入。资源分配环形图和资金流速曲线实时追踪支出，完整日历以热力图形式展示每日总额，基于 Google 搜索实时校准的市场数据精确到秒。',
+          highlights: ['收据拍照秒变账本条目，零手动录入', '实时资源分配环形图 + 流速曲线', 'Google 搜索实时校准的秒级市场数据'],
         },
         {
           subtitle: 'AI 泡沫监测仪',
           description:
-            '一套每日更新、基于规则的指标体系，用来判断 AI 相关市场是否出现典型投机泡沫信号 —— 构建依据为达里欧、席勒与明斯基的框架，按百分位排名打分，不使用未来数据。',
-          highlights: ['7 项百分位排名泡沫指标', '零前瞻每日评分', '全自动数据流水线'],
+            '一个复合泡沫评分仪表盘，把达里欧、席勒与明斯基三套框架下的 7 项百分位指标浓缩成每日一个分数 —— 零前瞻偏差，全自动运行，配合可交互的历史走势图，清楚展示今天的分数是如何算出来的。',
+          highlights: ['7 项指标、3 套框架，浓缩成每日一个分数', '零前瞻评分 —— 杜绝事后诸葛亮', '全自动、自我更新的数据流水线'],
         },
       ],
     },
