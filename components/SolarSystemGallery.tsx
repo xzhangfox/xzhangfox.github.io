@@ -835,9 +835,11 @@ const GALAXY_DUST_VERTEX = `
   uniform float uPixelScale;
   uniform float uNearDist;
   uniform float uFarDist;
+  uniform float uTooNearDist;
   uniform float uNearBoost;
   varying vec3 vColor;
   varying float vNear;
+  varying float vFocus;
   void main() {
     vColor = color;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -845,10 +847,19 @@ const GALAXY_DUST_VERTEX = `
     // 0 at/beyond uFarDist, 1 at/inside uNearDist.
     float near = 1.0 - smoothstep(uNearDist, uFarDist, camDist);
     vNear = near;
+    // In-focus only in a middle band: still 0 far away, but pulled back
+    // toward 0 again once a point swings in past uTooNearDist — like a
+    // real lens, something that drifts between the galaxy and the
+    // camera reads sharp for a moment, then blurs again as it gets too
+    // close, rather than staying crisp indefinitely.
+    float overNear = 1.0 - smoothstep(uTooNearDist, uNearDist, camDist);
+    vFocus = near * (1.0 - overNear);
     // Capped — without this, a particle passing very close to the
     // camera during the scroll sweep would blow up past the screen's
-    // own size instead of just reading as "close."
-    gl_PointSize = min(uBaseSize * (1.0 + uNearBoost * near) * (uPixelScale / camDist), 140.0);
+    // own size instead of just reading as "close." Size keeps growing
+    // off "near" alone (not "vFocus") so the too-close ones still read
+    // as big, just soft — a blurred foreground shape, not a shrinking one.
+    gl_PointSize = min(uBaseSize * (1.0 + uNearBoost * near) * (uPixelScale / camDist), 190.0);
     gl_Position = projectionMatrix * mvPosition;
   }
 `
@@ -858,14 +869,15 @@ const GALAXY_DUST_FRAGMENT = `
   uniform float uNearOpacity;
   varying vec3 vColor;
   varying float vNear;
+  varying float vFocus;
   void main() {
     float d = length(gl_PointCoord - vec2(0.5)) * 2.0;
-    // Far: a small solid core fading out over most of the sprite (the
-    // original hazy bloom). Near: a large solid core with only a thin,
-    // crisp rim — reads as a defined, in-focus disc rather than a soft
-    // bokeh circle.
-    float edgeStart = mix(0.12, 0.68, vNear);
-    float edgeEnd = mix(0.5, 0.76, vNear);
+    // Far AND too-near: a small solid core fading out over most of the
+    // sprite (a soft bloom — the original hazy look, or a lens-blurred
+    // foreground bokeh circle). In focus (mid-near, see vFocus above):
+    // a large solid core with only a thin, crisp rim.
+    float edgeStart = mix(0.12, 0.68, vFocus);
+    float edgeEnd = mix(0.5, 0.76, vFocus);
     float shape = 1.0 - smoothstep(edgeStart, edgeEnd, d);
     float alpha = shape * mix(uFarOpacity, uNearOpacity, vNear);
     if (alpha <= 0.003) discard;
@@ -2283,8 +2295,10 @@ class App {
     const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.55, 0.7, 0.4).normalize())
     // Mostly white/pale-blue starlight (weighted via duplicate entries),
     // matching the hero video's own palette, with an occasional warm
-    // highlight rather than the planets' own saturated accent hues.
-    const tint = [0xffffff, 0xffffff, 0xcfe0ff, 0xcfe0ff, 0xffe3a3].map((c) => new THREE.Color(c))
+    // highlight and a rarer red/orange-red star (real skies have both —
+    // hot blue-white stars and cooler red giants) rather than the
+    // planets' own saturated accent hues.
+    const tint = [0xffffff, 0xffffff, 0xffffff, 0xcfe0ff, 0xcfe0ff, 0xcfe0ff, 0xffe3a3, 0xffe3a3, 0xff5a3c].map((c) => new THREE.Color(c))
     const tiers: { size: number; count: number; opacity: number }[] = [
       { size: 0.9, count: 700, opacity: 0.5 },
       { size: 1.8, count: 320, opacity: 0.62 },
@@ -2337,7 +2351,11 @@ class App {
           // band at once.
           uNearDist: { value: 25 },
           uFarDist: { value: 110 },
-          uNearBoost: { value: 2.2 },
+          // Below ~10 units a point is close enough to blur back out of
+          // focus (see vFocus in the vertex shader) instead of staying
+          // sharp indefinitely.
+          uTooNearDist: { value: 10 },
+          uNearBoost: { value: 2.8 },
           uFarOpacity: { value: tier.opacity },
           uNearOpacity: { value: 0.85 },
         },
