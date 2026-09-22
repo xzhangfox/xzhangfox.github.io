@@ -219,18 +219,37 @@ export default function ProjectPreviewModal({
             style={{ transformOrigin: 'center center' }}
             className="relative aspect-video w-full overflow-hidden rounded-[4%] bg-surface-elevated"
           >
-            <AnimatePresence mode="wait">
-              <motion.img
-                key={shot.src}
-                src={shot.src}
-                alt={shot.caption ?? project.title}
-                className="h-full w-full object-cover object-top"
-                initial={index === 0 ? false : { opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.25 }}
-              />
-            </AnimatePresence>
+            {/* A separate drag layer from the outer FLIP-morph container
+                above — dragging only ever nudges/snaps THIS element (the
+                elastic constraint pins it back to x:0 either way), while
+                the actual slide change still runs through the same
+                fade transition below the arrows/dots already use. */}
+            <motion.div
+              className={`h-full w-full ${expanded && shots.length > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
+              drag={expanded && shots.length > 1 ? 'x' : false}
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={0.6}
+              onDragEnd={(_, info) => {
+                const swipedLeft = info.offset.x < -60 || info.velocity.x < -500
+                const swipedRight = info.offset.x > 60 || info.velocity.x > 500
+                if (swipedLeft) setIndex((i) => (i + 1) % shots.length)
+                else if (swipedRight) setIndex((i) => (i - 1 + shots.length) % shots.length)
+              }}
+            >
+              <AnimatePresence mode="wait">
+                <motion.img
+                  key={shot.src}
+                  src={shot.src}
+                  alt={shot.caption ?? project.title}
+                  className="h-full w-full object-cover object-top"
+                  initial={index === 0 ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.25 }}
+                  draggable={false}
+                />
+              </AnimatePresence>
+            </motion.div>
 
             {expanded && shots.length > 1 && (
               <>
