@@ -118,6 +118,7 @@ export const projects: Project[] = [
     description:
       'A composite bubble-score gauge distills 7 percentile-ranked indicators across the Dalio, Shiller, and Minsky frameworks into one daily read — zero lookahead, fully automated, with an interactive trailing-history chart showing exactly how today’s score got there.',
     tech: ['Next.js', 'Framer Motion', 'Yahoo Finance API', 'GitHub Actions', 'Inline SVG charts'],
+    link: 'https://ai-bubble-monitor-delta.vercel.app',
     image: '/images/projects/financial-tracker/cover.png',
     gallery: [
       { src: '/images/projects/financial-tracker/cover.png', caption: 'Composite bubble score gauge' },

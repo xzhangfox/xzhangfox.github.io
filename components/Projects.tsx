@@ -8,14 +8,16 @@ import ProjectPreviewModal, { type PreviewProject } from './ProjectPreviewModal'
 import { projects } from '@/lib/data'
 import { useLanguage } from '@/lib/i18n'
 
-// Saturn keeps the original four projects; the Moon hosts Flux Path on its
-// own orbit around Earth.
-const SATURN_PROJECT_IDS = ['flux-nutrition', 'flux-career', 'flux-finance', 'financial-tracker']
+// Saturn hosts three of the four Flux apps; the Moon hosts Flux Path on
+// its own orbit around Earth; Venus hosts Flux Finance on its own.
+const SATURN_PROJECT_IDS = ['flux-nutrition', 'flux-career', 'financial-tracker']
 const MOON_PROJECT_IDS = ['flux-path']
+const VENUS_PROJECT_IDS = ['flux-finance']
 
-const PLANET_LABELS: Record<string, string> = { saturn: 'Saturn', moon: 'The Moon' }
-const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg', moon: '/textures/moon.jpg' }
-const CONTENT_PLANET_IDS = ['saturn', 'moon']
+const PLANET_LABELS: Record<string, string> = { saturn: 'Saturn', moon: 'The Moon', venus: 'Venus' }
+const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg', moon: '/textures/moon.jpg', venus: '/textures/venus.jpg' }
+// Moon first (the flagship, densest halo), then Saturn, then Venus.
+const CONTENT_PLANET_IDS = ['moon', 'saturn', 'venus']
 // Per-project real app logos, where available — falls back to a cropped
 // screenshot (project.image) otherwise.
 const PROJECT_LOGOS: Record<string, string> = {
@@ -55,6 +57,10 @@ const PLANETS: PlanetSite[] = [
     auraIntensity: 0.35,
     starRingCount: 10,
     starRingRadius: 3.2,
+    items: VENUS_PROJECT_IDS.map((id) => {
+      const p = projects.find((p) => p.id === id)!
+      return { image: p.image, color: p.color }
+    }),
   },
   {
     id: 'earth',
@@ -196,7 +202,7 @@ function PlanetBadge({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="pointer-events-auto h-8 w-8 flex-shrink-0 rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 sm:h-9 sm:w-9"
+      className="pointer-events-auto aspect-square h-6 w-6 flex-shrink-0 overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 sm:h-7 sm:w-7"
       style={{
         backgroundImage: `url(${textureUrl})`,
         backgroundSize: small ? '56%' : 'cover',
@@ -213,6 +219,7 @@ export default function Projects() {
   const projectsByPlanet: Record<string, PreviewProject[]> = {
     saturn: SATURN_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
     moon: MOON_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
+    venus: VENUS_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
   }
 
   const [openId, setOpenId] = useState<string | null>(null)
@@ -366,7 +373,9 @@ export default function Projects() {
           <FadeIn delay={0.2}>
             <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface-card border border-gold/15">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-white/40 text-xs font-mono">{t.projects.liveBadge}</span>
+              <span className="text-white/40 text-xs font-mono">
+                {activePlanetId === null ? t.projects.liveBadgeOverview : t.projects.liveBadgeEntered}
+              </span>
             </div>
           </FadeIn>
         </div>
@@ -434,9 +443,9 @@ export default function Projects() {
                   onClick={() => galleryRef.current?.leavePlanet()}
                   aria-label="Back to solar system"
                   title="Back to solar system"
-                  className="pointer-events-auto flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/50 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:text-gold sm:h-9 sm:w-9"
+                  className="pointer-events-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/50 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:text-gold sm:h-7 sm:w-7"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                     <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>

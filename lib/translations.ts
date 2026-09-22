@@ -53,7 +53,8 @@ export interface Dict {
     headingGold: string
     headingPost: string
     subDesc: string
-    liveBadge: string
+    liveBadgeOverview: string
+    liveBadgeEntered: string
     hudLabel: string
     comingSoon: string
     moreSoonTitle: string
@@ -181,7 +182,8 @@ export const translations: Record<Language, Dict> = {
       headingPost: ' Galaxy',
       subDesc:
         'AI-powered platforms built from scratch — each solving a different domain with the same design language and engineering standard.',
-      liveBadge: 'All platforms live',
+      liveBadgeOverview: 'Every planet is live — click to explore',
+      liveBadgeEntered: 'Click a craft or badge for details',
       hudLabel: 'Project Intel',
       comingSoon: 'Coming soon',
       moreSoonTitle: 'More in the works',
@@ -336,7 +338,8 @@ export const translations: Record<Language, Dict> = {
       headingGold: 'Flux',
       headingPost: ' 星系',
       subDesc: '从零构建的 AI 驱动平台 —— 各自解决不同领域的问题，却共享同一套设计语言与工程标准。',
-      liveBadge: '全部平台已上线',
+      liveBadgeOverview: '每颗星球都已上线 —— 点击探索',
+      liveBadgeEntered: '点击飞行器或图标查看详情',
       hudLabel: '项目情报',
       comingSoon: '即将上线',
       moreSoonTitle: '更多项目开发中',

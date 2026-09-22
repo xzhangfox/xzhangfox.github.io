@@ -818,6 +818,29 @@ function createOrbitRing(radius: number): THREE.LineLoop {
   return new THREE.LineLoop(geometry, material)
 }
 
+// A soft, feathered circular sprite for the galaxy backdrop's dust —
+// generated lazily (same reasoning as the star textures below) and
+// cached once. A plain radial gradient, no hard edge at all, so
+// thousands of overlapping points read as a hazy cloud rather than a
+// field of discrete dots.
+let galaxyDustTexture: THREE.CanvasTexture | null = null
+function getGalaxyDustTexture(): THREE.CanvasTexture {
+  if (galaxyDustTexture) return galaxyDustTexture
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
+  gradient.addColorStop(0, 'rgba(255,255,255,1)')
+  gradient.addColorStop(0.3, 'rgba(255,255,255,0.55)')
+  gradient.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, size, size)
+  galaxyDustTexture = new THREE.CanvasTexture(canvas)
+  return galaxyDustTexture
+}
+
 // A small 4- or 5-pointed star/sparkle sprite texture for the dreamcore
 // halo rings — generated lazily (never at module scope, `document` isn't
 // available wherever this module might get evaluated outside the
@@ -1985,6 +2008,7 @@ class App {
     this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 400)
 
     this.buildStarfield()
+    this.buildGalaxyBackdrop()
     this.buildLights()
 
     this.planets = planetSites.map((site, i) => {
@@ -2110,6 +2134,66 @@ class App {
       new THREE.PointsMaterial({ color: 0xffffff, size: 0.09, sizeAttenuation: true, transparent: true, opacity: 0.7, depthWrite: false })
     )
     this.scene.add(stars)
+  }
+
+  // A hazy, diagonal band of soft warm/cool dust behind every planet —
+  // referencing Flux Path's own painterly cosmic-dust backdrop rather
+  // than a sharp geometric effect. Deliberately understated: a soft
+  // radial-gradient sprite (no hard edges), additive blending, and a low
+  // per-tier opacity so overlapping dust blends into an ambient haze —
+  // read as atmosphere, not compete with the planets/starfield in front
+  // of it for attention.
+  buildGalaxyBackdrop() {
+    const texture = getGalaxyDustTexture()
+    // An arbitrary, fixed, non-axis-aligned tilt so the band sweeps
+    // diagonally across the sky rather than sitting flat on one axis.
+    const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.55, 0.7, 0.4).normalize())
+    const tint = [0xf0d080, 0xffe9b8, 0xc9a6ff, 0x8fd6ff].map((c) => new THREE.Color(c))
+    const tiers: { size: number; count: number; opacity: number }[] = [
+      { size: 26, count: 60, opacity: 0.12 },
+      { size: 14, count: 130, opacity: 0.16 },
+      { size: 7, count: 220, opacity: 0.22 },
+    ]
+    const v = new THREE.Vector3()
+    for (const tier of tiers) {
+      const positions = new Float32Array(tier.count * 3)
+      const colors = new Float32Array(tier.count * 3)
+      for (let i = 0; i < tier.count; i++) {
+        const theta = Math.random() * Math.PI * 2
+        const r = 95 + Math.random() * 110
+        // A roughly bell-shaped spread across the band's own thickness
+        // (sum of uniform randoms) — most dust sits near the band's own
+        // centerline, a little scatters wider, rather than a hard-edged
+        // strip.
+        const spread = (Math.random() + Math.random() + Math.random() - 1.5) * 16
+        v.set(r * Math.cos(theta), r * Math.sin(theta), spread)
+        v.applyQuaternion(bandQuat)
+        positions[i * 3] = v.x
+        positions[i * 3 + 1] = v.y
+        positions[i * 3 + 2] = v.z
+        const c = tint[Math.floor(Math.random() * tint.length)]
+        colors[i * 3] = c.r
+        colors[i * 3 + 1] = c.g
+        colors[i * 3 + 2] = c.b
+      }
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+      const points = new THREE.Points(
+        geometry,
+        new THREE.PointsMaterial({
+          size: tier.size,
+          map: texture,
+          vertexColors: true,
+          sizeAttenuation: true,
+          transparent: true,
+          opacity: tier.opacity,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        })
+      )
+      this.scene.add(points)
+    }
   }
 
   buildLights() {
