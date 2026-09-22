@@ -119,12 +119,16 @@ body {
    identically to both UV axes on a non-square plane, so CSS's own
    per-axis percentage radius (horizontal % of width, vertical % of
    height) reproduces the same elliptical corner at any box aspect ratio. */
+/* --holo-rgb ("R, G, B") is set inline per modal instance (see
+   ProjectPreviewModal) to the current PLANET's own mask color, not the
+   project's — so the border reads as an extension of whichever planet
+   the project lives on. Falls back to the original purple if unset. */
 .hologram-edge {
-  border: 1px solid rgba(190, 140, 255, 0.75);
+  border: 1px solid rgba(var(--holo-rgb, 190, 140, 255), 0.75);
   box-shadow:
-    0 0 8px 1px rgba(26, 242, 255, 0.28),
-    0 0 8px 1px rgba(255, 46, 196, 0.24),
-    inset 0 0 6px 1px rgba(190, 140, 255, 0.18);
+    0 0 8px 1px rgba(var(--holo-rgb, 190, 140, 255), 0.28),
+    0 0 8px 1px rgba(var(--holo-rgb, 190, 140, 255), 0.24),
+    inset 0 0 6px 1px rgba(var(--holo-rgb, 190, 140, 255), 0.18);
 }
 
 /* A cyan-magenta light chasing around the border ring — and ONLY the
@@ -148,8 +152,8 @@ body {
   background: conic-gradient(
     from 0deg,
     transparent 0deg,
-    rgba(26, 242, 255, 0.95) 18deg,
-    rgba(255, 46, 196, 0.95) 42deg,
+    rgba(var(--holo-rgb, 26, 242, 255), 0.95) 18deg,
+    rgba(var(--holo-rgb, 255, 46, 196), 0.5) 42deg,
     transparent 72deg,
     transparent 360deg
   );

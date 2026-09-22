@@ -19,12 +19,22 @@ export interface PreviewProject {
   color: string
 }
 
+function hexToRgb(hex: string) {
+  const n = parseInt(hex.replace('#', ''), 16)
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`
+}
+
 export default function ProjectPreviewModal({
   project,
+  planetColor,
   originRect,
   onClose,
 }: {
   project: PreviewProject
+  /** The current planet's own mask color (PlanetSite.auraColor) — the
+   *  hologram edge/chase border matches this, not the project's own
+   *  `color`, so it reads as an extension of the planet it lives on. */
+  planetColor: string
   /** The hologram screen's on-screen rect at the moment it was clicked —
    *  the gallery image (`gallery[0]`) is the exact same picture the screen
    *  was showing, so opening just moves/grows that same image into place
@@ -145,7 +155,8 @@ export default function ProjectPreviewModal({
           // unreachable) case this opens with no origin at all.
           width: originRect ? `${originRect.width}px` : 'min(600px, 100%)',
           maxWidth: 'calc(100vw - 2rem)',
-        }}
+          ['--holo-rgb' as string]: hexToRgb(planetColor),
+        } as React.CSSProperties}
         className="relative flex max-h-full flex-col overflow-hidden rounded-[4%]"
         onClick={(e) => e.stopPropagation()}
       >

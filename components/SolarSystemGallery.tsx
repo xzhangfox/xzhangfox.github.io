@@ -46,6 +46,11 @@ export interface PlanetSite {
    *  dotted boundary ring) instead of the plain 4-/5-point sprite, for a
    *  richer, more varied halo. Undefined/false = plain stars only. */
   ornateStars?: boolean
+  /** Swaps the halo ring's sprite from stars to coins (a plain or an
+   *  engraved-face variant, randomly sized and tinted gold/silver/bronze
+   *  per sprite rather than the planet's own aura color) — Venus's own
+   *  motif. Undefined/'star' = the usual star halo. */
+  starRingStyle?: 'star' | 'coin'
 }
 
 export interface SolarSystemGalleryHandle {
@@ -967,6 +972,84 @@ function getOrnateStarTexture(points: 8 | 12): THREE.CanvasTexture {
   return texture
 }
 
+// A coin sprite — Venus's halo motif (see PlanetSite.starRingStyle):
+// a milled edge, a raised face, and (for the 'ornate' variant) a small
+// engraved emblem, drawn in white/alpha like the star textures above so
+// each sprite can still be tinted per-instance in buildStarRing — there,
+// a random gold/silver/bronze tint stands in for "a different country's
+// coin" rather than a fixed planet-aura color.
+const coinTextures: Partial<Record<'plain' | 'ornate', THREE.CanvasTexture>> = {}
+function getCoinTexture(variant: 'plain' | 'ornate'): THREE.CanvasTexture {
+  const cached = coinTextures[variant]
+  if (cached) return cached
+  const size = 96
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  ctx.translate(size / 2, size / 2)
+  const outerR = size * 0.44
+
+  // Milled (reeded) edge — short radial ticks just inside the rim.
+  const ticks = variant === 'ornate' ? 40 : 22
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+  ctx.lineWidth = size * 0.012
+  for (let i = 0; i < ticks; i++) {
+    const a = (i / ticks) * Math.PI * 2
+    ctx.beginPath()
+    ctx.moveTo(Math.cos(a) * outerR * 0.9, Math.sin(a) * outerR * 0.9)
+    ctx.lineTo(Math.cos(a) * outerR, Math.sin(a) * outerR)
+    ctx.stroke()
+  }
+
+  // The coin's flat face, glowing like the star sprites so it reads
+  // against the black sky rather than as a flat cutout.
+  ctx.shadowColor = 'rgba(255,255,255,0.9)'
+  ctx.shadowBlur = size * 0.12
+  ctx.beginPath()
+  ctx.arc(0, 0, outerR * 0.88, 0, Math.PI * 2)
+  ctx.fillStyle = '#ffffff'
+  ctx.fill()
+  ctx.shadowBlur = 0
+
+  // A recessed inner rim — the raised-border look of a real coin face.
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'
+  ctx.lineWidth = size * 0.018
+  ctx.beginPath()
+  ctx.arc(0, 0, outerR * 0.74, 0, Math.PI * 2)
+  ctx.stroke()
+
+  if (variant === 'ornate') {
+    // A small radial emblem standing in for a national crest — engraved
+    // (stroked, not filled), so it still reads against the coin's own
+    // face rather than as one more flat disc.
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)'
+    ctx.lineWidth = size * 0.014
+    const rays = 8
+    for (let i = 0; i < rays; i++) {
+      const a = (i / rays) * Math.PI * 2
+      ctx.beginPath()
+      ctx.moveTo(Math.cos(a) * outerR * 0.18, Math.sin(a) * outerR * 0.18)
+      ctx.lineTo(Math.cos(a) * outerR * 0.52, Math.sin(a) * outerR * 0.52)
+      ctx.stroke()
+    }
+    ctx.beginPath()
+    ctx.arc(0, 0, outerR * 0.16, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'
+    ctx.fill()
+  } else {
+    // Plain coin — just a small center dot, no engraving.
+    ctx.beginPath()
+    ctx.arc(0, 0, outerR * 0.1, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'
+    ctx.fill()
+  }
+
+  const texture = new THREE.CanvasTexture(canvas)
+  coinTextures[variant] = texture
+  return texture
+}
+
 // A soft additive rim-glow "atmosphere" shell around a planet — the
 // standard fresnel-on-backfaces trick (bright at the grazing silhouette,
 // near-invisible face-on, and naturally hidden across the planet's own
@@ -1348,12 +1431,21 @@ class PlanetInstance {
   // (see PlanetSite.ornateStars), so the ring reads as varied rather than
   // uniformly simple or uniformly busy.
   buildStarRing(color: THREE.Color, count: number, radiusMultiplier: number, ornate?: boolean) {
+    const isCoins = this.site.starRingStyle === 'coin'
+    // Coins stand in for "a different country's currency" via a random
+    // per-sprite metal tone instead of the planet's own aura color —
+    // gold, silver, bronze, and a pale rose-gold.
+    const coinTints = [0xffd76a, 0xd6d6d6, 0xd7935a, 0xf2c98a].map((c) => new THREE.Color(c))
     for (let i = 0; i < count; i++) {
-      const useOrnate = !!ornate && Math.random() < 0.35
-      const map = useOrnate ? getOrnateStarTexture(Math.random() < 0.5 ? 8 : 12) : getStarTexture(Math.random() < 0.5 ? 4 : 5)
+      const complex = Math.random() < (isCoins ? 0.5 : ornate ? 0.35 : 0)
+      const map = isCoins
+        ? getCoinTexture(complex ? 'ornate' : 'plain')
+        : complex
+          ? getOrnateStarTexture(Math.random() < 0.5 ? 8 : 12)
+          : getStarTexture(Math.random() < 0.5 ? 4 : 5)
       const material = new THREE.SpriteMaterial({
         map,
-        color,
+        color: isCoins ? coinTints[Math.floor(Math.random() * coinTints.length)] : color,
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
@@ -1362,7 +1454,10 @@ class PlanetInstance {
       const angle = Math.random() * Math.PI * 2
       const radius = this.site.radius * radiusMultiplier * (0.85 + Math.random() * 0.3)
       const yJitter = (Math.random() - 0.5) * this.site.radius * 0.6
-      sprite.scale.setScalar(this.site.radius * (useOrnate ? 0.2 + Math.random() * 0.22 : 0.14 + Math.random() * 0.18))
+      // Coins vary more dramatically in size ("大大小小") than the stars.
+      sprite.scale.setScalar(
+        isCoins ? this.site.radius * (0.08 + Math.random() * 0.34) : this.site.radius * (complex ? 0.2 + Math.random() * 0.22 : 0.14 + Math.random() * 0.18)
+      )
       this.group.add(sprite)
       this.starRing.push({
         sprite,

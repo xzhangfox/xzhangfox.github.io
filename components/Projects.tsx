@@ -8,11 +8,19 @@ import ProjectPreviewModal, { type PreviewProject } from './ProjectPreviewModal'
 import { projects } from '@/lib/data'
 import { useLanguage } from '@/lib/i18n'
 
-// Saturn hosts three of the four Flux apps; the Moon hosts Flux Path on
-// its own orbit around Earth; Venus hosts Flux Finance on its own.
-const SATURN_PROJECT_IDS = ['flux-nutrition', 'flux-career', 'financial-tracker']
+// Saturn hosts two of the Flux apps; the Moon hosts Flux Path on its own
+// orbit around Earth; Venus hosts Flux Finance and the AI Bubble Monitor.
+const SATURN_PROJECT_IDS = ['flux-nutrition', 'flux-career']
 const MOON_PROJECT_IDS = ['flux-path']
-const VENUS_PROJECT_IDS = ['flux-finance']
+const VENUS_PROJECT_IDS = ['flux-finance', 'financial-tracker']
+
+// Reverse lookup — which planet hosts a given project, so the detail
+// modal's border can match that planet's own mask color instead of the
+// project's individual one.
+const PLANET_PROJECT_IDS: Record<string, string[]> = { saturn: SATURN_PROJECT_IDS, moon: MOON_PROJECT_IDS, venus: VENUS_PROJECT_IDS }
+const PROJECT_PLANET_ID: Record<string, string> = Object.fromEntries(
+  Object.entries(PLANET_PROJECT_IDS).flatMap(([planetId, ids]) => ids.map((id) => [id, planetId]))
+)
 
 const PLANET_LABELS: Record<string, string> = { saturn: 'Saturn', moon: 'The Moon', venus: 'Venus' }
 const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg', moon: '/textures/moon.jpg', venus: '/textures/venus.jpg' }
@@ -53,10 +61,15 @@ const PLANETS: PlanetSite[] = [
     radius: 1.5,
     orbitRadius: 14,
     orbitSpeed: 0.0012,
-    auraColor: '#c9a6ff',
+    // Swapped with Saturn's own gold (below) — Venus now carries the
+    // richer, more saturated hue.
+    auraColor: '#ffcf00',
     auraIntensity: 0.35,
     starRingCount: 10,
     starRingRadius: 3.2,
+    // Coins, not stars — sized and engraved per sprite (see
+    // buildStarRing/getCoinTexture), standing in for a currency motif.
+    starRingStyle: 'coin',
     items: VENUS_PROJECT_IDS.map((id) => {
       const p = projects.find((p) => p.id === id)!
       return { image: p.image, color: p.color }
@@ -103,10 +116,8 @@ const PLANETS: PlanetSite[] = [
     orbitSpeed: 0.0003,
     hasRing: true,
     ringTextureUrl: '/textures/saturn-ring.png',
-    // A richer, more saturated gold than the original pastel — same hue,
-    // pulled toward mid-lightness where a fully-saturated hue reads as
-    // vivid rather than washed out.
-    auraColor: '#ffcf00',
+    // Swapped with Venus's own pale violet (above).
+    auraColor: '#c9a6ff',
     auraIntensity: 0.25,
     // No star-sparkle halo here — Saturn already has its own real ring
     // and debris field, which get their own dazzling treatment directly
@@ -202,14 +213,24 @@ function PlanetBadge({
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="pointer-events-auto aspect-square h-6 w-6 flex-shrink-0 overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 sm:h-7 sm:w-7"
+      className="pointer-events-auto relative aspect-square h-6 w-6 flex-shrink-0 overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 sm:h-7 sm:w-7"
       style={{
         backgroundImage: `url(${textureUrl})`,
         backgroundSize: small ? '56%' : 'cover',
         borderColor: active ? `rgba(${rgb}, 0.9)` : `rgba(${rgb}, 0.35)`,
         boxShadow: active ? `0 0 14px rgba(${rgb}, 0.55)` : `0 0 8px rgba(${rgb}, 0.18)`,
       }}
-    />
+    >
+      {/* A planet button's own mask color, tinted over its photo texture
+          the same way SolarSystemGallery tints a planet's own diffuse
+          map — `color` blend mode carries hue/saturation only, so the
+          texture's shading still reads through it. Project badges (their
+          own vector logo, `small`) skip this; they already read fine in
+          their own flat brand color. */}
+      {!small && color && (
+        <span className="pointer-events-none absolute inset-0" style={{ backgroundColor: color, mixBlendMode: 'color' }} />
+      )}
+    </button>
   )
 }
 
@@ -563,7 +584,12 @@ export default function Projects() {
 
       <AnimatePresence>
         {openProject && (
-          <ProjectPreviewModal project={openProject} originRect={openOriginRect} onClose={closeActiveProject} />
+          <ProjectPreviewModal
+            project={openProject}
+            planetColor={PLANET_COLORS[PROJECT_PLANET_ID[openProject.id]] ?? openProject.color}
+            originRect={openOriginRect}
+            onClose={closeActiveProject}
+          />
         )}
       </AnimatePresence>
     </section>
