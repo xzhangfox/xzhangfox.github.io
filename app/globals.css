@@ -109,47 +109,53 @@ body {
 
 /* Hologram edge — a persistent cyan-magenta neon border treatment for the
    project preview modal's morphing container, matching the WebGL
-   hologram screen's own edge (see SolarSystemGallery's SCREEN_FRAGMENT: a
-   thin core line with a soft glow bleeding both directions from it, not a
-   crisp CSS border, now tinted cyan-magenta — cyberpunk duotone — rather
-   than flat white) so there's no abrupt style swap when the WebGL scene
-   hands off to this DOM element, and it stays this way through the fully
-   expanded state. CSS can't cheaply replicate the shader's own animated
-   chase around the perimeter, so this approximates it with a violet core
-   line (cyan/magenta's blend) plus two separately-tinted glows. This is a
-   separate element from the image/content beneath it, so its flicker
-   animation only ever touches the edge — the content never dims with it.
-   The border-radius that goes with this (`rounded-[4%]` on the elements
-   using it) is likewise chosen to match the shader exactly: `uBorderRadius`
-   is applied identically to both UV axes on a non-square plane, so CSS's
-   own per-axis percentage radius (horizontal % of width, vertical % of
-   height) reproduces the same elliptical corner the shader draws, at any
-   box aspect ratio. */
+   hologram screen's own edge color so there's no abrupt style swap when
+   the WebGL scene hands off to this DOM element. Steady, not flickering —
+   the border color/glow and everything behind it (the image, the text)
+   stay completely constant; the only motion is the light chasing around
+   the ring itself (`.hologram-chase` below). The border-radius that goes
+   with this (`rounded-[4%]` on the elements using it) is chosen to match
+   the WebGL screen's own shader exactly: its `uBorderRadius` is applied
+   identically to both UV axes on a non-square plane, so CSS's own
+   per-axis percentage radius (horizontal % of width, vertical % of
+   height) reproduces the same elliptical corner at any box aspect ratio. */
 .hologram-edge {
-  border: 1px solid rgba(190, 140, 255, 0.82);
+  border: 1px solid rgba(190, 140, 255, 0.75);
   box-shadow:
-    0 0 8px 1px rgba(26, 242, 255, 0.32),
-    0 0 8px 1px rgba(255, 46, 196, 0.28),
-    inset 0 0 7px 1px rgba(190, 140, 255, 0.24);
-  filter: url(#hologram-fray);
-  animation: hologram-flicker 3.4s infinite;
+    0 0 8px 1px rgba(26, 242, 255, 0.28),
+    0 0 8px 1px rgba(255, 46, 196, 0.24),
+    inset 0 0 6px 1px rgba(190, 140, 255, 0.18);
 }
 
-@keyframes hologram-flicker {
-  0%, 19%, 21%, 54%, 56%, 100% { opacity: 1; }
-  20%, 55% { opacity: 0.55; }
-  76% { opacity: 0.82; }
+/* A cyan-magenta light chasing around the border ring — and ONLY the
+   ring: the mask below cuts the element down to just its own padding
+   (border) thickness, content-box excluded, so nothing behind it (the
+   image, the text) is ever touched, dimmed, or swept. The gradient
+   itself never changes; only the oversized pseudo-element carrying it
+   rotates, which every browser interpolates natively as a plain
+   `transform`, no flicker or noise/turbulence involved. */
+.hologram-chase {
+  overflow: hidden;
+  padding: 2px;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.hologram-chase::before {
+  content: '';
+  position: absolute;
+  inset: -75%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(26, 242, 255, 0.95) 18deg,
+    rgba(255, 46, 196, 0.95) 42deg,
+    transparent 72deg,
+    transparent 360deg
+  );
+  animation: hologram-chase-spin 3.2s linear infinite;
 }
 
-.hologram-scan {
-  top: -16%;
-  height: 14%;
-  background: linear-gradient(to bottom, transparent, rgba(26, 242, 255, 0.38), rgba(255, 46, 196, 0.38), transparent);
-  mix-blend-mode: screen;
-  animation: hologram-scan-sweep 3.2s linear infinite;
-}
-
-@keyframes hologram-scan-sweep {
-  0% { top: -16%; }
-  100% { top: 116%; }
+@keyframes hologram-chase-spin {
+  to { transform: rotate(360deg); }
 }

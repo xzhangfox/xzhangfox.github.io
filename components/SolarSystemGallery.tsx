@@ -232,16 +232,21 @@ const SELF_SPIN_SPEED = 0.0018
 // orbiting, not N craft parked. ~65s for a full revolution at 60fps: slow
 // and ambient, never fighting for attention with a focused item.
 const IDLE_ORBIT_SPEED = 0.00026
-// How close (real 3D distance to the camera, world units at viewScale=1)
-// an idling craft must swing before it's worth a discoverability label —
-// verified numerically to light up any one of Saturn's 4 items ~45% of
-// the time (never two at once), reading as a brief close pass rather
-// than a constant fixture. Camera sits ~24 units out; an idling craft's
-// own closest approach to it (not a fixed ring position — the planet
-// keeps slowly self-spinning even while entered) swings between ~18 and
-// ~30 depending on where it is in its orbit, so 18.5 sits just above
-// that minimum.
-const FLYBY_LABEL_DISTANCE = 18.5
+// How close an idling craft must swing, relative to its OWN siblings'
+// current near/far spread, before it's worth a discoverability label —
+// the closest slice of that spread, read fresh every call rather than
+// against one fixed absolute distance. An absolute cutoff was tuned
+// against a single fixed camera angle; now that the camera itself tilts
+// with scroll (see `pitch`), the ring's own near/far distance spread to
+// it shrinks a lot at a near-overhead pitch (every craft reads as
+// similarly "close") and widens again near level — a fixed number either
+// never fired (top-down, nothing ever dipped under it) or fired almost
+// constantly (level). This self-calibrates to whatever spread actually
+// exists this frame, so a label always tracks whichever craft is
+// nearest right now, at any tilt — a small fraction keeps that to
+// essentially one at a time (two only when a symmetric pair briefly
+// ties), rather than several siblings lighting up together.
+const FLYBY_LABEL_FRACTION = 0.12
 
 const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.6
@@ -1902,6 +1907,7 @@ class App {
   raycaster = new THREE.Raycaster()
   pointerNdc = new THREE.Vector2()
   _screenRectCorner = new THREE.Vector3()
+  _flybyDistScratch: number[] = []
 
   planets: PlanetInstance[] = []
   planetsById = new Map<string, PlanetInstance>()
@@ -2242,23 +2248,47 @@ class App {
     return { top: minY, left: minX, width: maxX - minX, height: maxY - minY }
   }
 
-  // Idling craft (nothing selected) currently close enough to the camera
-  // to be worth a discoverability label, projected to viewport pixels.
-  // Empty the instant anything's selected — the flying craft's own label
-  // hides too then, not just the others, matching "hide once you've
-  // clicked into the preview."
+  // Idling craft (nothing selected) currently close enough to the camera,
+  // relative to its own siblings' current spread (see
+  // FLYBY_LABEL_FRACTION), to be worth a discoverability label —
+  // projected to viewport pixels. Empty the instant anything's selected —
+  // the flying craft's own label hides too then, not just the others,
+  // matching "hide once you've clicked into the preview."
   getFlybyLabels(): { index: number; x: number; y: number }[] {
     if (this.viewMode !== 'planet' || !this.focusedPlanet || this.focusedPlanet.anySelected) return []
     const planet = this.focusedPlanet
     const rect = this.container.getBoundingClientRect()
-    const threshold = FLYBY_LABEL_DISTANCE * planet.viewScale
     const out: { index: number; x: number; y: number }[] = []
+
+    // Pass 1: every visible craft's current distance to the camera (a
+    // reused scratch array/vector, not a fresh allocation per call — this
+    // runs every frame from a caller-owned rAF loop).
+    const dists = this._flybyDistScratch
+    dists.length = 0
+    let minD = Infinity
+    let maxD = -Infinity
     for (let i = 0; i < planet.count; i++) {
       const craft = planet.crafts[i]
-      if (!craft.visible) continue
+      if (!craft.visible) {
+        dists.push(Infinity)
+        continue
+      }
       craft.getWorldPosition(this._screenRectCorner)
-      const dist = this._screenRectCorner.distanceTo(this.camera.position)
-      if (dist >= threshold) continue
+      const d = this._screenRectCorner.distanceTo(this.camera.position)
+      dists.push(d)
+      minD = Math.min(minD, d)
+      maxD = Math.max(maxD, d)
+    }
+    if (!Number.isFinite(minD)) return out
+    const span = Math.max(maxD - minD, 0.001)
+
+    // Pass 2: only the craft within the closest fraction of THIS frame's
+    // own spread get projected and labeled.
+    for (let i = 0; i < planet.count; i++) {
+      const d = dists[i]
+      if (!Number.isFinite(d) || (d - minD) / span > FLYBY_LABEL_FRACTION) continue
+      const craft = planet.crafts[i]
+      craft.getWorldPosition(this._screenRectCorner)
       const ndc = this._screenRectCorner.project(this.camera)
       if (ndc.z > 1) continue
       out.push({

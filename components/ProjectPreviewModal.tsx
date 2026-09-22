@@ -41,7 +41,7 @@ export default function ProjectPreviewModal({
   // (to its natural resting spot inside the card) and the outer card
   // itself (to its own full resting size). Both start from the exact same
   // rect and run the same transition, so what reads as "the hologram
-  // screen's own frayed edge" (carried by the outer card, not the image —
+  // screen's own neon edge" (carried by the outer card, not the image —
   // see `hologram-edge` below) is the thing that visibly deforms into the
   // detail page's outermost border, rather than a plain border appearing
   // separately once the image finishes. Phase 2 (`expanded`) reveals
@@ -126,27 +126,6 @@ export default function ProjectPreviewModal({
     >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
 
-      {/* Turbulence filter that gives the hologram-edge overlay below its
-          torn/frayed silhouette — a DOM analogue of the WebGL screen's
-          per-pixel noise-perturbed SDF border. Kept subtle (a small
-          displacement scale) since the shader's own fray is a fine grain
-          right at the line, not a coarse jitter — a heavier displacement
-          here would read as a different, chunkier effect instead of the
-          same one. The SMIL <animate> steps the displacement in discrete
-          jumps (calcMode="discrete") to echo the shader's
-          floor(uTime * rate) coarse/fine noise crawl rather than a smooth
-          wobble. */}
-      <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden="true">
-        <defs>
-          <filter id="hologram-fray" x="-20%" y="-20%" width="140%" height="140%">
-            <feTurbulence type="fractalNoise" baseFrequency="0.9 0.7" numOctaves="2" seed="7" result="noise" />
-            <feDisplacementMap in="SourceGraphic" in2="noise" scale="0.9" xChannelSelector="R" yChannelSelector="G">
-              <animate attributeName="scale" values="0.6;1.1;0.5;0.9;0.6" dur="1.8s" repeatCount="indefinite" calcMode="discrete" />
-            </feDisplacementMap>
-          </filter>
-        </defs>
-      </svg>
-
       <motion.div
         ref={cardRef}
         initial={false}
@@ -173,11 +152,13 @@ export default function ProjectPreviewModal({
         {/* Card chrome fill — deferred until the image has fully arrived,
             so the opening read is "the preview itself grows," not "a card
             appears with an image inside it." The actual visible border is
-            `hologram-edge` below, not a plain CSS border here: it's the
-            same frayed, laser-white edge treatment the WebGL hologram
-            screen had, carried by THIS outer container's own FLIP so it
-            visibly deforms from the thumbnail's edge into the detail
-            page's outermost border rather than swapping to a new one. */}
+            `hologram-edge`/`hologram-chase` below, not a plain CSS border
+            here: the same neon edge treatment the WebGL hologram screen
+            had, carried by THIS outer container's own FLIP so it visibly
+            deforms from the thumbnail's edge into the detail page's
+            outermost border rather than swapping to a new one. Both are
+            steady — no flicker, no noise/turbulence — and confined to the
+            border's own ring, so the image/text behind them never moves. */}
         <motion.div
           className="pointer-events-none absolute inset-0 rounded-[4%] bg-[#0E0E0E]"
           initial={{ opacity: originRect ? 0 : 1 }}
@@ -192,7 +173,7 @@ export default function ProjectPreviewModal({
           style={{ background: `radial-gradient(ellipse 80% 50% at 50% 0%, ${project.color}14 0%, transparent 70%)` }}
         />
         <div className="pointer-events-none absolute inset-0 rounded-[4%] hologram-edge" />
-        <div className="pointer-events-none absolute inset-x-0 hologram-scan" />
+        <div className="pointer-events-none absolute inset-0 rounded-[4%] hologram-chase" />
 
         <button
           onClick={onClose}
