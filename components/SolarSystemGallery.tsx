@@ -2267,26 +2267,28 @@ class App {
     this.scene.add(stars)
   }
 
-  // A hazy, diagonal band of soft warm/cool dust behind every planet —
-  // referencing Flux Path's own painterly cosmic-dust backdrop rather
-  // than a sharp geometric effect. Deliberately understated at a
-  // distance (see GALAXY_DUST_FRAGMENT's far-state falloff/opacity), but
-  // reactive to the camera: the scroll-driven tilt sweeps different
-  // parts of this same fixed band close to the camera, and GALAXY_DUST_
-  // VERTEX/FRAGMENT grow and sharpen whatever's currently near it, so it
-  // reads as the nebula itself drifting close rather than a flat backdrop.
+  // A diagonal band of fine starlight behind every planet — echoing the
+  // hero section's own background video (a dense, mostly white/blue-
+  // white starfield with its own faint Milky Way band and a couple of
+  // brighter warm highlights), so the two sections read as the same sky
+  // rather than unrelated effects. Many small points rather than a few
+  // big soft ones, understated at a distance (see GALAXY_DUST_FRAGMENT's
+  // far-state falloff/opacity), but reactive to the camera: the scroll-
+  // driven tilt sweeps different parts of this same fixed band close to
+  // the camera, and GALAXY_DUST_VERTEX/FRAGMENT grow and sharpen
+  // whatever's currently near it, like a star swelling as it passes.
   buildGalaxyBackdrop() {
     // An arbitrary, fixed, non-axis-aligned tilt so the band sweeps
     // diagonally across the sky rather than sitting flat on one axis.
     const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.55, 0.7, 0.4).normalize())
-    // Two closely-related warm tones, not four — enough variation to
-    // read as dust rather than a flat wash, without competing with the
-    // planets' own (much more saturated) accent colors elsewhere in the UI.
-    const tint = [0xf0d8a8, 0xd9c9a0].map((c) => new THREE.Color(c))
+    // Mostly white/pale-blue starlight (weighted via duplicate entries),
+    // matching the hero video's own palette, with an occasional warm
+    // highlight rather than the planets' own saturated accent hues.
+    const tint = [0xffffff, 0xffffff, 0xcfe0ff, 0xcfe0ff, 0xffe3a3].map((c) => new THREE.Color(c))
     const tiers: { size: number; count: number; opacity: number }[] = [
-      { size: 26, count: 60, opacity: 0.12 },
-      { size: 14, count: 130, opacity: 0.16 },
-      { size: 7, count: 220, opacity: 0.22 },
+      { size: 0.9, count: 700, opacity: 0.5 },
+      { size: 1.8, count: 320, opacity: 0.62 },
+      { size: 3.6, count: 40, opacity: 0.8 },
     ]
     // Matches THREE.PointsMaterial's own (undocumented, no-FOV-term)
     // sizeAttenuation formula exactly — `size * pixelRatio * (height*0.5
