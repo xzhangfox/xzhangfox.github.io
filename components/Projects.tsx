@@ -116,8 +116,9 @@ const PLANETS: PlanetSite[] = [
     orbitSpeed: 0.0003,
     hasRing: true,
     ringTextureUrl: '/textures/saturn-ring.png',
-    // Swapped with Venus's own pale violet (above).
-    auraColor: '#c9a6ff',
+    // Swapped with the Moon's own fluorescent yellow (below) — Saturn now
+    // carries that punchier hue, the Moon carries Saturn's former violet.
+    auraColor: '#fff44f',
     auraIntensity: 0.25,
     // No star-sparkle halo here — Saturn already has its own real ring
     // and debris field, which get their own dazzling treatment directly
@@ -156,11 +157,11 @@ const PLANETS: PlanetSite[] = [
     orbitRadius: 2.3,
     orbitSpeed: 0.01,
     orbitParent: 'earth',
-    // The flagship example: bright fluorescent yellow with the densest,
-    // most prominent star-motif halo of any planet — a third of its stars
-    // are the ornate embroidered-medallion sprite rather than the plain
-    // 4-/5-point one, for a richer, more varied field.
-    auraColor: '#fff44f',
+    // The flagship example: densest, most prominent star-motif halo of any
+    // planet — a third of its stars are the ornate embroidered-medallion
+    // sprite rather than the plain 4-/5-point one, for a richer, more
+    // varied field. Color swapped with Saturn's own pale violet (above).
+    auraColor: '#c9a6ff',
     auraIntensity: 0.55,
     starRingCount: 28,
     starRingRadius: 2.8,
@@ -179,6 +180,15 @@ const PLANETS: PlanetSite[] = [
 const PLANET_COLORS: Record<string, string> = Object.fromEntries(
   PLANETS.filter((p) => p.auraColor).map((p) => [p.id, p.auraColor as string])
 )
+// Same per-planet aura strength the 3D scene itself uses (see
+// PlanetInstance's `mat.color = white.lerp(auraColor, intensity)` in
+// SolarSystemGallery) — threaded into the badge below so its own tint
+// overlay lands at the same strength as that planet's real diffuse wash,
+// rather than one flat blend for every planet regardless of how subtly or
+// strongly tinted its actual sphere is.
+const PLANET_INTENSITIES: Record<string, number> = Object.fromEntries(
+  PLANETS.filter((p) => p.auraColor).map((p) => [p.id, p.auraIntensity ?? 0.35])
+)
 
 function hexToRgb(hex: string) {
   const n = parseInt(hex.replace('#', ''), 16)
@@ -192,6 +202,8 @@ function PlanetBadge({
   onClick,
   small,
   color,
+  intensity,
+  ring,
 }: {
   textureUrl: string
   label: string
@@ -205,32 +217,68 @@ function PlanetBadge({
   /** This badge's own planet/project accent color — falls back to gold
    *  when unset (e.g. the Sun, which has no aura). */
   color?: string
+  /** This planet's own aura strength (see PLANET_INTENSITIES) — how
+   *  strongly the tint overlay below is mixed in. Defaults to the same
+   *  0.35 the 3D scene falls back to. */
+  intensity?: number
+  /** Saturn's own motif: a thin tilted ring glyph behind the circular
+   *  photo, echoing its real 3D ring since the sphere texture alone
+   *  (cropped to a circle here) can't show it. */
+  ring?: boolean
 }) {
   const rgb = hexToRgb(color ?? '#C9A84C')
+  // Same blend the 3D scene's own material uses — lerping the surface
+  // color toward the aura hue by this fraction (see PlanetInstance's
+  // `mat.color = white.lerp(auraColor, intensity)`) — rather than a CSS
+  // `color` blend mode, which replaces hue/saturation outright and reads
+  // very differently from that soft diffuse wash.
+  const tintAlpha = Math.min((intensity ?? 0.35) * 1.3, 0.75)
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      className="pointer-events-auto relative aspect-square h-6 w-6 flex-shrink-0 overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 sm:h-7 sm:w-7"
-      style={{
-        backgroundImage: `url(${textureUrl})`,
-        backgroundSize: small ? '56%' : 'cover',
-        borderColor: active ? `rgba(${rgb}, 0.9)` : `rgba(${rgb}, 0.35)`,
-        boxShadow: active ? `0 0 14px rgba(${rgb}, 0.55)` : `0 0 8px rgba(${rgb}, 0.18)`,
-      }}
-    >
-      {/* A planet button's own mask color, tinted over its photo texture
-          the same way SolarSystemGallery tints a planet's own diffuse
-          map — `color` blend mode carries hue/saturation only, so the
-          texture's shading still reads through it. Project badges (their
-          own vector logo, `small`) skip this; they already read fine in
-          their own flat brand color. */}
-      {!small && color && (
-        <span className="pointer-events-none absolute inset-0" style={{ backgroundColor: color, mixBlendMode: 'color' }} />
+    <span className="relative inline-flex h-6 w-6 flex-shrink-0 sm:h-7 sm:w-7">
+      {ring && (
+        <svg
+          viewBox="0 0 100 100"
+          aria-hidden
+          className="pointer-events-none absolute -inset-y-[6%] -inset-x-[35%]"
+        >
+          <ellipse
+            cx="50"
+            cy="50"
+            rx="49"
+            ry="16"
+            transform="rotate(-24 50 50)"
+            fill="none"
+            stroke="#e4cfa0"
+            strokeWidth="4"
+            opacity="0.85"
+          />
+        </svg>
       )}
-    </button>
+      <button
+        type="button"
+        onClick={onClick}
+        title={label}
+        aria-label={label}
+        className="pointer-events-auto relative aspect-square h-full w-full overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300"
+        style={{
+          backgroundImage: `url(${textureUrl})`,
+          backgroundSize: small ? '56%' : 'cover',
+          borderColor: active ? `rgba(${rgb}, 0.9)` : `rgba(${rgb}, 0.35)`,
+          boxShadow: active ? `0 0 14px rgba(${rgb}, 0.55)` : `0 0 8px rgba(${rgb}, 0.18)`,
+        }}
+      >
+        {/* A planet button's own mask color, tinted over its photo texture
+            the same way SolarSystemGallery tints a planet's own diffuse
+            map — a plain alpha wash (not a `color` blend mode) so it
+            lerps toward the hue exactly like that material does, rather
+            than replacing hue/saturation outright. Project badges (their
+            own vector logo, `small`) skip this; they already read fine in
+            their own flat brand color. */}
+        {!small && color && (
+          <span className="pointer-events-none absolute inset-0" style={{ backgroundColor: color, opacity: tintAlpha }} />
+        )}
+      </button>
+    </span>
   )
 }
 
@@ -446,6 +494,8 @@ export default function Projects() {
                     textureUrl={PLANET_TEXTURES[id]}
                     label={PLANET_LABELS[id]}
                     color={PLANET_COLORS[id]}
+                    intensity={PLANET_INTENSITIES[id]}
+                    ring={id === 'saturn'}
                     onClick={() => galleryRef.current?.enterPlanet(id)}
                   />
                 ))}
