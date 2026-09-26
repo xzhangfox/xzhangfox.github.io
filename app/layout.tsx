@@ -17,12 +17,12 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Xi Zhang — Full-Stack Data Scientist',
-  description: 'Full-Stack Data Scientist specializing in AI systems, RAG architecture, LLM orchestration, and scalable data platforms. Based in Irvine, CA.',
-  keywords: ['Data Scientist', 'AI Engineer', 'Full-Stack', 'RAG', 'LLM', 'React', 'Python'],
+  title: 'Xi Zhang — AI Engineer',
+  description: 'AI Engineer specializing in AI systems, RAG architecture, LLM orchestration, and scalable data platforms. Based in Irvine, CA.',
+  keywords: ['AI Engineer', 'LLM Engineer', 'Data Scientist', 'Full-Stack', 'RAG', 'LLM', 'React', 'Python'],
   authors: [{ name: 'Xi Zhang' }],
   openGraph: {
-    title: 'Xi Zhang — Full-Stack Data Scientist',
+    title: 'Xi Zhang — AI Engineer',
     description: 'Building AI systems that bridge intelligence with enterprise-grade platforms.',
     type: 'website',
   },
