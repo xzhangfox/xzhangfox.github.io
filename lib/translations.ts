@@ -100,7 +100,7 @@ export const translations: Record<Language, Dict> = {
     },
     hero: {
       badge: 'Irvine, CA · Available for opportunities',
-      titles: ['Full-Stack Data Scientist', 'AI Systems Engineer', 'LLM Platform Architect', 'Full-Stack Data Scientist'],
+      titles: ['AI Engineer', 'LLM Systems Engineer', 'Full-Stack AI Builder', 'AI Engineer'],
       description:
         'Building AI systems that bridge intelligence with enterprise-grade platforms — from RAG pipelines to full-stack products that scale.',
       viewProjects: 'View Projects',
@@ -109,7 +109,7 @@ export const translations: Record<Language, Dict> = {
     },
     about: {
       sectionLabel: '01 · About',
-      title: 'Full-Stack Data Scientist',
+      title: 'AI Engineer',
       headingPre: 'Where ',
       headingGold: 'artificial intelligence',
       headingMid: ' meets ',
@@ -124,7 +124,7 @@ export const translations: Record<Language, Dict> = {
       stats: [
         { value: '5+', label: 'Years Experience', sub: 'at Stout' },
         { value: '5', label: 'AI Platforms', sub: 'Built & Shipped' },
-        { value: '∞', label: 'Tokens Processed', sub: 'in production' },
+        { value: '95K', label: 'Token Context Budget', sub: 'production RAG' },
       ],
     },
     experience: {
@@ -261,7 +261,7 @@ export const translations: Record<Language, Dict> = {
     },
     hero: {
       badge: '美国尔湾 · 欢迎交流合作机会',
-      titles: ['全栈数据科学家', 'AI 系统工程师', 'LLM 平台架构师', '全栈数据科学家'],
+      titles: ['AI 工程师', 'LLM 系统工程师', '全栈 AI 开发者', 'AI 工程师'],
       description: '构建连接智能与企业级平台的 AI 系统 —— 从 RAG 检索增强管道到可扩展的全栈产品。',
       viewProjects: '查看项目',
       getInTouch: '联系我',
@@ -269,7 +269,7 @@ export const translations: Record<Language, Dict> = {
     },
     about: {
       sectionLabel: '01 · 关于我',
-      title: '全栈数据科学家',
+      title: 'AI 工程师',
       headingPre: '',
       headingGold: '人工智能',
       headingMid: ' 与 ',
@@ -282,7 +282,7 @@ export const translations: Record<Language, Dict> = {
       stats: [
         { value: '5+', label: '工作年限', sub: '就职于 Stout' },
         { value: '5', label: 'AI 平台', sub: '已构建并上线' },
-        { value: '∞', label: '处理 Token 数', sub: '生产环境中' },
+        { value: '9.5万', label: 'Token 上下文预算', sub: '生产级 RAG' },
       ],
     },
     experience: {

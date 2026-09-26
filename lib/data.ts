@@ -1,6 +1,6 @@
 export const personalInfo = {
   name: 'Xi Zhang',
-  title: 'Full-Stack Data Scientist',
+  title: 'AI Engineer',
   location: 'Irvine, CA',
   email: 'xzhangfox@gmail.com',
   phone: '(619) 408-8347',
