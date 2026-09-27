@@ -813,15 +813,71 @@ function createLaser(): THREE.Mesh {
   return mesh
 }
 
-function createOrbitRing(radius: number): THREE.LineLoop {
-  const segments = 160
-  const points: THREE.Vector3[] = []
+// Orbit path: a faint dash-dot HUD ring, plus a comet-tail glow trailing
+// the planet itself (uHead = the planet's current angle in the ring's own
+// frame, see PlanetInstance.updateOrbitTrail), tinted toward the planet's
+// own aura hue.
+const ORBIT_VERTEX = `
+  attribute float aAngle;
+  varying float vAngle;
+  void main() {
+    vAngle = aAngle;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+const ORBIT_FRAGMENT = `
+  uniform float uHead;
+  uniform float uDashes;
+  uniform vec3 uBase;
+  uniform vec3 uTrail;
+  // 1 while rendering the bloom pass (see App.renderBloom): only the tail
+  // glows there — bloomed, the dashes smear into wide hazy bands.
+  uniform float uGlowPass;
+  varying float vAngle;
+  const float TAU = 6.28318530718;
+  void main() {
+    // 0 right behind the planet, rising to 1 just ahead of it.
+    float behind = fract((uHead - vAngle) / TAU);
+    float tail = pow(max(0.0, 1.0 - behind / 0.42), 2.2);
+    float nose = smoothstep(0.992, 1.0, behind);
+    // Long dash + dot, repeating uDashes times around the ring.
+    float u = fract(vAngle / TAU * uDashes);
+    float dash = step(u, 0.55) + step(0.72, u) * step(u, 0.78);
+    vec3 color = uBase * dash * 0.2 * (1.0 - uGlowPass) + uTrail * (tail + nose) * mix(0.95, 0.5, uGlowPass);
+    gl_FragColor = vec4(color, 1.0);
+  }
+`
+
+function createOrbitRing(radius: number, trailColor: THREE.Color): THREE.LineLoop {
+  // Enough segments that the dash pattern and tail gradient stay smooth
+  // on the outer (largest) rings.
+  const segments = 480
+  const positions = new Float32Array((segments + 1) * 3)
+  const angles = new Float32Array(segments + 1)
   for (let i = 0; i <= segments; i++) {
     const a = (i / segments) * Math.PI * 2
-    points.push(new THREE.Vector3(radius * Math.cos(a), 0, radius * Math.sin(a)))
+    positions.set([radius * Math.cos(a), 0, radius * Math.sin(a)], i * 3)
+    angles[i] = a
   }
-  const geometry = new THREE.BufferGeometry().setFromPoints(points)
-  const material = new THREE.LineBasicMaterial({ color: 0xc9a84c, transparent: true, opacity: 0.32 })
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('aAngle', new THREE.BufferAttribute(angles, 1))
+  const material = new THREE.ShaderMaterial({
+    vertexShader: ORBIT_VERTEX,
+    fragmentShader: ORBIT_FRAGMENT,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uHead: { value: 0 },
+      // Roughly constant dash length regardless of ring size.
+      uDashes: { value: Math.max(12, Math.round(radius * 2.2)) },
+      uBase: { value: new THREE.Color(0xc9a84c) },
+      uTrail: { value: trailColor },
+      uGlowPass: { value: 0 },
+    },
+  })
   return new THREE.LineLoop(geometry, material)
 }
 
@@ -1392,7 +1448,9 @@ class PlanetInstance {
     }
 
     if (site.orbitRadius > 0) {
-      this.orbitLine = createOrbitRing(site.orbitRadius)
+      const trail = new THREE.Color(0xc9a84c)
+      if (site.auraColor) trail.lerp(new THREE.Color(site.auraColor), 0.6)
+      this.orbitLine = createOrbitRing(site.orbitRadius, trail)
       if (site.orbitParent) {
         // Parented at construction time by the App once every instance
         // exists (see App constructor) so it can track a moving parent
@@ -1669,6 +1727,14 @@ class PlanetInstance {
   // Hides the planet itself (mesh/ring/debris, all children of `group`) and
   // its orbit line — used so entering one planet hides every other one
   // (including, once close up, its own now-enormous-looking orbit ring).
+  /** Points the orbit's comet tail at this planet. `parentSpin` is the
+   *  orbit parent group's own Y rotation (the Moon's ring is parented to
+   *  Earth's spinning group), which offsets the ring's local frame. */
+  updateOrbitTrail(parentSpin: number) {
+    if (!this.orbitLine) return
+    ;(this.orbitLine.material as THREE.ShaderMaterial).uniforms.uHead.value = this.orbitAngle + parentSpin
+  }
+
   setSceneVisible(visible: boolean) {
     this.group.visible = visible
     if (this.orbitLine) this.orbitLine.visible = visible
@@ -2693,12 +2759,14 @@ class App {
     // (layer-filtered) render plus a mip blur chain every frame.
     if (window.matchMedia('(pointer: coarse)').matches) return
 
-    // What glows: the core (tagged in AICore) and the craft lasers. Planet
+    // What glows: the core (tagged in AICore), orbit comet tails and the
+    // craft lasers. Planet
     // rim auras and halo-ring stars don't (bloomed, auras wash planets out
     // to pastel and the star sprites smear into soft squares), and neither
     // do the hologram screens or their halos — bloom over a project
     // screenshot just smears it.
     for (const p of this.planets) {
+      p.orbitLine?.layers.enable(BLOOM_LAYER)
       for (const l of p.lasers) l.layers.enable(BLOOM_LAYER)
       if (p.mesh.visible) this.bloomOccluders.push(p.mesh)
       this.bloomOccluders.push(...p.screens)
@@ -2730,6 +2798,12 @@ class App {
     )
   }
 
+  setOrbitGlowPass(v: number) {
+    for (const p of this.planets) {
+      if (p.orbitLine) (p.orbitLine.material as THREE.ShaderMaterial).uniforms.uGlowPass.value = v
+    }
+  }
+
   // Renders only BLOOM_LAYER objects (occluders swapped to flat black) into a
   // half-res target, blurs it with UnrealBloomPass, then adds just the blur
   // on top of the already-rendered canvas.
@@ -2742,11 +2816,13 @@ class App {
       this._occluderMaterials.push(m.material)
       m.material = this._blackMaterial
     }
+    this.setOrbitGlowPass(1)
     this.camera.layers.set(BLOOM_LAYER)
     r.setRenderTarget(this.bloomTarget)
     r.clear()
     r.render(this.scene, this.camera)
     this.camera.layers.set(0)
+    this.setOrbitGlowPass(0)
     this.bloomOccluders.forEach((m, i) => (m.material = this._occluderMaterials[i]))
 
     this.bloomPass.render(r, null as unknown as THREE.WebGLRenderTarget, this.bloomTarget, 0, false)
@@ -3086,8 +3162,9 @@ class App {
     this.updateOverviewCamera()
 
     for (const p of this.planets) {
-      const parentPos = p.site.orbitParent ? this.planetsById.get(p.site.orbitParent)!.group.position : ORIGIN
-      p.advanceOrbit(parentPos, this.time)
+      const parent = p.site.orbitParent ? this.planetsById.get(p.site.orbitParent)! : null
+      p.advanceOrbit(parent ? parent.group.position : ORIGIN, this.time)
+      p.updateOrbitTrail(parent ? parent.group.rotation.y : 0)
     }
 
     if (this.viewMode === 'entering' || this.viewMode === 'leaving') {
