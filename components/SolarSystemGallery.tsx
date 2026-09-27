@@ -2123,6 +2123,175 @@ interface CameraTransition {
   toPlanet: PlanetInstance | null // null when leaving (target is the static overview)
 }
 
+// --- Milky Way ---------------------------------------------------------------
+// A procedural Milky Way painted on a sky sphere that follows the camera (so
+// it sits at infinity). The expensive part — several octaves of 3D noise
+// per pixel — runs once at startup into an equirectangular texture (see
+// App.buildMilkyWay); every frame after that is a single texture lookup,
+// which keeps it cheap on phones.
+
+// The galactic plane: the bulge sits low in front of the default view and
+// the band crosses the frame on a diagonal as the scroll tilt sweeps the
+// camera. The galaxy-dust band (buildGalaxyBackdrop) shares this plane so
+// the near dust and the far glow read as one galaxy.
+const MW_BULGE = new THREE.Vector3(0.25, -0.55, -0.8).normalize()
+const MW_NORMAL = new THREE.Vector3().crossVectors(MW_BULGE, new THREE.Vector3(1, 0.35, 0)).normalize()
+const MW_SIDE = new THREE.Vector3().crossVectors(MW_NORMAL, MW_BULGE).normalize()
+/** Inside the camera's far plane (400). */
+const SKY_RADIUS = 360
+
+const MW_BAKE_VERTEX = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`
+
+// Equirect UV -> direction -> galaxy color. Written in linear light.
+const MW_BAKE_FRAGMENT = `
+  uniform vec3 uBulge;
+  uniform vec3 uNormal;
+  uniform vec3 uSide;
+  varying vec2 vUv;
+  const float PI = 3.14159265359;
+
+  float hash(vec3 p) {
+    p = fract(p * 0.3183099 + 0.1);
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+  float noise(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+      mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+      f.z);
+  }
+  float fbm(vec3 p) {
+    float a = 0.5, s = 0.0;
+    for (int i = 0; i < 6; i++) { s += a * noise(p); p *= 2.03; a *= 0.5; }
+    return s;
+  }
+
+  void main() {
+    float lon = (vUv.x - 0.5) * 2.0 * PI;
+    float lat = (vUv.y - 0.5) * PI;
+    vec3 d = vec3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon));
+
+    float gLat = dot(d, uNormal);                           // 0 on the plane
+    float gLon = atan(dot(d, uSide), dot(d, uBulge));       // 0 at the bulge
+    float bulge = exp(-gLon * gLon / 0.3);
+    float width = 0.055 + 0.05 * bulge;
+    float l = gLat + (fbm(d * 4.0) - 0.5) * 0.05;           // ragged edges
+    float band = exp(-l * l / (width * width));
+
+    // Star clouds: mostly fine mottled grain, only gently modulated by the
+    // large-scale clouds (strong low-frequency contrast reads as smoke).
+    float clouds = fbm(d * 7.0 + 3.1);
+    float grain = fbm(d * 42.0);
+    float starlight = band * (0.55 + 0.6 * clouds) * pow(grain, 1.6) * 1.8;
+
+    // (No baked point stars: the texture is magnified several times on
+    // screen, so they'd read as blocks — the 3D starfield/dust provide them.)
+
+    // Dark dust lanes: ridged filaments hugging the plane, just off-center.
+    float ridge = 1.0 - abs(fbm(d * 11.0 + 7.7) * 2.0 - 1.0);
+    float laneMask = exp(-pow(l + 0.008, 2.0) / (width * width * 0.25));
+    float lane = smoothstep(0.5, 0.92, ridge) * laneMask;
+
+    // Hubble-style palette: electric-blue young-star clusters against
+    // amber dust and old-star light, deep navy (not black) in between.
+    vec3 blue = vec3(0.2, 0.5, 1.0);
+    vec3 cyan = vec3(0.45, 0.8, 1.0);
+    vec3 amber = vec3(1.0, 0.52, 0.2);
+    vec3 navy = vec3(0.03, 0.07, 0.15);
+
+    // Mostly blue; amber patches, strongest toward the bulge.
+    float warmth = clamp(bulge * 0.45 + smoothstep(0.55, 0.72, fbm(d * 2.5 + 19.0)) * 0.6, 0.0, 1.0);
+    vec3 col = mix(blue, amber, warmth) * starlight;
+    col += amber * bulge * exp(-l * l / (0.0015 + 0.006 * bulge)) * 0.7;   // core glow
+
+    // Clumps of hot young stars (blue) and speckled warm emission (amber).
+    float knots = smoothstep(0.55, 0.78, fbm(d * 28.0 + 5.0)) * band * (1.0 - warmth * 0.5);
+    col += vec3(0.12, 0.42, 1.0) * knots * 1.8 + cyan * pow(knots, 3.0) * 0.8;
+    col += amber * band * smoothstep(0.68, 0.84, fbm(d * 24.0 + 31.0)) * (0.3 + warmth) * 0.5;
+
+    // Dust lanes fall to navy rather than punching black holes.
+    col = mix(col, navy * band, lane * 0.7);
+    col += navy * 1.5 * exp(-l * l / (width * width * 6.0));             // blue haze around the band
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`
+
+/** A white star sprite with long horizontal/vertical diffraction spikes and
+ *  short diagonal ones, tinted per point via vertex color. */
+function createSpikeTexture(): THREE.CanvasTexture {
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const mid = size / 2
+  const core = ctx.createRadialGradient(mid, mid, 0, mid, mid, mid * 0.35)
+  core.addColorStop(0, 'rgba(255,255,255,1)')
+  core.addColorStop(0.25, 'rgba(255,255,255,0.6)')
+  core.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = core
+  ctx.fillRect(0, 0, size, size)
+  const spike = (angle: number, length: number, width: number) => {
+    ctx.save()
+    ctx.translate(mid, mid)
+    ctx.rotate(angle)
+    const g = ctx.createLinearGradient(-length, 0, length, 0)
+    g.addColorStop(0, 'rgba(255,255,255,0)')
+    g.addColorStop(0.5, 'rgba(255,255,255,0.9)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.moveTo(-length, 0)
+    ctx.lineTo(0, -width)
+    ctx.lineTo(length, 0)
+    ctx.lineTo(0, width)
+    ctx.closePath()
+    ctx.fill()
+    ctx.restore()
+  }
+  spike(0, mid, 3)
+  spike(Math.PI / 2, mid, 3)
+  spike(Math.PI / 4, mid * 0.45, 1.4)
+  spike(-Math.PI / 4, mid * 0.45, 1.4)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+
+const SKY_VERTEX = `
+  varying vec3 vDir;
+  void main() {
+    vDir = position;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+// Opaque: the page's own background (#0A0A0A, in linear) plus the galaxy,
+// so the canvas edge still blends seamlessly into the section around it.
+const SKY_FRAGMENT = `
+  uniform sampler2D uMap;
+  uniform float uIntensity;
+  varying vec3 vDir;
+  const float PI = 3.14159265359;
+  void main() {
+    vec3 d = normalize(vDir);
+    vec2 uv = vec2(atan(d.z, d.x) / (2.0 * PI) + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);
+    vec3 galaxy = texture2D(uMap, uv).rgb * uIntensity;
+    gl_FragColor = vec4(vec3(0.003) + galaxy, 1.0);
+    #include <colorspace_fragment>
+  }
+`
+
 // --- AI core ---------------------------------------------------------------
 // Stands in for the Sun's textured sphere: a crumpled plexus shell (nodes +
 // nearest-neighbour edges, with "signals" pulsing along some of them) around
@@ -2446,8 +2615,11 @@ class App {
   time = 0
 
   core: AICore | null = null
-  // Selective bloom (see renderBloom) — null where it's skipped (touch
-  // devices), so the scene renders exactly as it did before.
+  sky: THREE.Mesh | null = null
+  spikeTexture: THREE.CanvasTexture | null = null
+  skyTexture: THREE.WebGLRenderTarget | null = null
+  // Selective bloom (see renderBloom).
+  bloomScale = 0.5
   bloomPass: UnrealBloomPass | null = null
   bloomTarget: THREE.WebGLRenderTarget | null = null
   bloomQuad: FullScreenQuad | null = null
@@ -2504,6 +2676,7 @@ class App {
 
     this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 400)
 
+    this.buildMilkyWay()
     this.buildStarfield()
     this.buildGalaxyBackdrop()
     this.buildLights()
@@ -2616,6 +2789,119 @@ class App {
     this.updateOverviewCamera()
   }
 
+  buildMilkyWay() {
+    // Bake once: 2:1 equirect, half-float so the faint gradients don't band.
+    this.skyTexture = new THREE.WebGLRenderTarget(2048, 1024, { type: THREE.HalfFloatType, depthBuffer: false })
+    this.skyTexture.texture.wrapS = THREE.RepeatWrapping
+    const bake = new FullScreenQuad(
+      new THREE.ShaderMaterial({
+        vertexShader: MW_BAKE_VERTEX,
+        fragmentShader: MW_BAKE_FRAGMENT,
+        uniforms: { uBulge: { value: MW_BULGE }, uNormal: { value: MW_NORMAL }, uSide: { value: MW_SIDE } },
+      })
+    )
+    this.renderer.setRenderTarget(this.skyTexture)
+    bake.render(this.renderer)
+    this.renderer.setRenderTarget(null)
+    ;(bake.material as THREE.Material).dispose()
+    bake.dispose()
+
+    this.sky = new THREE.Mesh(
+      new THREE.SphereGeometry(SKY_RADIUS, 64, 32),
+      new THREE.ShaderMaterial({
+        vertexShader: SKY_VERTEX,
+        fragmentShader: SKY_FRAGMENT,
+        uniforms: { uMap: { value: this.skyTexture.texture }, uIntensity: { value: 0.26 } },
+        side: THREE.BackSide,
+        depthWrite: false,
+      })
+    )
+    // Drawn before everything else; never writes depth, so it can't hide
+    // anything in front of it.
+    this.sky.renderOrder = -1
+    this.sky.frustumCulled = false
+    this.scene.add(this.sky)
+
+    // Crisp resolved stars crowding the band — real points rather than
+    // baked texels, which the magnified texture would turn into blocks.
+    // Children of the sky, so they sit at infinity with it.
+    const count = 7000
+    const positions = new Float32Array(count * 3)
+    const colors = new Float32Array(count * 3)
+    const starTints = [new THREE.Color(0x7fc4ff), new THREE.Color(0xdde6ff), new THREE.Color(0xffa060)]
+    const dir = new THREE.Vector3()
+    const c = new THREE.Color()
+    const r = SKY_RADIUS * 0.95
+    for (let i = 0; i < count; i++) {
+      // Longitude biased toward the bulge; latitude a bell curve whose
+      // spread matches the baked band's own width at that longitude.
+      const lon = (Math.random() + Math.random() - 1) * Math.PI
+      const bulge = Math.exp((-lon * lon) / 0.3)
+      const width = 0.055 + 0.05 * bulge
+      const lat = (Math.random() + Math.random() + Math.random() - 1.5) * width * 1.6
+      dir
+        .copy(MW_BULGE)
+        .multiplyScalar(Math.cos(lon) * Math.cos(lat))
+        .addScaledVector(MW_SIDE, Math.sin(lon) * Math.cos(lat))
+        .addScaledVector(MW_NORMAL, Math.sin(lat))
+        .normalize()
+      dir.multiplyScalar(r).toArray(positions, i * 3)
+      // Mostly blue-white, some cyan, and orange more often toward the bulge.
+      const pick = Math.random()
+      const tint = pick < 0.35 ? starTints[0] : pick < 0.8 - 0.25 * bulge ? starTints[1] : starTints[2]
+      const brightness = 0.3 + 0.7 * Math.pow(Math.random(), 3)
+      c.copy(tint).multiplyScalar(brightness).toArray(colors, i * 3)
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    const bandStars = new THREE.Points(
+      geometry,
+      new THREE.PointsMaterial({ size: 1.4, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false })
+    )
+    bandStars.renderOrder = -1
+    bandStars.frustumCulled = false
+    this.sky.add(bandStars)
+
+    // A handful of bright foreground stars with diffraction spikes, orange
+    // and blue-white, scattered near the band.
+    this.spikeTexture = createSpikeTexture()
+    const spikeCount = 10
+    const spikePos = new Float32Array(spikeCount * 3)
+    const spikeCol = new Float32Array(spikeCount * 3)
+    const spikeTints = [new THREE.Color(0xff9a4a), new THREE.Color(0xff8a3a), new THREE.Color(0xcfe4ff)]
+    for (let i = 0; i < spikeCount; i++) {
+      const lon = (Math.random() * 2 - 1) * 1.6
+      const lat = (Math.random() * 2 - 1) * 0.25
+      dir
+        .copy(MW_BULGE)
+        .multiplyScalar(Math.cos(lon) * Math.cos(lat))
+        .addScaledVector(MW_SIDE, Math.sin(lon) * Math.cos(lat))
+        .addScaledVector(MW_NORMAL, Math.sin(lat))
+        .normalize()
+      dir.multiplyScalar(r * 0.98).toArray(spikePos, i * 3)
+      spikeTints[i % spikeTints.length].toArray(spikeCol, i * 3)
+    }
+    const spikeGeo = new THREE.BufferGeometry()
+    spikeGeo.setAttribute('position', new THREE.BufferAttribute(spikePos, 3))
+    spikeGeo.setAttribute('color', new THREE.BufferAttribute(spikeCol, 3))
+    const spikeStars = new THREE.Points(
+      spikeGeo,
+      new THREE.PointsMaterial({
+        size: 44,
+        sizeAttenuation: false,
+        map: this.spikeTexture,
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    )
+    spikeStars.renderOrder = -1
+    spikeStars.frustumCulled = false
+    this.sky.add(spikeStars)
+  }
+
   buildStarfield() {
     const count = 1100
     const positions = new Float32Array(count * 3)
@@ -2649,7 +2935,7 @@ class App {
   buildGalaxyBackdrop() {
     // An arbitrary, fixed, non-axis-aligned tilt so the band sweeps
     // diagonally across the sky rather than sitting flat on one axis.
-    const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.55, 0.7, 0.4).normalize())
+    const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), MW_NORMAL)
     // Mostly white/pale-blue starlight (weighted via duplicate entries),
     // matching the hero video's own palette, with an occasional warm
     // highlight and a rarer red/orange-red star (real skies have both —
@@ -2755,9 +3041,9 @@ class App {
   }
 
   setupBloom() {
-    // Touch devices skip the extra pass entirely — it's a full second
-    // (layer-filtered) render plus a mip blur chain every frame.
-    if (window.matchMedia('(pointer: coarse)').matches) return
+    // Touch devices run the blur at a lower resolution to keep the extra
+    // pass (a layer-filtered render plus a mip blur chain) cheap on phones.
+    this.bloomScale = window.matchMedia('(pointer: coarse)').matches ? 0.35 : 0.5
 
     // What glows: the core (tagged in AICore), orbit comet tails and the
     // craft lasers. Planet
@@ -3147,8 +3433,8 @@ class App {
     this.core?.setPixelScale(pixelScale)
 
     if (this.bloomPass && this.bloomTarget) {
-      const w = Math.max(1, Math.floor(width * this.renderer.getPixelRatio() * 0.5))
-      const h = Math.max(1, Math.floor(height * this.renderer.getPixelRatio() * 0.5))
+      const w = Math.max(1, Math.floor(width * this.renderer.getPixelRatio() * this.bloomScale))
+      const h = Math.max(1, Math.floor(height * this.renderer.getPixelRatio() * this.bloomScale))
       this.bloomTarget.setSize(w, h)
       this.bloomPass.setSize(w, h)
     }
@@ -3226,6 +3512,7 @@ class App {
     }
 
     this.core?.update(this.time)
+    this.sky?.position.copy(this.camera.position)
     this.renderer.render(this.scene, this.camera)
     this.renderBloom()
     this.raf = window.requestAnimationFrame(this.update.bind(this))
@@ -3247,6 +3534,12 @@ class App {
 
     this.planets.forEach((p) => p.dispose())
     this.core?.dispose()
+    if (this.sky) {
+      this.sky.geometry.dispose()
+      ;(this.sky.material as THREE.Material).dispose()
+    }
+    this.skyTexture?.dispose()
+    this.spikeTexture?.dispose()
     this.bloomPass?.dispose()
     this.bloomTarget?.dispose()
     if (this.bloomQuad) {
