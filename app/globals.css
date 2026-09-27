@@ -163,3 +163,17 @@ body {
 @keyframes hologram-chase-spin {
   to { transform: rotate(360deg); }
 }
+
+/* Slow ambient drift for the nebula background's cloud blobs (see
+   NebulaBackground) — a plain alternating transform, cheap enough to run
+   forever, rather than redrawing anything per frame. */
+.nebula-drift {
+  animation-name: nebula-drift-move;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+@keyframes nebula-drift-move {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(4%, 3%) scale(1.1); }
+}
