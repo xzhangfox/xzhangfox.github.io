@@ -7,7 +7,8 @@ import { useLanguage } from '@/lib/i18n'
 export default function Navigation() {
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const { t, toggleLanguage } = useLanguage()
+  const { t, language, toggleLanguage } = useLanguage()
+  const resumeHref = language === 'zh' ? '/Resume-zh.pdf' : '/Resume.pdf'
 
   const links = [
     { label: t.nav.about, href: '#about' },
@@ -69,7 +70,7 @@ export default function Navigation() {
         {/* Resume CTA */}
         <div className="hidden md:flex items-center gap-3">
           <a
-            href="/Resume.pdf"
+            href={resumeHref}
             target="_blank"
             rel="noopener noreferrer"
             className="px-4 py-1.5 text-xs font-mono tracking-widest uppercase border border-gold/40 text-gold rounded-md hover:bg-gold/10 hover:border-gold/70 transition-all duration-200"
@@ -122,7 +123,7 @@ export default function Navigation() {
                 </button>
               ))}
               <a
-                href="/Resume.pdf"
+                href={resumeHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-2 py-2.5 text-center text-xs font-mono tracking-widest uppercase border border-gold/40 text-gold rounded-md"
