@@ -7,13 +7,21 @@ import Projects from '@/components/Projects'
 import Education from '@/components/Education'
 import Contact from '@/components/Contact'
 import LiquidEtherGlobal from '@/components/LiquidEtherGlobal'
-import NebulaBackground from '@/components/NebulaBackground'
 
 export default function Home() {
   return (
     <main className="relative bg-bg">
-      {/* Layer 1 — fixed procedural nebula background */}
-      <NebulaBackground />
+      {/* Layer 1 — fixed video background */}
+      <video
+        autoPlay
+        loop
+        muted
+        playsInline
+        className="fixed inset-0 w-full h-full object-cover pointer-events-none"
+        style={{ zIndex: 1 }}
+      >
+        <source src="/videos/hero-bg.mp4" type="video/mp4" />
+      </video>
 
       {/* Layer 2 — fixed LiquidEther (global) */}
       <LiquidEtherGlobal />
