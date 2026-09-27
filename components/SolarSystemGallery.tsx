@@ -2202,16 +2202,71 @@ const MW_BAKE_FRAGMENT = `
     float laneMask = exp(-pow(l + 0.008, 2.0) / (width * width * 0.25));
     float lane = smoothstep(0.5, 0.92, ridge) * laneMask;
 
-    vec3 cool = vec3(0.62, 0.7, 1.0);
-    vec3 warm = vec3(1.0, 0.82, 0.62);
-    vec3 col = mix(cool, warm, clamp(bulge * bulge * 0.9, 0.0, 1.0)) * starlight;
-    col += warm * bulge * exp(-l * l / (0.0015 + 0.006 * bulge)) * 0.6;   // core glow
-    col *= 1.0 - lane * 0.7;
-    col += vec3(1.0, 0.4, 0.55) * band * smoothstep(0.76, 0.86, fbm(d * 16.0 + 11.0)) * 0.25;  // HII knots
+    // Hubble-style palette: electric-blue young-star clusters against
+    // amber dust and old-star light, deep navy (not black) in between.
+    vec3 blue = vec3(0.2, 0.5, 1.0);
+    vec3 cyan = vec3(0.45, 0.8, 1.0);
+    vec3 amber = vec3(1.0, 0.52, 0.2);
+    vec3 navy = vec3(0.03, 0.07, 0.15);
+
+    // Mostly blue; amber patches, strongest toward the bulge.
+    float warmth = clamp(bulge * 0.45 + smoothstep(0.55, 0.72, fbm(d * 2.5 + 19.0)) * 0.6, 0.0, 1.0);
+    vec3 col = mix(blue, amber, warmth) * starlight;
+    col += amber * bulge * exp(-l * l / (0.0015 + 0.006 * bulge)) * 0.7;   // core glow
+
+    // Clumps of hot young stars (blue) and speckled warm emission (amber).
+    float knots = smoothstep(0.55, 0.78, fbm(d * 28.0 + 5.0)) * band * (1.0 - warmth * 0.5);
+    col += vec3(0.12, 0.42, 1.0) * knots * 1.8 + cyan * pow(knots, 3.0) * 0.8;
+    col += amber * band * smoothstep(0.68, 0.84, fbm(d * 24.0 + 31.0)) * (0.3 + warmth) * 0.5;
+
+    // Dust lanes fall to navy rather than punching black holes.
+    col = mix(col, navy * band, lane * 0.7);
+    col += navy * 1.5 * exp(-l * l / (width * width * 6.0));             // blue haze around the band
 
     gl_FragColor = vec4(col, 1.0);
   }
 `
+
+/** A white star sprite with long horizontal/vertical diffraction spikes and
+ *  short diagonal ones, tinted per point via vertex color. */
+function createSpikeTexture(): THREE.CanvasTexture {
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const mid = size / 2
+  const core = ctx.createRadialGradient(mid, mid, 0, mid, mid, mid * 0.35)
+  core.addColorStop(0, 'rgba(255,255,255,1)')
+  core.addColorStop(0.25, 'rgba(255,255,255,0.6)')
+  core.addColorStop(1, 'rgba(255,255,255,0)')
+  ctx.fillStyle = core
+  ctx.fillRect(0, 0, size, size)
+  const spike = (angle: number, length: number, width: number) => {
+    ctx.save()
+    ctx.translate(mid, mid)
+    ctx.rotate(angle)
+    const g = ctx.createLinearGradient(-length, 0, length, 0)
+    g.addColorStop(0, 'rgba(255,255,255,0)')
+    g.addColorStop(0.5, 'rgba(255,255,255,0.9)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.moveTo(-length, 0)
+    ctx.lineTo(0, -width)
+    ctx.lineTo(length, 0)
+    ctx.lineTo(0, width)
+    ctx.closePath()
+    ctx.fill()
+    ctx.restore()
+  }
+  spike(0, mid, 3)
+  spike(Math.PI / 2, mid, 3)
+  spike(Math.PI / 4, mid * 0.45, 1.4)
+  spike(-Math.PI / 4, mid * 0.45, 1.4)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
 
 const SKY_VERTEX = `
   varying vec3 vDir;
@@ -2561,6 +2616,7 @@ class App {
 
   core: AICore | null = null
   sky: THREE.Mesh | null = null
+  spikeTexture: THREE.CanvasTexture | null = null
   skyTexture: THREE.WebGLRenderTarget | null = null
   // Selective bloom (see renderBloom).
   bloomScale = 0.5
@@ -2772,8 +2828,7 @@ class App {
     const count = 7000
     const positions = new Float32Array(count * 3)
     const colors = new Float32Array(count * 3)
-    const cool = new THREE.Color(0xdde6ff)
-    const warm = new THREE.Color(0xffe2b8)
+    const starTints = [new THREE.Color(0x7fc4ff), new THREE.Color(0xdde6ff), new THREE.Color(0xffa060)]
     const dir = new THREE.Vector3()
     const c = new THREE.Color()
     const r = SKY_RADIUS * 0.95
@@ -2791,8 +2846,11 @@ class App {
         .addScaledVector(MW_NORMAL, Math.sin(lat))
         .normalize()
       dir.multiplyScalar(r).toArray(positions, i * 3)
-      const brightness = 0.25 + 0.75 * Math.pow(Math.random(), 3)
-      c.copy(cool).lerp(warm, bulge * Math.random()).multiplyScalar(brightness).toArray(colors, i * 3)
+      // Mostly blue-white, some cyan, and orange more often toward the bulge.
+      const pick = Math.random()
+      const tint = pick < 0.35 ? starTints[0] : pick < 0.8 - 0.25 * bulge ? starTints[1] : starTints[2]
+      const brightness = 0.3 + 0.7 * Math.pow(Math.random(), 3)
+      c.copy(tint).multiplyScalar(brightness).toArray(colors, i * 3)
     }
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -2804,6 +2862,44 @@ class App {
     bandStars.renderOrder = -1
     bandStars.frustumCulled = false
     this.sky.add(bandStars)
+
+    // A handful of bright foreground stars with diffraction spikes, orange
+    // and blue-white, scattered near the band.
+    this.spikeTexture = createSpikeTexture()
+    const spikeCount = 10
+    const spikePos = new Float32Array(spikeCount * 3)
+    const spikeCol = new Float32Array(spikeCount * 3)
+    const spikeTints = [new THREE.Color(0xff9a4a), new THREE.Color(0xff8a3a), new THREE.Color(0xcfe4ff)]
+    for (let i = 0; i < spikeCount; i++) {
+      const lon = (Math.random() * 2 - 1) * 1.6
+      const lat = (Math.random() * 2 - 1) * 0.25
+      dir
+        .copy(MW_BULGE)
+        .multiplyScalar(Math.cos(lon) * Math.cos(lat))
+        .addScaledVector(MW_SIDE, Math.sin(lon) * Math.cos(lat))
+        .addScaledVector(MW_NORMAL, Math.sin(lat))
+        .normalize()
+      dir.multiplyScalar(r * 0.98).toArray(spikePos, i * 3)
+      spikeTints[i % spikeTints.length].toArray(spikeCol, i * 3)
+    }
+    const spikeGeo = new THREE.BufferGeometry()
+    spikeGeo.setAttribute('position', new THREE.BufferAttribute(spikePos, 3))
+    spikeGeo.setAttribute('color', new THREE.BufferAttribute(spikeCol, 3))
+    const spikeStars = new THREE.Points(
+      spikeGeo,
+      new THREE.PointsMaterial({
+        size: 44,
+        sizeAttenuation: false,
+        map: this.spikeTexture,
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    )
+    spikeStars.renderOrder = -1
+    spikeStars.frustumCulled = false
+    this.sky.add(spikeStars)
   }
 
   buildStarfield() {
@@ -3443,6 +3539,7 @@ class App {
       ;(this.sky.material as THREE.Material).dispose()
     }
     this.skyTexture?.dispose()
+    this.spikeTexture?.dispose()
     this.bloomPass?.dispose()
     this.bloomTarget?.dispose()
     if (this.bloomQuad) {
