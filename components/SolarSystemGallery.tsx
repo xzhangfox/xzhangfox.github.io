@@ -2123,6 +2123,120 @@ interface CameraTransition {
   toPlanet: PlanetInstance | null // null when leaving (target is the static overview)
 }
 
+// --- Milky Way ---------------------------------------------------------------
+// A procedural Milky Way painted on a sky sphere that follows the camera (so
+// it sits at infinity). The expensive part — several octaves of 3D noise
+// per pixel — runs once at startup into an equirectangular texture (see
+// App.buildMilkyWay); every frame after that is a single texture lookup,
+// which keeps it cheap on phones.
+
+// The galactic plane: the bulge sits low in front of the default view and
+// the band crosses the frame on a diagonal as the scroll tilt sweeps the
+// camera. The galaxy-dust band (buildGalaxyBackdrop) shares this plane so
+// the near dust and the far glow read as one galaxy.
+const MW_BULGE = new THREE.Vector3(0.25, -0.55, -0.8).normalize()
+const MW_NORMAL = new THREE.Vector3().crossVectors(MW_BULGE, new THREE.Vector3(1, 0.35, 0)).normalize()
+const MW_SIDE = new THREE.Vector3().crossVectors(MW_NORMAL, MW_BULGE).normalize()
+/** Inside the camera's far plane (400). */
+const SKY_RADIUS = 360
+
+const MW_BAKE_VERTEX = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`
+
+// Equirect UV -> direction -> galaxy color. Written in linear light.
+const MW_BAKE_FRAGMENT = `
+  uniform vec3 uBulge;
+  uniform vec3 uNormal;
+  uniform vec3 uSide;
+  varying vec2 vUv;
+  const float PI = 3.14159265359;
+
+  float hash(vec3 p) {
+    p = fract(p * 0.3183099 + 0.1);
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+  float noise(vec3 x) {
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(
+      mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x), mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+      mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x), mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+      f.z);
+  }
+  float fbm(vec3 p) {
+    float a = 0.5, s = 0.0;
+    for (int i = 0; i < 6; i++) { s += a * noise(p); p *= 2.03; a *= 0.5; }
+    return s;
+  }
+
+  void main() {
+    float lon = (vUv.x - 0.5) * 2.0 * PI;
+    float lat = (vUv.y - 0.5) * PI;
+    vec3 d = vec3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon));
+
+    float gLat = dot(d, uNormal);                           // 0 on the plane
+    float gLon = atan(dot(d, uSide), dot(d, uBulge));       // 0 at the bulge
+    float bulge = exp(-gLon * gLon / 0.3);
+    float width = 0.055 + 0.05 * bulge;
+    float l = gLat + (fbm(d * 4.0) - 0.5) * 0.05;           // ragged edges
+    float band = exp(-l * l / (width * width));
+
+    // Star clouds: mostly fine mottled grain, only gently modulated by the
+    // large-scale clouds (strong low-frequency contrast reads as smoke).
+    float clouds = fbm(d * 7.0 + 3.1);
+    float grain = fbm(d * 42.0);
+    float starlight = band * (0.55 + 0.6 * clouds) * pow(grain, 1.6) * 1.8;
+
+    // (No baked point stars: the texture is magnified several times on
+    // screen, so they'd read as blocks — the 3D starfield/dust provide them.)
+
+    // Dark dust lanes: ridged filaments hugging the plane, just off-center.
+    float ridge = 1.0 - abs(fbm(d * 11.0 + 7.7) * 2.0 - 1.0);
+    float laneMask = exp(-pow(l + 0.008, 2.0) / (width * width * 0.25));
+    float lane = smoothstep(0.5, 0.92, ridge) * laneMask;
+
+    vec3 cool = vec3(0.62, 0.7, 1.0);
+    vec3 warm = vec3(1.0, 0.82, 0.62);
+    vec3 col = mix(cool, warm, clamp(bulge * bulge * 0.9, 0.0, 1.0)) * starlight;
+    col += warm * bulge * exp(-l * l / (0.0015 + 0.006 * bulge)) * 0.6;   // core glow
+    col *= 1.0 - lane * 0.7;
+    col += vec3(1.0, 0.4, 0.55) * band * smoothstep(0.76, 0.86, fbm(d * 16.0 + 11.0)) * 0.25;  // HII knots
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`
+
+const SKY_VERTEX = `
+  varying vec3 vDir;
+  void main() {
+    vDir = position;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+// Opaque: the page's own background (#0A0A0A, in linear) plus the galaxy,
+// so the canvas edge still blends seamlessly into the section around it.
+const SKY_FRAGMENT = `
+  uniform sampler2D uMap;
+  uniform float uIntensity;
+  varying vec3 vDir;
+  const float PI = 3.14159265359;
+  void main() {
+    vec3 d = normalize(vDir);
+    vec2 uv = vec2(atan(d.z, d.x) / (2.0 * PI) + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);
+    vec3 galaxy = texture2D(uMap, uv).rgb * uIntensity;
+    gl_FragColor = vec4(vec3(0.003) + galaxy, 1.0);
+    #include <colorspace_fragment>
+  }
+`
+
 // --- AI core ---------------------------------------------------------------
 // Stands in for the Sun's textured sphere: a crumpled plexus shell (nodes +
 // nearest-neighbour edges, with "signals" pulsing along some of them) around
@@ -2446,8 +2560,10 @@ class App {
   time = 0
 
   core: AICore | null = null
-  // Selective bloom (see renderBloom) — null where it's skipped (touch
-  // devices), so the scene renders exactly as it did before.
+  sky: THREE.Mesh | null = null
+  skyTexture: THREE.WebGLRenderTarget | null = null
+  // Selective bloom (see renderBloom).
+  bloomScale = 0.5
   bloomPass: UnrealBloomPass | null = null
   bloomTarget: THREE.WebGLRenderTarget | null = null
   bloomQuad: FullScreenQuad | null = null
@@ -2504,6 +2620,7 @@ class App {
 
     this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 400)
 
+    this.buildMilkyWay()
     this.buildStarfield()
     this.buildGalaxyBackdrop()
     this.buildLights()
@@ -2616,6 +2733,79 @@ class App {
     this.updateOverviewCamera()
   }
 
+  buildMilkyWay() {
+    // Bake once: 2:1 equirect, half-float so the faint gradients don't band.
+    this.skyTexture = new THREE.WebGLRenderTarget(2048, 1024, { type: THREE.HalfFloatType, depthBuffer: false })
+    this.skyTexture.texture.wrapS = THREE.RepeatWrapping
+    const bake = new FullScreenQuad(
+      new THREE.ShaderMaterial({
+        vertexShader: MW_BAKE_VERTEX,
+        fragmentShader: MW_BAKE_FRAGMENT,
+        uniforms: { uBulge: { value: MW_BULGE }, uNormal: { value: MW_NORMAL }, uSide: { value: MW_SIDE } },
+      })
+    )
+    this.renderer.setRenderTarget(this.skyTexture)
+    bake.render(this.renderer)
+    this.renderer.setRenderTarget(null)
+    ;(bake.material as THREE.Material).dispose()
+    bake.dispose()
+
+    this.sky = new THREE.Mesh(
+      new THREE.SphereGeometry(SKY_RADIUS, 64, 32),
+      new THREE.ShaderMaterial({
+        vertexShader: SKY_VERTEX,
+        fragmentShader: SKY_FRAGMENT,
+        uniforms: { uMap: { value: this.skyTexture.texture }, uIntensity: { value: 0.26 } },
+        side: THREE.BackSide,
+        depthWrite: false,
+      })
+    )
+    // Drawn before everything else; never writes depth, so it can't hide
+    // anything in front of it.
+    this.sky.renderOrder = -1
+    this.sky.frustumCulled = false
+    this.scene.add(this.sky)
+
+    // Crisp resolved stars crowding the band — real points rather than
+    // baked texels, which the magnified texture would turn into blocks.
+    // Children of the sky, so they sit at infinity with it.
+    const count = 7000
+    const positions = new Float32Array(count * 3)
+    const colors = new Float32Array(count * 3)
+    const cool = new THREE.Color(0xdde6ff)
+    const warm = new THREE.Color(0xffe2b8)
+    const dir = new THREE.Vector3()
+    const c = new THREE.Color()
+    const r = SKY_RADIUS * 0.95
+    for (let i = 0; i < count; i++) {
+      // Longitude biased toward the bulge; latitude a bell curve whose
+      // spread matches the baked band's own width at that longitude.
+      const lon = (Math.random() + Math.random() - 1) * Math.PI
+      const bulge = Math.exp((-lon * lon) / 0.3)
+      const width = 0.055 + 0.05 * bulge
+      const lat = (Math.random() + Math.random() + Math.random() - 1.5) * width * 1.6
+      dir
+        .copy(MW_BULGE)
+        .multiplyScalar(Math.cos(lon) * Math.cos(lat))
+        .addScaledVector(MW_SIDE, Math.sin(lon) * Math.cos(lat))
+        .addScaledVector(MW_NORMAL, Math.sin(lat))
+        .normalize()
+      dir.multiplyScalar(r).toArray(positions, i * 3)
+      const brightness = 0.25 + 0.75 * Math.pow(Math.random(), 3)
+      c.copy(cool).lerp(warm, bulge * Math.random()).multiplyScalar(brightness).toArray(colors, i * 3)
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    const bandStars = new THREE.Points(
+      geometry,
+      new THREE.PointsMaterial({ size: 1.4, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false })
+    )
+    bandStars.renderOrder = -1
+    bandStars.frustumCulled = false
+    this.sky.add(bandStars)
+  }
+
   buildStarfield() {
     const count = 1100
     const positions = new Float32Array(count * 3)
@@ -2649,7 +2839,7 @@ class App {
   buildGalaxyBackdrop() {
     // An arbitrary, fixed, non-axis-aligned tilt so the band sweeps
     // diagonally across the sky rather than sitting flat on one axis.
-    const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0.55, 0.7, 0.4).normalize())
+    const bandQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), MW_NORMAL)
     // Mostly white/pale-blue starlight (weighted via duplicate entries),
     // matching the hero video's own palette, with an occasional warm
     // highlight and a rarer red/orange-red star (real skies have both —
@@ -2755,9 +2945,9 @@ class App {
   }
 
   setupBloom() {
-    // Touch devices skip the extra pass entirely — it's a full second
-    // (layer-filtered) render plus a mip blur chain every frame.
-    if (window.matchMedia('(pointer: coarse)').matches) return
+    // Touch devices run the blur at a lower resolution to keep the extra
+    // pass (a layer-filtered render plus a mip blur chain) cheap on phones.
+    this.bloomScale = window.matchMedia('(pointer: coarse)').matches ? 0.35 : 0.5
 
     // What glows: the core (tagged in AICore), orbit comet tails and the
     // craft lasers. Planet
@@ -3147,8 +3337,8 @@ class App {
     this.core?.setPixelScale(pixelScale)
 
     if (this.bloomPass && this.bloomTarget) {
-      const w = Math.max(1, Math.floor(width * this.renderer.getPixelRatio() * 0.5))
-      const h = Math.max(1, Math.floor(height * this.renderer.getPixelRatio() * 0.5))
+      const w = Math.max(1, Math.floor(width * this.renderer.getPixelRatio() * this.bloomScale))
+      const h = Math.max(1, Math.floor(height * this.renderer.getPixelRatio() * this.bloomScale))
       this.bloomTarget.setSize(w, h)
       this.bloomPass.setSize(w, h)
     }
@@ -3226,6 +3416,7 @@ class App {
     }
 
     this.core?.update(this.time)
+    this.sky?.position.copy(this.camera.position)
     this.renderer.render(this.scene, this.camera)
     this.renderBloom()
     this.raf = window.requestAnimationFrame(this.update.bind(this))
@@ -3247,6 +3438,11 @@ class App {
 
     this.planets.forEach((p) => p.dispose())
     this.core?.dispose()
+    if (this.sky) {
+      this.sky.geometry.dispose()
+      ;(this.sky.material as THREE.Material).dispose()
+    }
+    this.skyTexture?.dispose()
     this.bloomPass?.dispose()
     this.bloomTarget?.dispose()
     if (this.bloomQuad) {
