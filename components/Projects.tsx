@@ -240,7 +240,8 @@ function PlanetBadge({
   // very differently from that soft diffuse wash.
   const tintAlpha = Math.min((intensity ?? 0.35) * 1.3, 0.75)
   return (
-    <span className="relative inline-flex h-6 w-6 flex-shrink-0 sm:h-7 sm:w-7">
+    // Saturn gets side margin so its ring clears the neighbouring badges.
+    <span className={`relative inline-flex h-6 w-6 flex-shrink-0 sm:h-7 sm:w-7 ${ring ? 'mx-2 sm:mx-2.5' : ''}`}>
       {/* Active planet: the same rotating cyan-magenta hologram-chase ring
           the 3D screens/preview modal use for their own neon edge (see
           globals.css), instead of a flat box-shadow only — reads as
@@ -304,7 +305,14 @@ function RingGlyph({ half }: { half: 'back' | 'front' }) {
   const sweep = half === 'front' ? 0 : 1
   const arc = (rx: number, ry: number) => `M ${50 - rx} 50 A ${rx} ${ry} 0 0 ${sweep} ${50 + rx} 50`
   return (
-    <svg viewBox="0 0 100 100" aria-hidden className="pointer-events-none absolute -inset-y-[6%] -inset-x-[35%]">
+    // A square box centered on the button: with only insets, the browser
+    // sizes an <svg> from its square viewBox (height = width) and ignores
+    // the bottom inset, which left the ring sitting ~8px low.
+    <svg
+      viewBox="0 0 100 100"
+      aria-hidden
+      className="pointer-events-none absolute left-1/2 top-1/2 h-[170%] w-[170%] -translate-x-1/2 -translate-y-1/2"
+    >
       <g transform="rotate(-24 50 50)" fill="none" strokeLinecap="round">
         <path d={arc(48, 15)} stroke="#e4cfa0" strokeWidth="3.2" opacity={half === 'front' ? 0.9 : 0.55} />
         <path d={arc(40, 12.5)} stroke="#c9b27e" strokeWidth="2" opacity={half === 'front' ? 0.55 : 0.3} />
