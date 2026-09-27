@@ -235,6 +235,17 @@ function PlanetBadge({
   const tintAlpha = Math.min((intensity ?? 0.35) * 1.3, 0.75)
   return (
     <span className="relative inline-flex h-6 w-6 flex-shrink-0 sm:h-7 sm:w-7">
+      {/* Active planet: the same rotating cyan-magenta hologram-chase ring
+          the 3D screens/preview modal use for their own neon edge (see
+          globals.css), instead of a flat box-shadow only — reads as
+          "currently live," not just "selected," and keeps the badge on
+          the site's one shared neon-edge language rather than a one-off. */}
+      {active && (
+        <div
+          className="pointer-events-none absolute -inset-[3px] rounded-full hologram-edge hologram-chase"
+          style={{ ['--holo-rgb' as string]: rgb } as React.CSSProperties}
+        />
+      )}
       {ring && (
         <svg
           viewBox="0 0 100 100"
@@ -259,7 +270,7 @@ function PlanetBadge({
         onClick={onClick}
         title={label}
         aria-label={label}
-        className="pointer-events-auto relative aspect-square h-full w-full overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300"
+        className="pointer-events-auto relative aspect-square h-full w-full overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 hover:scale-110 hover:brightness-125 active:scale-95"
         style={{
           backgroundImage: `url(${textureUrl})`,
           backgroundSize: small ? '56%' : 'cover',
@@ -514,7 +525,7 @@ export default function Projects() {
                   onClick={() => galleryRef.current?.leavePlanet()}
                   aria-label="Back to solar system"
                   title="Back to solar system"
-                  className="pointer-events-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/50 backdrop-blur-sm transition-all duration-300 hover:border-gold/40 hover:text-gold sm:h-7 sm:w-7"
+                  className="pointer-events-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-white/15 bg-black/30 text-white/50 backdrop-blur-sm transition-all duration-300 hover:scale-110 hover:border-gold/40 hover:text-gold active:scale-95 sm:h-7 sm:w-7"
                 >
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                     <path d="M15 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
