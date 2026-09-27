@@ -1,6 +1,8 @@
 'use client'
 
 import * as THREE from 'three'
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js'
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 
 export interface GalleryItem {
@@ -2055,6 +2057,280 @@ interface CameraTransition {
   toPlanet: PlanetInstance | null // null when leaving (target is the static overview)
 }
 
+// --- AI core ---------------------------------------------------------------
+// Stands in for the Sun's textured sphere: a crumpled plexus shell (nodes +
+// nearest-neighbour edges, with "signals" pulsing along some of them) around
+// a cloud of flickering embers and a small hot core — the Flux products
+// orbiting a neural-network heart rather than a literal star. Everything is
+// unlit and additive, and sits on BLOOM_LAYER so the selective bloom pass
+// (see App.renderBloom) makes it glow.
+
+/** Objects on this layer are rendered into the bloom pass; everything else
+ *  only in the main pass. */
+const BLOOM_LAYER = 1
+
+const CORE_GOLD = new THREE.Color(0xc9a84c)
+const CORE_WARM = new THREE.Color(0xffcf7a)
+const CORE_HOT = new THREE.Color(0xfff1c8)
+const CORE_EMBER = new THREE.Color(0xff7a2e)
+
+const CORE_EDGE_VERTEX = `
+  attribute float aT;
+  attribute float aSeed;
+  varying float vT;
+  varying float vSeed;
+  void main() {
+    vT = aT;
+    vSeed = aSeed;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+// A dim gold wire everywhere, plus — on roughly a third of the edges — a
+// short bright pulse travelling end to end (vT runs 0→1 along each edge).
+const CORE_EDGE_FRAGMENT = `
+  uniform float uTime;
+  uniform vec3 uBase;
+  uniform vec3 uPulse;
+  varying float vT;
+  varying float vSeed;
+  void main() {
+    float lit = step(vSeed, 0.35);
+    float head = fract(uTime * (0.25 + vSeed * 0.5) + vSeed * 7.0);
+    float pulse = lit * exp(-pow((vT - head) * 9.0, 2.0));
+    vec3 color = uBase * 0.4 + uPulse * pulse * 1.3;
+    gl_FragColor = vec4(color, 0.22 + pulse * 0.78);
+  }
+`
+
+// Shared by the shell nodes and the embers: soft round sprites, sized like
+// THREE.PointsMaterial's own attenuation (see buildGalaxyBackdrop), that
+// flicker per point and — for embers — slowly orbit the core's own Y axis.
+const CORE_POINT_VERTEX = `
+  attribute float aSize;
+  attribute float aSeed;
+  attribute vec3 color;
+  uniform float uTime;
+  uniform float uPixelScale;
+  uniform float uSwirl;
+  varying vec3 vColor;
+  varying float vFlicker;
+  void main() {
+    float a = uTime * uSwirl * (0.4 + aSeed);
+    float c = cos(a), s = sin(a);
+    vec3 p = vec3(c * position.x - s * position.z, position.y, s * position.x + c * position.z);
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    vFlicker = 0.35 + 0.65 * pow(0.5 + 0.5 * sin(uTime * (1.5 + aSeed * 4.0) + aSeed * 40.0), 3.0);
+    vColor = color;
+    gl_PointSize = aSize * uPixelScale / -mv.z;
+    gl_Position = projectionMatrix * mv;
+  }
+`
+
+const CORE_POINT_FRAGMENT = `
+  varying vec3 vColor;
+  varying float vFlicker;
+  void main() {
+    float d = length(gl_PointCoord - 0.5);
+    float alpha = smoothstep(0.5, 0.0, d);
+    gl_FragColor = vec4(vColor * vFlicker, alpha * vFlicker);
+  }
+`
+
+/** Radial "crumple" so the shell reads as an irregular polyhedron rather
+ *  than a perfect sphere. Deterministic in the direction, so neighbouring
+ *  nodes agree and the silhouette stays coherent. */
+function coreCrumple(d: THREE.Vector3) {
+  return 1 + 0.14 * Math.sin(3.1 * d.x + 1.7) * Math.cos(2.3 * d.y + 0.4) + 0.08 * Math.sin(5.3 * d.z + 2.2 * d.x)
+}
+
+function fibonacciDir(i: number, n: number, out: THREE.Vector3) {
+  const y = 1 - (2 * (i + 0.5)) / n
+  const r = Math.sqrt(1 - y * y)
+  const phi = i * 2.399963229728653
+  return out.set(r * Math.cos(phi), y, r * Math.sin(phi))
+}
+
+class AICore {
+  group = new THREE.Group()
+  shell = new THREE.Group()
+  edgeMaterial: THREE.ShaderMaterial
+  pointMaterials: THREE.ShaderMaterial[] = []
+  heart: THREE.Mesh
+
+  constructor(radius: number, pixelScale: number) {
+    this.edgeMaterial = new THREE.ShaderMaterial({
+      vertexShader: CORE_EDGE_VERTEX,
+      fragmentShader: CORE_EDGE_FRAGMENT,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uBase: { value: CORE_GOLD }, uPulse: { value: CORE_HOT } },
+    })
+
+    // Two shells (outer dense, inner sparse) for the layered depth the
+    // plexus look depends on.
+    const outer = this.buildShell(radius, 260, 3, pixelScale)
+    const inner = this.buildShell(radius * 0.62, 90, 3, pixelScale)
+    inner.rotation.set(0.6, 0.3, 0.2)
+    this.shell.add(outer, inner)
+    this.group.add(this.shell)
+
+    this.group.add(this.buildEmbers(radius, 420, pixelScale))
+
+    this.heart = new THREE.Mesh(new THREE.SphereGeometry(radius * 0.06, 24, 24), new THREE.MeshBasicMaterial({ color: CORE_WARM }))
+    this.group.add(this.heart)
+
+    this.group.traverse((obj) => {
+      obj.layers.enable(BLOOM_LAYER)
+      obj.frustumCulled = false
+    })
+  }
+
+  pointMaterial(pixelScale: number, swirl: number) {
+    const material = new THREE.ShaderMaterial({
+      vertexShader: CORE_POINT_VERTEX,
+      fragmentShader: CORE_POINT_FRAGMENT,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uPixelScale: { value: pixelScale }, uSwirl: { value: swirl } },
+    })
+    this.pointMaterials.push(material)
+    return material
+  }
+
+  buildShell(radius: number, count: number, neighbours: number, pixelScale: number) {
+    const group = new THREE.Group()
+    const nodes: THREE.Vector3[] = []
+    const dir = new THREE.Vector3()
+    for (let i = 0; i < count; i++) {
+      fibonacciDir(i, count, dir)
+      const r = radius * coreCrumple(dir) * (0.94 + Math.random() * 0.12)
+      nodes.push(dir.clone().multiplyScalar(r))
+    }
+
+    // Each node to its few nearest neighbours, deduplicated — O(n²) once at
+    // build time, trivial at these counts.
+    const seen = new Set<string>()
+    const positions: number[] = []
+    const ts: number[] = []
+    const seeds: number[] = []
+    for (let i = 0; i < count; i++) {
+      const nearest = nodes
+        .map((n, j) => ({ j, d: j === i ? Infinity : n.distanceToSquared(nodes[i]) }))
+        .sort((a, b) => a.d - b.d)
+        .slice(0, neighbours)
+      for (const { j } of nearest) {
+        const key = i < j ? `${i}-${j}` : `${j}-${i}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        const seed = Math.random()
+        positions.push(nodes[i].x, nodes[i].y, nodes[i].z, nodes[j].x, nodes[j].y, nodes[j].z)
+        ts.push(0, 1)
+        seeds.push(seed, seed)
+      }
+    }
+    const edgeGeo = new THREE.BufferGeometry()
+    edgeGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    edgeGeo.setAttribute('aT', new THREE.Float32BufferAttribute(ts, 1))
+    edgeGeo.setAttribute('aSeed', new THREE.Float32BufferAttribute(seeds, 1))
+    group.add(new THREE.LineSegments(edgeGeo, this.edgeMaterial))
+
+    const nodePos = new Float32Array(count * 3)
+    const nodeColor = new Float32Array(count * 3)
+    const nodeSize = new Float32Array(count)
+    const nodeSeed = new Float32Array(count)
+    const c = new THREE.Color()
+    nodes.forEach((n, i) => {
+      n.toArray(nodePos, i * 3)
+      c.copy(CORE_GOLD).lerp(CORE_HOT, Math.random() * 0.6).toArray(nodeColor, i * 3)
+      nodeSize[i] = 0.12 + Math.random() * 0.16
+      nodeSeed[i] = Math.random()
+    })
+    const nodeGeo = new THREE.BufferGeometry()
+    nodeGeo.setAttribute('position', new THREE.BufferAttribute(nodePos, 3))
+    nodeGeo.setAttribute('color', new THREE.BufferAttribute(nodeColor, 3))
+    nodeGeo.setAttribute('aSize', new THREE.BufferAttribute(nodeSize, 1))
+    nodeGeo.setAttribute('aSeed', new THREE.BufferAttribute(nodeSeed, 1))
+    group.add(new THREE.Points(nodeGeo, this.pointMaterial(pixelScale, 0)))
+    return group
+  }
+
+  // Embers crowd a loose torus inside the shell (the video reference's ring
+  // of sparks), with a few oversized flares, each swirling at its own speed.
+  buildEmbers(radius: number, count: number, pixelScale: number) {
+    const pos = new Float32Array(count * 3)
+    const color = new Float32Array(count * 3)
+    const size = new Float32Array(count)
+    const seed = new Float32Array(count)
+    const c = new THREE.Color()
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2
+      const r = radius * (0.22 + Math.random() * 0.4)
+      const y = (Math.random() + Math.random() - 1) * radius * 0.28
+      pos.set([r * Math.cos(a), y, r * Math.sin(a)], i * 3)
+      const heat = Math.random()
+      c.copy(CORE_EMBER).lerp(CORE_WARM, heat).lerp(CORE_HOT, Math.max(0, heat - 0.8) * 2).multiplyScalar(0.6).toArray(color, i * 3)
+      size[i] = Math.random() < 0.02 ? 0.4 + Math.random() * 0.3 : 0.05 + Math.random() * 0.12
+      seed[i] = Math.random()
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    geo.setAttribute('color', new THREE.BufferAttribute(color, 3))
+    geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1))
+    geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1))
+    return new THREE.Points(geo, this.pointMaterial(pixelScale, 0.12))
+  }
+
+  setPixelScale(pixelScale: number) {
+    for (const m of this.pointMaterials) m.uniforms.uPixelScale.value = pixelScale
+  }
+
+  update(time: number) {
+    this.edgeMaterial.uniforms.uTime.value = time
+    for (const m of this.pointMaterials) m.uniforms.uTime.value = time
+    this.shell.rotation.x = Math.sin(time * 0.07) * 0.35
+    this.shell.rotation.z += 0.0006
+    this.shell.scale.setScalar(1 + 0.025 * Math.sin(time * 0.8))
+    this.heart.scale.setScalar(1 + 0.18 * Math.sin(time * 2.1) * Math.sin(time * 0.7))
+  }
+
+  dispose() {
+    this.group.traverse((obj) => {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.LineSegments || obj instanceof THREE.Points) obj.geometry.dispose()
+    })
+    this.edgeMaterial.dispose()
+    this.pointMaterials.forEach((m) => m.dispose())
+    ;(this.heart.material as THREE.Material).dispose()
+  }
+}
+
+// Composites the bloom pass's blurred output onto the canvas: additive in
+// color, and accumulating alpha so glow that spills past every opaque pixel
+// (the canvas is transparent) still shows over the page behind it.
+const BLOOM_COMPOSITE_VERTEX = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`
+
+const BLOOM_COMPOSITE_FRAGMENT = `
+  uniform sampler2D tBloom;
+  varying vec2 vUv;
+  void main() {
+    // Soft-knee away the faintest tail so it can't tint the whole sky —
+    // scaled by the peak channel (not per channel) so the hue can't fringe.
+    vec3 raw = texture2D(tBloom, vUv).rgb;
+    float peak = max(raw.r, max(raw.g, raw.b));
+    vec3 bloom = raw * smoothstep(0.0, 0.08, peak);
+    gl_FragColor = vec4(bloom, clamp(max(bloom.r, max(bloom.g, bloom.b)), 0.0, 1.0));
+    #include <colorspace_fragment>
+  }
+`
+
 class App {
   container: HTMLElement
   aspect: number
@@ -2102,6 +2378,18 @@ class App {
   pitch = { value: TILT_PITCH_TOP }
   hoveredIndex = -1
   time = 0
+
+  core: AICore | null = null
+  // Selective bloom (see renderBloom) — null where it's skipped (touch
+  // devices), so the scene renders exactly as it did before.
+  bloomPass: UnrealBloomPass | null = null
+  bloomTarget: THREE.WebGLRenderTarget | null = null
+  bloomQuad: FullScreenQuad | null = null
+  /** Solid meshes drawn black into the bloom pass so glow behind them is
+   *  hidden rather than bleeding through (planets, hologram screens). */
+  bloomOccluders: THREE.Mesh[] = []
+  _occluderMaterials: (THREE.Material | THREE.Material[])[] = []
+  _blackMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 })
 
   raf = 0
   isDown = false
@@ -2163,6 +2451,9 @@ class App {
       return p
     })
     this.contentPlanets = this.planets.filter((p) => p.count > 0)
+
+    this.buildCore()
+    this.setupBloom()
 
     // Parent each orbit-parented ring (the Moon's) to its parent's group so
     // it visually travels with it.
@@ -2384,6 +2675,91 @@ class App {
     const glow = new THREE.PointLight(0xffcf7a, 40, 40, 1.4)
     glow.position.set(0, 0, 0)
     this.scene.add(glow)
+  }
+
+  // Swaps the Sun's textured sphere for the AI core. Parented to the Sun's
+  // own group so it inherits its spin and its show/hide on enter/leave.
+  buildCore() {
+    const sun = this.planetsById.get('sun')
+    if (!sun) return
+    sun.mesh.visible = false
+    const pixelScale = this.container.clientHeight * this.renderer.getPixelRatio() * 0.5
+    this.core = new AICore(sun.site.radius * 1.15, pixelScale)
+    sun.group.add(this.core.group)
+  }
+
+  setupBloom() {
+    // Touch devices skip the extra pass entirely — it's a full second
+    // (layer-filtered) render plus a mip blur chain every frame.
+    if (window.matchMedia('(pointer: coarse)').matches) return
+
+    // What glows: the core (tagged in AICore) and the craft lasers. Planet
+    // rim auras and halo-ring stars don't (bloomed, auras wash planets out
+    // to pastel and the star sprites smear into soft squares), and neither
+    // do the hologram screens or their halos — bloom over a project
+    // screenshot just smears it.
+    for (const p of this.planets) {
+      for (const l of p.lasers) l.layers.enable(BLOOM_LAYER)
+      if (p.mesh.visible) this.bloomOccluders.push(p.mesh)
+      this.bloomOccluders.push(...p.screens)
+    }
+    for (const m of this.bloomOccluders) m.layers.enable(BLOOM_LAYER)
+
+    this.bloomTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType })
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.9, 0.2, 0)
+    // Weight the five blur mips toward the tight ones: the stock falloff
+    // (1 → 0.2) lets the widest mips spread the core's glow into a disc
+    // several times its size.
+    this.bloomPass.compositeMaterial.uniforms.bloomFactors.value = [1, 0.75, 0.35, 0.1, 0]
+    this.bloomQuad = new FullScreenQuad(
+      new THREE.ShaderMaterial({
+        vertexShader: BLOOM_COMPOSITE_VERTEX,
+        fragmentShader: BLOOM_COMPOSITE_FRAGMENT,
+        uniforms: { tBloom: { value: null } },
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        blending: THREE.CustomBlending,
+        blendEquation: THREE.AddEquation,
+        blendSrc: THREE.OneFactor,
+        blendDst: THREE.OneFactor,
+        blendEquationAlpha: THREE.AddEquation,
+        blendSrcAlpha: THREE.OneFactor,
+        blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+      })
+    )
+  }
+
+  // Renders only BLOOM_LAYER objects (occluders swapped to flat black) into a
+  // half-res target, blurs it with UnrealBloomPass, then adds just the blur
+  // on top of the already-rendered canvas.
+  renderBloom() {
+    if (!this.bloomPass || !this.bloomTarget || !this.bloomQuad) return
+    const r = this.renderer
+
+    this._occluderMaterials.length = 0
+    for (const m of this.bloomOccluders) {
+      this._occluderMaterials.push(m.material)
+      m.material = this._blackMaterial
+    }
+    this.camera.layers.set(BLOOM_LAYER)
+    r.setRenderTarget(this.bloomTarget)
+    r.clear()
+    r.render(this.scene, this.camera)
+    this.camera.layers.set(0)
+    this.bloomOccluders.forEach((m, i) => (m.material = this._occluderMaterials[i]))
+
+    this.bloomPass.render(r, null as unknown as THREE.WebGLRenderTarget, this.bloomTarget, 0, false)
+    // UnrealBloomPass leaves its blurred-only composite here before adding
+    // it back onto its input; reading it directly avoids double-counting
+    // the source objects the main pass already drew.
+    ;(this.bloomQuad.material as THREE.ShaderMaterial).uniforms.tBloom.value = this.bloomPass.renderTargetsHorizontal[0].texture
+
+    r.setRenderTarget(null)
+    const autoClear = r.autoClear
+    r.autoClear = false
+    this.bloomQuad.render(r)
+    r.autoClear = autoClear
   }
 
   // --- Navigation ----------------------------------------------------------
@@ -2692,6 +3068,14 @@ class App {
     // change instead of drifting off from whatever it was built with.
     const pixelScale = height * this.renderer.getPixelRatio() * 0.5
     for (const mat of this.galaxyDustMaterials) mat.uniforms.uPixelScale.value = pixelScale
+    this.core?.setPixelScale(pixelScale)
+
+    if (this.bloomPass && this.bloomTarget) {
+      const w = Math.max(1, Math.floor(width * this.renderer.getPixelRatio() * 0.5))
+      const h = Math.max(1, Math.floor(height * this.renderer.getPixelRatio() * 0.5))
+      this.bloomTarget.setSize(w, h)
+      this.bloomPass.setSize(w, h)
+    }
 
     this.updateOverviewDistance()
   }
@@ -2764,7 +3148,9 @@ class App {
       if (this.viewMode === 'planet') this.onActiveIndexChange?.(bestLocal >= 0 ? bestLocal : null)
     }
 
+    this.core?.update(this.time)
     this.renderer.render(this.scene, this.camera)
+    this.renderBloom()
     this.raf = window.requestAnimationFrame(this.update.bind(this))
   }
 
@@ -2783,6 +3169,14 @@ class App {
     this.container.removeEventListener('mouseleave', this.boundOnMouseLeave)
 
     this.planets.forEach((p) => p.dispose())
+    this.core?.dispose()
+    this.bloomPass?.dispose()
+    this.bloomTarget?.dispose()
+    if (this.bloomQuad) {
+      ;(this.bloomQuad.material as THREE.Material).dispose()
+      this.bloomQuad.dispose()
+    }
+    this._blackMaterial.dispose()
     this.scene.traverse((obj) => {
       if (obj instanceof THREE.Points) {
         obj.geometry.dispose()
