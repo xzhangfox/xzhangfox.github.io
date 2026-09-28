@@ -1,0 +1,14 @@
+<svg width="800" height="450" viewBox="0 0 800 450" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#C9A84C" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#0E0E0E" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="800" height="450" fill="#141414"/>
+  <rect width="800" height="450" fill="url(#glow)"/>
+  <circle cx="400" cy="205" r="72" fill="none" stroke="#C9A84C" stroke-opacity="0.55" stroke-width="2"/>
+  <circle cx="400" cy="205" r="90" fill="none" stroke="#C9A84C" stroke-opacity="0.2" stroke-width="1"/>
+  <text x="400" y="232" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="72" fill="#C9A84C" opacity="0.85">?</text>
+  <text x="400" y="330" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" letter-spacing="4" fill="#ffffff" opacity="0.35">IN DEVELOPMENT</text>
+</svg>

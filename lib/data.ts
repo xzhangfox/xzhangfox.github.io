@@ -132,20 +132,13 @@ export const projects: Project[] = [
   {
     id: 'flux-mythos',
     title: 'Flux Mythos',
-    subtitle: 'Cosmic-Horror Chibi MMORPG',
-    description:
-      'A browser MMORPG where an eldritch horror setting collides with a soft, chibi anime art style — pick a class, level up battling things that shouldn’t exist, explore a hand-drawn overworld, and raise a small tentacled companion of your own. Currently in concept/design — this card is a work-in-progress teaser, not a playable build.',
-    tech: ['Concept', 'Cthulhu Mythos', 'Q-Version Fantasy', 'Class System', 'Pet Companions'],
-    image: '/images/projects/flux-mythos/key-art.svg',
-    gallery: [
-      { src: '/images/projects/flux-mythos/key-art.svg', caption: 'Flux Mythos — a cosmic-horror world, drawn soft and cute' },
-      { src: '/images/projects/flux-mythos/class-priest.svg', caption: 'Star Priest — channels light through the void' },
-      { src: '/images/projects/flux-mythos/class-warrior.svg', caption: 'Abyss Warrior — meets the deep with a blade' },
-      { src: '/images/projects/flux-mythos/class-ranger.svg', caption: 'Tide Ranger — hunts with a harpoon at the shoreline of sanity' },
-      { src: '/images/projects/flux-mythos/class-tamer.svg', caption: 'Elder Tamer — raises the little horrors as pets instead' },
-    ],
-    highlights: ['Four starting classes, each its own playstyle', 'Level up exploring a hand-drawn overworld map', 'Hatch and raise your own eldritch pet companion'],
-    color: '#6fe8c9',
+    subtitle: 'TBD',
+    description: 'Details to be announced.',
+    tech: ['TBD'],
+    image: '/images/projects/flux-mythos/tbd-placeholder.svg',
+    gallery: [{ src: '/images/projects/flux-mythos/tbd-placeholder.svg' }],
+    highlights: [],
+    color: '#C9A84C',
     gridHeight: 420,
   },
 ]

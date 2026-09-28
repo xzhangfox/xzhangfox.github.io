@@ -88,8 +88,6 @@ const PLANETS: PlanetSite[] = [
     orbitSpeed: 0.0009,
     auraColor: '#5ffbe0',
     auraIntensity: 0.35,
-    starRingCount: 12,
-    starRingRadius: 3.2,
     items: EARTH_PROJECT_IDS.map((id) => {
       const p = projects.find((p) => p.id === id)!
       return { image: p.image, color: p.color }

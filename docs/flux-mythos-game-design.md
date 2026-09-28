@@ -100,10 +100,8 @@ MVP 先定 4 个初始职业（已经画好概念立绘，见 `public/images/pro
 
 已经在 `xzhangfox.github.io` 这个 portfolio 仓库里落地的部分：
 
-- `components/Projects.tsx`：地球（`earth`）行星加入 `CONTENT_PLANET_IDS`，成为可点击进入的"内容行星"，托管一个项目条目 `flux-mythos`。
-- `lib/data.ts` / `lib/translations.ts`：新增 `flux-mythos` 项目条目，无 `link` 字段 → 复用现有的"Coming soon / 即将上线"UI（`ProjectPreviewModal.tsx` 本来就支持这个状态，不用改代码）。
-- 概念立绘（纯 SVG 手绘，无外部素材/版权问题；卡巴拉岛式糖果色 Q 版风格，见「2. 基调与美术方向」）：
-  - `public/images/projects/flux-mythos/key-art.svg` —— 主视觉
-  - `class-priest.svg` / `class-warrior.svg` / `class-ranger.svg` / `class-tamer.svg` —— 四个职业的立绘，兼作预览弹窗里的"职业画廊"，用户滑动/点箭头浏览职业就相当于在"选职业"，复用了网站原有的画廊交互，没写新组件。
+- `components/Projects.tsx`：地球（`earth`）行星加入 `CONTENT_PLANET_IDS`，成为可点击进入的"内容行星"，托管一个项目条目 `flux-mythos`；地球本身不再有装饰性的星星光环（`starRingCount`），保持素净。
+- `lib/data.ts` / `lib/translations.ts`：`flux-mythos` 项目条目目前是**纯 TBD 占位状态**——标题保留 `Flux Mythos`，副标题/简介/标签/亮点全部是"待定"占位文案，画廊只有一张中性的"?  IN DEVELOPMENT"占位图（`public/images/projects/flux-mythos/tbd-placeholder.svg`），不透露任何世界观、职业或画风信息。之前那版糖果色职业立绘（`key-art.svg`/`class-*.svg`）已经从网站上撤下，本文档里记录的设定/美术方向仍然有效，只是先不对外展示。
+- 无 `link` 字段 → 复用现有的"Coming soon / 即将上线"UI（`ProjectPreviewModal.tsx` 本来就支持这个状态，不用改代码）。
 
-还没做、留给未来正式开发时候的部分：全部游戏系统本身（战斗、地图、宠物养成的实际代码）、独立仓库/域名搭建、账号体系打通。
+还没做、留给未来正式开发时候的部分：全部游戏系统本身（战斗、地图、宠物养成的实际代码）、真正的美术资产（用 AI 生成工具或找画师产出，而不是手写 SVG）、独立仓库/域名搭建、账号体系打通、决定好要公开的时机后再把占位内容换成真实介绍。
