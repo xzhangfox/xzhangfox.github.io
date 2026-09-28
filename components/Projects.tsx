@@ -9,23 +9,28 @@ import { projects } from '@/lib/data'
 import { useLanguage } from '@/lib/i18n'
 
 // Saturn hosts two of the Flux apps; the Moon hosts Flux Path on its own
-// orbit around Earth; Venus hosts Flux Finance and the AI Bubble Monitor.
+// orbit around Earth; Venus hosts Flux Finance and the AI Bubble Monitor;
+// Earth hosts Flux Mythos — a concept-stage game, not a live app, which is
+// why it has no `link` (see lib/data.ts) and falls back to the shared
+// modal's "coming soon" state instead of a "Visit Live Site" button.
 const SATURN_PROJECT_IDS = ['flux-nutrition', 'flux-career']
 const MOON_PROJECT_IDS = ['flux-path']
 const VENUS_PROJECT_IDS = ['flux-finance', 'financial-tracker']
+const EARTH_PROJECT_IDS = ['flux-mythos']
 
 // Reverse lookup — which planet hosts a given project, so the detail
 // modal's border can match that planet's own mask color instead of the
 // project's individual one.
-const PLANET_PROJECT_IDS: Record<string, string[]> = { saturn: SATURN_PROJECT_IDS, moon: MOON_PROJECT_IDS, venus: VENUS_PROJECT_IDS }
+const PLANET_PROJECT_IDS: Record<string, string[]> = { saturn: SATURN_PROJECT_IDS, moon: MOON_PROJECT_IDS, venus: VENUS_PROJECT_IDS, earth: EARTH_PROJECT_IDS }
 const PROJECT_PLANET_ID: Record<string, string> = Object.fromEntries(
   Object.entries(PLANET_PROJECT_IDS).flatMap(([planetId, ids]) => ids.map((id) => [id, planetId]))
 )
 
-const PLANET_LABELS: Record<string, string> = { saturn: 'Saturn', moon: 'The Moon', venus: 'Venus' }
-const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg', moon: '/textures/moon.jpg', venus: '/textures/venus.jpg' }
-// Moon first (the flagship, densest halo), then Saturn, then Venus.
-const CONTENT_PLANET_IDS = ['moon', 'saturn', 'venus']
+const PLANET_LABELS: Record<string, string> = { saturn: 'Saturn', moon: 'The Moon', venus: 'Venus', earth: 'Earth' }
+const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg', moon: '/textures/moon.jpg', venus: '/textures/venus.jpg', earth: '/textures/earth.jpg' }
+// Moon first (the flagship, densest halo), then Saturn, then Venus, then
+// Earth last — it hosts a concept teaser, not a shipped app.
+const CONTENT_PLANET_IDS = ['moon', 'saturn', 'venus', 'earth']
 // Per-project real app logos, where available — falls back to a cropped
 // screenshot (project.image) otherwise.
 const PROJECT_LOGOS: Record<string, string> = {
@@ -85,6 +90,10 @@ const PLANETS: PlanetSite[] = [
     auraIntensity: 0.35,
     starRingCount: 12,
     starRingRadius: 3.2,
+    items: EARTH_PROJECT_IDS.map((id) => {
+      const p = projects.find((p) => p.id === id)!
+      return { image: p.image, color: p.color }
+    }),
   },
   {
     id: 'mars',
@@ -328,6 +337,7 @@ export default function Projects() {
     saturn: SATURN_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
     moon: MOON_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
     venus: VENUS_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
+    earth: EARTH_PROJECT_IDS.map((id) => items.find((p) => p.id === id)!),
   }
 
   const [openId, setOpenId] = useState<string | null>(null)

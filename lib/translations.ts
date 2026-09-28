@@ -219,6 +219,12 @@ export const translations: Record<Language, Dict> = {
             'A composite bubble-score gauge distills 7 percentile-ranked indicators across the Dalio, Shiller, and Minsky frameworks into one daily read — zero lookahead, fully automated, with an interactive trailing-history chart showing exactly how today’s score got there.',
           highlights: ['7 indicators, 3 frameworks, one daily score', 'Zero-lookahead scoring — no hindsight bias', 'Fully automated, self-updating pipeline'],
         },
+        {
+          subtitle: 'Cosmic-Horror Chibi MMORPG',
+          description:
+            'A browser MMORPG where an eldritch horror setting collides with a soft, chibi anime art style — pick a class, level up battling things that shouldn’t exist, explore a hand-drawn overworld, and raise a small tentacled companion of your own. Currently in concept/design — this card is a work-in-progress teaser, not a playable build.',
+          highlights: ['Four starting classes, each its own playstyle', 'Level up exploring a hand-drawn overworld map', 'Hatch and raise your own eldritch pet companion'],
+        },
       ],
     },
     education: {
@@ -374,6 +380,12 @@ export const translations: Record<Language, Dict> = {
           description:
             '一个复合泡沫评分仪表盘，把达里欧、席勒与明斯基三套框架下的 7 项百分位指标浓缩成每日一个分数 —— 零前瞻偏差，全自动运行，配合可交互的历史走势图，清楚展示今天的分数是如何算出来的。',
           highlights: ['7 项指标、3 套框架，浓缩成每日一个分数', '零前瞻评分 —— 杜绝事后诸葛亮', '全自动、自我更新的数据流水线'],
+        },
+        {
+          subtitle: '克苏鲁风 Q 版网页 MMORPG',
+          description:
+            '一个把克苏鲁式宇宙恐怖设定和软萌 Q 版画风撞在一起的网页 MMORPG —— 选择职业，在不该存在的东西身上练级，探索手绘大地图，还能养大一只属于自己的小触手宠物。目前还在概念设计阶段，这张卡片是先行预告，不是可玩版本。',
+          highlights: ['四个初始职业，各有玩法', '在手绘大地图上探索升级', '孵化并养成专属的旧日萌宠'],
         },
       ],
     },
