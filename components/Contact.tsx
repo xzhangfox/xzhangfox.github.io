@@ -338,7 +338,17 @@ export default function Contact() {
       <FadeIn delay={0.5}>
         <div className="mt-24 max-w-6xl mx-auto border-t border-white/5 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-white/20 text-xs font-mono">
-            © 2026 Xi Zhang · {t.contact.builtWith}
+            © 2026 Xi Zhang · {t.contact.builtWith} ·{' '}
+            {/* Required attribution (CC BY 4.0) for the planet textures in the
+                Projects galaxy — kept here rather than over the canvas. */}
+            <a
+              href="https://www.solarsystemscope.com/textures/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-gold/50 transition-colors duration-200"
+            >
+              Planet textures © Solar System Scope, CC BY 4.0
+            </a>
             {visits !== null && (
               <>
                 {' · '}

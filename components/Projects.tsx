@@ -204,6 +204,7 @@ function PlanetBadge({
   color,
   intensity,
   ring,
+  sphere,
 }: {
   textureUrl: string
   label: string
@@ -225,6 +226,11 @@ function PlanetBadge({
    *  photo, echoing its real 3D ring since the sphere texture alone
    *  (cropped to a circle here) can't show it. */
   ring?: boolean
+  /** Render as a lit sphere (an overview planet button) rather than a flat
+   *  bordered disc (a project badge): shading from the same upper-left
+   *  key light the 3D scene uses, a thin atmosphere glow in the planet's
+   *  own aura color, and no border. */
+  sphere?: boolean
 }) {
   const rgb = hexToRgb(color ?? '#C9A84C')
   // Same blend the 3D scene's own material uses — lerping the surface
@@ -234,7 +240,8 @@ function PlanetBadge({
   // very differently from that soft diffuse wash.
   const tintAlpha = Math.min((intensity ?? 0.35) * 1.3, 0.75)
   return (
-    <span className="relative inline-flex h-6 w-6 flex-shrink-0 sm:h-7 sm:w-7">
+    // Saturn gets side margin so its ring clears the neighbouring badges.
+    <span className={`relative inline-flex h-6 w-6 flex-shrink-0 sm:h-7 sm:w-7 ${ring ? 'mx-2 sm:mx-2.5' : ''}`}>
       {/* Active planet: the same rotating cyan-magenta hologram-chase ring
           the 3D screens/preview modal use for their own neon edge (see
           globals.css), instead of a flat box-shadow only — reads as
@@ -246,36 +253,22 @@ function PlanetBadge({
           style={{ ['--holo-rgb' as string]: rgb } as React.CSSProperties}
         />
       )}
-      {ring && (
-        <svg
-          viewBox="0 0 100 100"
-          aria-hidden
-          className="pointer-events-none absolute -inset-y-[6%] -inset-x-[35%]"
-        >
-          <ellipse
-            cx="50"
-            cy="50"
-            rx="49"
-            ry="16"
-            transform="rotate(-24 50 50)"
-            fill="none"
-            stroke="#e4cfa0"
-            strokeWidth="4"
-            opacity="0.85"
-          />
-        </svg>
-      )}
+      {ring && <RingGlyph half="back" />}
       <button
         type="button"
         onClick={onClick}
         title={label}
         aria-label={label}
-        className="pointer-events-auto relative aspect-square h-full w-full overflow-hidden rounded-full border bg-black/50 bg-center bg-no-repeat transition-all duration-300 hover:scale-110 hover:brightness-125 active:scale-95"
+        className={`pointer-events-auto relative aspect-square h-full w-full overflow-hidden rounded-full bg-black/50 bg-center bg-no-repeat transition-all duration-300 hover:scale-110 hover:brightness-125 active:scale-95 ${sphere ? '' : 'border'}`}
         style={{
           backgroundImage: `url(${textureUrl})`,
           backgroundSize: small ? '56%' : 'cover',
-          borderColor: active ? `rgba(${rgb}, 0.9)` : `rgba(${rgb}, 0.35)`,
-          boxShadow: active ? `0 0 14px rgba(${rgb}, 0.55)` : `0 0 8px rgba(${rgb}, 0.18)`,
+          ...(sphere
+            ? { boxShadow: `0 0 7px rgba(${rgb}, 0.45), 0 0 2px rgba(${rgb}, 0.6)` }
+            : {
+                borderColor: active ? `rgba(${rgb}, 0.9)` : `rgba(${rgb}, 0.35)`,
+                boxShadow: active ? `0 0 14px rgba(${rgb}, 0.55)` : `0 0 8px rgba(${rgb}, 0.18)`,
+              }),
         }}
       >
         {/* A planet button's own mask color, tinted over its photo texture
@@ -288,8 +281,43 @@ function PlanetBadge({
         {!small && color && (
           <span className="pointer-events-none absolute inset-0" style={{ backgroundColor: color, opacity: tintAlpha }} />
         )}
+        {sphere && <span className="pointer-events-none absolute inset-0" style={{ background: SPHERE_SHADING }} />}
       </button>
+      {ring && <RingGlyph half="front" />}
     </span>
+  )
+}
+
+// Lit from the upper left like the scene's own key light: a soft specular
+// highlight, then a terminator falling off to near-black lower right.
+const SPHERE_SHADING = [
+  'radial-gradient(circle at 32% 28%, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0) 34%)',
+  'radial-gradient(circle at 36% 34%, rgba(0,0,0,0) 38%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.9) 100%)',
+].join(', ')
+
+/** Saturn's ring, drawn in two halves: the far half behind the sphere and
+ *  the near half in front of it, so the ring reads as wrapping around the
+ *  planet rather than a flat ellipse pasted behind it. Two bands (outer
+ *  bright, inner faint) with the Cassini-style gap between. */
+function RingGlyph({ half }: { half: 'back' | 'front' }) {
+  // In the ellipse's own (pre-rotation) frame the near half is the lower
+  // arc: from the left end to the right end with sweep-flag 0.
+  const sweep = half === 'front' ? 0 : 1
+  const arc = (rx: number, ry: number) => `M ${50 - rx} 50 A ${rx} ${ry} 0 0 ${sweep} ${50 + rx} 50`
+  return (
+    // A square box centered on the button: with only insets, the browser
+    // sizes an <svg> from its square viewBox (height = width) and ignores
+    // the bottom inset, which left the ring sitting ~8px low.
+    <svg
+      viewBox="0 0 100 100"
+      aria-hidden
+      className="pointer-events-none absolute left-1/2 top-1/2 h-[170%] w-[170%] -translate-x-1/2 -translate-y-1/2"
+    >
+      <g transform="rotate(-24 50 50)" fill="none" strokeLinecap="round">
+        <path d={arc(48, 15)} stroke="#e4cfa0" strokeWidth="3.2" opacity={half === 'front' ? 0.9 : 0.55} />
+        <path d={arc(40, 12.5)} stroke="#c9b27e" strokeWidth="2" opacity={half === 'front' ? 0.55 : 0.3} />
+      </g>
+    </svg>
   )
 }
 
@@ -507,6 +535,7 @@ export default function Projects() {
                     color={PLANET_COLORS[id]}
                     intensity={PLANET_INTENSITIES[id]}
                     ring={id === 'saturn'}
+                    sphere
                     onClick={() => galleryRef.current?.enterPlanet(id)}
                   />
                 ))}
@@ -631,9 +660,6 @@ export default function Projects() {
           </div>
         )}
 
-        <p className="pointer-events-none absolute bottom-2 right-3 z-10 text-[9px] text-white/15">
-          Solar system textures © Solar System Scope, CC BY 4.0
-        </p>
       </div>
 
       <div className="max-w-6xl mx-auto px-6 mt-8 text-center">
