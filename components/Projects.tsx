@@ -247,8 +247,7 @@ function PlanetBadge({
   // very differently from that soft diffuse wash.
   const tintAlpha = Math.min((intensity ?? 0.35) * 1.3, 0.75)
   return (
-    // Saturn gets side margin so its ring clears the neighbouring badges.
-    <span className={`relative inline-flex h-6 w-6 flex-shrink-0 sm:h-7 sm:w-7 ${ring ? 'mx-2 sm:mx-2.5' : ''}`}>
+    <span className="relative inline-flex h-6 w-6 flex-shrink-0 sm:h-7 sm:w-7">
       {/* Active planet: the same rotating cyan-magenta hologram-chase ring
           the 3D screens/preview modal use for their own neon edge (see
           globals.css), instead of a flat box-shadow only — reads as
@@ -533,7 +532,13 @@ export default function Projects() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.3 }}
-                className="flex items-center gap-1.5 sm:gap-2"
+                // Wider than the entered row's badge gap: Saturn's ring
+                // glyph (see RingGlyph/PlanetBadge) overflows its own
+                // button box, so an even gap here has to be at least that
+                // wide everywhere, not just wherever Saturn happens to
+                // sit — otherwise only Saturn's neighbours would look
+                // farther apart than the rest.
+                className="flex items-center gap-3 sm:gap-3.5"
               >
                 {CONTENT_PLANET_IDS.map((id) => (
                   <PlanetBadge
