@@ -83,6 +83,7 @@ const PLANETS: PlanetSite[] = [
   {
     id: 'earth',
     textureUrl: '/textures/earth.jpg',
+    cloudTextureUrl: '/textures/earth-clouds.png',
     radius: 1.7,
     orbitRadius: 18.5,
     orbitSpeed: 0.0009,

@@ -26,6 +26,12 @@ export interface PlanetSite {
   orbitParent?: string
   hasRing?: boolean
   ringTextureUrl?: string
+  /** A translucent cloud layer on its own slightly-larger sphere shell,
+   *  rotating independently of the surface for a bit of parallax drift —
+   *  the real technique behind every 3D Earth render, not clouds baked
+   *  into the surface texture itself. The texture's own alpha channel is
+   *  the cloud coverage. */
+  cloudTextureUrl?: string
   /** Undefined/empty = a decorative-only planet, not a gallery stop. */
   items?: GalleryItem[]
   /** Dreamcore treatment: a hex glow/tint color applied as the planet's
@@ -1207,6 +1213,7 @@ class PlanetInstance {
   group = new THREE.Group()
   mesh!: THREE.Mesh
   ring?: THREE.Mesh
+  clouds?: THREE.Mesh
   orbitLine?: THREE.LineLoop
   // `angle`/`radius`/`y` are the debris's own fixed orbital slot (set once
   // at construction); its rendered position is recomputed every frame as
@@ -1393,6 +1400,22 @@ class PlanetInstance {
     )
     this.mesh.userData.planetId = site.id
     this.group.add(this.mesh)
+
+    if (site.cloudTextureUrl) {
+      const cloudTex = loader.load(site.cloudTextureUrl)
+      cloudTex.colorSpace = THREE.SRGBColorSpace
+      this.clouds = new THREE.Mesh(
+        new THREE.SphereGeometry(site.radius * 1.015, 48, 48),
+        new THREE.MeshStandardMaterial({
+          map: cloudTex,
+          transparent: true,
+          depthWrite: false,
+          roughness: 1,
+          metalness: 0,
+        })
+      )
+      this.group.add(this.clouds)
+    }
 
     if (site.auraColor && !isSun) {
       const color = new THREE.Color(site.auraColor)
@@ -1653,6 +1676,10 @@ class PlanetInstance {
       parentPos.z + this.site.orbitRadius * Math.sin(this.orbitAngle)
     )
     this.group.rotation.y += SELF_SPIN_SPEED
+    // A bit faster than the surface itself, so the cloud shell visibly
+    // drifts relative to the ground rather than spinning as one rigid
+    // piece with it.
+    if (this.clouds) this.clouds.rotation.y += SELF_SPIN_SPEED * 0.6
     this._updateOrnamentation(time)
   }
 
@@ -2072,7 +2099,7 @@ class PlanetInstance {
       ;(this.orbitLine.material as THREE.Material).dispose()
       this.orbitLine.parent?.remove(this.orbitLine)
     }
-    ;[this.mesh, this.ring, ...this.debris.map((d) => d.mesh)].forEach((m) => {
+    ;[this.mesh, this.ring, this.clouds, ...this.debris.map((d) => d.mesh)].forEach((m) => {
       if (!m) return
       m.geometry.dispose()
       const mats = Array.isArray(m.material) ? m.material : [m.material]
