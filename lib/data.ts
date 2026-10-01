@@ -141,6 +141,20 @@ export const projects: Project[] = [
     color: '#C9A84C',
     gridHeight: 420,
   },
+  {
+    id: 'flux-glow',
+    title: 'Flux Glow',
+    subtitle: 'AI Photo Retouching Studio',
+    description:
+      'MediaPipe’s 478-point face mesh drives true frequency-separation skin smoothing and localized pinch-warp contour slimming — live from the camera or a single photo, every pixel processed client-side with nothing ever uploaded.',
+    tech: ['React 19', 'MediaPipe', 'Canvas API', 'TypeScript', 'Vite'],
+    link: 'https://flux-glow-f60xl28cu-fox-1121.vercel.app/',
+    image: '/images/flux-glow.png',
+    gallery: [{ src: '/images/flux-glow.png', caption: 'Smooth, contour, and filter — live, on-device, icon toolbar' }],
+    highlights: ['True frequency-separation skin smoothing, not a flat blur', 'Live camera preview — see every slider change in real time', '478-point face mesh, fully client-side, nothing uploaded'],
+    color: '#D4AF37',
+    gridHeight: 480,
+  },
 ]
 
 export const skillCategories = [

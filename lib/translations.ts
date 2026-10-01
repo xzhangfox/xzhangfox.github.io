@@ -224,6 +224,12 @@ export const translations: Record<Language, Dict> = {
           description: 'Details to be announced.',
           highlights: [],
         },
+        {
+          subtitle: 'AI Photo Retouching Studio',
+          description:
+            'MediaPipe’s 478-point face mesh drives true frequency-separation skin smoothing and localized pinch-warp contour slimming — live from the camera or a single photo, every pixel processed client-side with nothing ever uploaded.',
+          highlights: ['True frequency-separation skin smoothing, not a flat blur', 'Live camera preview — see every slider change in real time', '478-point face mesh, fully client-side, nothing uploaded'],
+        },
       ],
     },
     education: {
@@ -384,6 +390,12 @@ export const translations: Record<Language, Dict> = {
           subtitle: '待定',
           description: '详情待公布。',
           highlights: [],
+        },
+        {
+          subtitle: 'AI 智能修图工作室',
+          description:
+            '基于 MediaPipe 478 点人脸网格，驱动真正的频率分离磨皮算法与局部像素挤压式瘦脸调整 —— 支持实时摄像头或单张照片，所有像素处理均在本地完成，照片从不上传。',
+          highlights: ['真正的频率分离磨皮，而非简单模糊', '实时摄像头预览 —— 每次调整参数即时可见', '478 点人脸网格，完全在本地运行，照片从不上传'],
         },
       ],
     },
