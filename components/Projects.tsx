@@ -8,15 +8,15 @@ import ProjectPreviewModal, { type PreviewProject } from './ProjectPreviewModal'
 import { projects } from '@/lib/data'
 import { useLanguage } from '@/lib/i18n'
 
-// Saturn hosts two of the Flux apps; the Moon hosts Flux Path on its own
-// orbit around Earth; Venus hosts Flux Finance, the AI Bubble Monitor, and
-// Flux Glow; Earth hosts Flux Mythos — a concept-stage game, not a live
+// Saturn hosts two of the Flux apps; the Moon hosts Flux Path and Flux
+// Glow on its own orbit around Earth; Venus hosts Flux Finance, the AI
+// Bubble Monitor, and Flux Scribe; Earth hosts Flux Mythos — a concept-stage game, not a live
 // app, which is why it has no `link` (see lib/data.ts) and falls back to
 // the shared modal's "coming soon" state instead of a "Visit Live Site"
 // button.
 const SATURN_PROJECT_IDS = ['flux-nutrition', 'flux-career']
-const MOON_PROJECT_IDS = ['flux-path']
-const VENUS_PROJECT_IDS = ['flux-finance', 'financial-tracker', 'flux-glow']
+const MOON_PROJECT_IDS = ['flux-path', 'flux-glow']
+const VENUS_PROJECT_IDS = ['flux-finance', 'financial-tracker', 'flux-scribe']
 const EARTH_PROJECT_IDS = ['flux-mythos']
 
 // Reverse lookup — which planet hosts a given project, so the detail
@@ -41,6 +41,7 @@ const PROJECT_LOGOS: Record<string, string> = {
   'flux-career': '/logos/flux-career.svg',
   'flux-finance': '/logos/flux-finance.svg',
   'flux-glow': '/logos/flux-glow.svg',
+  'flux-scribe': '/logos/flux-scribe.svg',
 }
 
 // Static (language-independent) and module-level so it never changes

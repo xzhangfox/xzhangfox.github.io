@@ -236,6 +236,12 @@ export const translations: Record<Language, Dict> = {
             'A beauty camera that runs entirely in the browser. MediaPipe’s 478-point face mesh drives frequency-separation skin smoothing, whitening, blemish and wrinkle removal, mesh-based face shaping, and film-style filters previewed on your own face — live from the camera or on a photo, with hold-to-compare, and every pixel processed on-device.',
           highlights: ['Frequency-separation smoothing, not a flat blur', 'Face-mesh shaping and filters previewed on your own face', 'Fully on-device — nothing is ever uploaded'],
         },
+        {
+          subtitle: 'AI Meeting Minutes & Q&A',
+          description:
+            'Record a meeting or upload a recording and get back who said what. Audio is encoded to compact MP3 on-device, then transcribed in a single Gemini pass that separates speakers, timestamps every turn and keeps the original language. Minutes, action items and a chat assistant all run on the text transcript, so a meeting is paid for once, and every answer cites the moment it came from.',
+          highlights: ['Speaker diarization with one-tap renaming', 'Minutes, decisions and action items with owners', 'AI Q&A with clickable timestamp citations'],
+        },
       ],
     },
     education: {
@@ -405,6 +411,12 @@ export const translations: Record<Language, Dict> = {
           description:
             '完全在浏览器中运行的美颜相机。MediaPipe 478 点人脸网格驱动频率分离磨皮、美白、祛痘祛皱、基于网格的脸型精修，以及在你自己脸上实时预览的胶片风滤镜 —— 支持实时摄像头或单张照片，长按即可对比原图，所有像素都在本地处理。',
           highlights: ['频率分离磨皮，而非简单模糊', '人脸网格精修 + 在你脸上实时预览的滤镜', '全程本地处理，照片从不上传'],
+        },
+        {
+          subtitle: 'AI 会议纪要与问答',
+          description:
+            '现场录音或上传录音文件，即可得到“谁说了什么”。音频在本地编码为小巧的 MP3，再由 Gemini 一次完成转写：区分发言人、为每段发言打上时间戳，并保留原始语言。会议纪要、待办事项和 AI 助手都基于文字稿运行，每场会议只需付费处理一次音频；助手的每个回答都会标注出处时间点。',
+          highlights: ['自动区分发言人，一键重命名', '会议纪要、决策与带负责人的待办事项', 'AI 问答，引用可点击跳转的时间戳'],
         },
       ],
     },

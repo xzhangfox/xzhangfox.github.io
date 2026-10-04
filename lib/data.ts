@@ -164,6 +164,23 @@ export const projects: Project[] = [
     color: '#D4AF37',
     gridHeight: 480,
   },
+  {
+    id: 'flux-scribe',
+    title: 'Flux Scribe',
+    subtitle: 'AI Meeting Minutes & Q&A',
+    description:
+      'Record a meeting or upload a recording and get back who said what. Audio is encoded to compact MP3 on-device, then transcribed in a single Gemini pass that separates speakers, timestamps every turn and keeps the original language. Minutes, action items and a chat assistant all run on the text transcript, so a meeting is paid for once, and every answer cites the moment it came from.',
+    tech: ['React 19', 'Gemini API', 'Web Audio / AudioWorklet', 'Vercel Functions', 'IndexedDB'],
+    image: '/images/projects/flux-scribe/cover.jpg',
+    gallery: [
+      { src: '/images/projects/flux-scribe/cover.jpg', caption: 'Speaker-separated transcript beside AI-written minutes and action items' },
+      { src: '/images/projects/flux-scribe/ask.jpg', caption: 'Ask the meeting — answers cite timestamps you can jump to' },
+      { src: '/images/projects/flux-scribe/record.jpg', caption: 'Record live or upload a file — encoded on-device as you go' },
+    ],
+    highlights: ['Speaker diarization with one-tap renaming', 'Minutes, decisions and action items with owners', 'AI Q&A with clickable timestamp citations'],
+    color: '#D4AF37',
+    gridHeight: 480,
+  },
 ]
 
 export const skillCategories = [
