@@ -171,6 +171,7 @@ export const projects: Project[] = [
     description:
       'Record a meeting or upload a recording and get back who said what. Audio is encoded to compact MP3 on-device, then transcribed in a single Gemini pass that separates speakers, timestamps every turn and keeps the original language. Minutes, action items and a chat assistant all run on the text transcript, so a meeting is paid for once, and every answer cites the moment it came from.',
     tech: ['React 19', 'Gemini API', 'Web Audio / AudioWorklet', 'Vercel Functions', 'IndexedDB'],
+    link: 'https://flux-scribe-otzr.vercel.app/',
     image: '/images/projects/flux-scribe/cover.jpg',
     gallery: [
       { src: '/images/projects/flux-scribe/cover.jpg', caption: 'Speaker-separated transcript beside AI-written minutes and action items' },
