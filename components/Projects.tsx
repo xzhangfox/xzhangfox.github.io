@@ -351,6 +351,12 @@ float fbm(vec2 p) {
   for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; }
   return v;
 }
+// fbm around the tunnel's circumference (x in turns) without a seam where
+// the angle wraps: the last fifth cross-fades into the start.
+float ringFbm(float x, float y, float k) {
+  float f = fract(x);
+  return mix(fbm(vec2(f * k, y)), fbm(vec2((f - 1.0) * k, y)), smoothstep(0.8, 1.0, f));
+}
 void main() {
   vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
   float r = length(uv);
@@ -360,10 +366,10 @@ void main() {
   float depth = 0.32 / max(r, 0.001) + u_t * 7.0;
   float ang = a / 6.2831853 + depth * 0.11 + u_t * 0.35;
   // Filaments: noise stretched along depth, sharpened into strands.
-  float n = fbm(vec2(ang * 26.0, depth * 0.3));
+  float n = ringFbm(ang, depth * 0.3, 26.0);
   float strands = pow(smoothstep(0.5, 0.95, n), 3.0);
-  float violet = pow(smoothstep(0.55, 0.95, fbm(vec2(ang * 14.0 - 7.3, depth * 0.22))), 2.5);
-  float fine = pow(smoothstep(0.62, 1.0, fbm(vec2(ang * 70.0 + 3.1, depth * 0.9))), 3.0);
+  float violet = pow(smoothstep(0.55, 0.95, ringFbm(ang + 0.37, depth * 0.22, 14.0)), 2.5);
+  float fine = pow(smoothstep(0.62, 1.0, ringFbm(ang + 0.71, depth * 0.9, 70.0)), 3.0);
   // Faint spacetime grid on the tunnel wall.
   float rings = smoothstep(0.93, 1.0, fract(depth * 0.5)) * 0.35;
   float meridians = smoothstep(0.985, 1.0, abs(cos(ang * 6.2831853 * 8.0))) * 0.25;
@@ -380,11 +386,19 @@ void main() {
   // Aperture: tunnel inside, lensing ring on the rim, space outside.
   float inside = 1.0 - smoothstep(aperture - 0.05, aperture, r);
   float rim = exp(-pow((r - aperture) * 18.0, 2.0));
-  float rimNoise = 0.6 + 0.8 * fbm(vec2(a * 3.0 + u_t * 4.0, u_t * 2.0));
+  float rimNoise = 0.6 + 0.8 * ringFbm(a / 6.2831853 + u_t * 0.6, u_t * 2.0, 19.0);
   vec3 rimCol = mix(vec3(0.5, 0.85, 1.0), vec3(1.0, 0.82, 0.45), 0.5 + 0.5 * sin(a * 2.0 + u_t * 3.0));
   vec3 outCol = col * inside + rimCol * rim * rimNoise * 1.4;
   float alpha = clamp(inside + rim * rimNoise, 0.0, 1.0) * u_env;
-  gl_FragColor = vec4(outCol * u_env, alpha);
+  // Dissolve into the page on every side rather than stopping at the
+  // container's edge: a soft falloff from each edge plus an elliptical
+  // vignette, applied to colour and alpha alike (premultiplied).
+  vec2 q = gl_FragCoord.xy / u_res;
+  float edgeDist = min(min(gl_FragCoord.x, u_res.x - gl_FragCoord.x), min(gl_FragCoord.y, u_res.y - gl_FragCoord.y));
+  float edgeFade = smoothstep(0.0, 0.24 * min(u_res.x, u_res.y), edgeDist);
+  float vignette = 1.0 - smoothstep(0.62, 1.08, length((q - 0.5) * 2.0));
+  float fade = edgeFade * vignette;
+  gl_FragColor = vec4(outCol * u_env * fade, alpha * fade);
 }`
 
 /** The jump between the galaxy and the card gallery (see WORMHOLE_FRAG),
