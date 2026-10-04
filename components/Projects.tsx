@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import FadeIn from './FadeIn'
 import SolarSystemGallery, { type SolarSystemGalleryHandle, type PlanetSite, type ScreenRect } from './SolarSystemGallery'
 import ProjectPreviewModal, { type PreviewProject } from './ProjectPreviewModal'
@@ -330,6 +330,100 @@ function RingGlyph({ half }: { half: 'back' | 'front' }) {
   )
 }
 
+/** The jump between the galaxy and the card gallery: rings of the site's
+ *  neon (cyan, magenta, gold) rushing at the viewer around a bright
+ *  throat, with star streaks — swelling in and out over `duration`. A
+ *  plain 2D canvas over the 3D scene, so it needs nothing from three.js. */
+function Wormhole({ duration }: { duration: number }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const c = ref.current
+    const ctx = c?.getContext('2d')
+    if (!c || !ctx) return
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const w = c.clientWidth
+    const h = c.clientHeight
+    c.width = w * dpr
+    c.height = h * dpr
+    ctx.scale(dpr, dpr)
+    const cx = w / 2
+    const cy = h / 2
+    const reach = Math.hypot(w, h) / 2
+    const hues = ['26, 242, 255', '255, 46, 196', '201, 168, 76']
+    const streaks = Array.from({ length: 160 }, () => ({ a: Math.random() * Math.PI * 2, z: Math.random(), rgb: hues[(Math.random() * 3) | 0] }))
+    const RINGS = 16
+    const start = performance.now()
+    let raf = 0
+    const frame = (now: number) => {
+      const t = Math.min(1, (now - start) / duration)
+      const env = Math.sin(Math.PI * t)
+      const travel = t * t * 5 // accelerating through the throat
+      ctx.clearRect(0, 0, w, h)
+      const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, reach)
+      bg.addColorStop(0, `rgba(255, 255, 255, ${0.95 * env ** 3})`)
+      bg.addColorStop(0.06, `rgba(150, 220, 255, ${0.55 * env})`)
+      bg.addColorStop(0.35, `rgba(30, 10, 60, ${0.85 * env})`)
+      bg.addColorStop(1, `rgba(0, 0, 0, ${env})`)
+      ctx.fillStyle = bg
+      ctx.fillRect(0, 0, w, h)
+      ctx.lineCap = 'round'
+      for (let i = 0; i < RINGS; i++) {
+        const z = 1 - ((i / RINGS + travel) % 1) // 1 = far, ~0 = at the viewer
+        const r = (reach * 0.06) / Math.max(z, 0.02)
+        if (r > reach * 1.6) continue
+        ctx.save()
+        ctx.translate(cx, cy)
+        ctx.rotate(z * 3 + t * 2)
+        ctx.strokeStyle = `rgba(${hues[i % 3]}, ${env * (1 - z) * 0.9})`
+        ctx.lineWidth = 1 + (1 - z) * 5
+        ctx.beginPath()
+        ctx.ellipse(0, 0, r, r * 0.86, 0, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.restore()
+      }
+      for (const s of streaks) {
+        const z = 1 - ((s.z + travel * 1.4) % 1)
+        const r1 = (reach * 0.05) / Math.max(z, 0.02)
+        const r2 = (reach * 0.05) / Math.max(z + 0.08, 0.02)
+        ctx.strokeStyle = `rgba(${s.rgb}, ${env * (1 - z)})`
+        ctx.lineWidth = 0.6 + (1 - z) * 1.6
+        ctx.beginPath()
+        ctx.moveTo(cx + Math.cos(s.a) * r2, cy + Math.sin(s.a) * r2)
+        ctx.lineTo(cx + Math.cos(s.a) * r1, cy + Math.sin(s.a) * r1)
+        ctx.stroke()
+      }
+      if (t < 1) raf = requestAnimationFrame(frame)
+    }
+    raf = requestAnimationFrame(frame)
+    return () => cancelAnimationFrame(raf)
+  }, [duration])
+  return <canvas ref={ref} aria-hidden className="pointer-events-none absolute inset-0 z-20 h-full w-full" />
+}
+
+/** Spread / galaxy toggle icons — a 2×2 card grid, and a two-armed spiral. */
+function GridIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <rect x="4" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5" />
+      <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5" />
+      <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5" />
+    </svg>
+  )
+}
+function GalaxyIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+      <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
+      <path d="M12 12c2.6-2.8 7.5-1.8 7.6 1.8.1 3.4-4.4 6.4-9 5.4" />
+      <path d="M12 12c-2.6 2.8-7.5 1.8-7.6-1.8C4.3 6.8 8.8 3.8 13.4 4.8" />
+    </svg>
+  )
+}
+
+// Wormhole-jump timings (ms) — see openGallery/closeGallery.
+const WORMHOLE_MS = 1100
+
 export default function Projects() {
   const { t } = useLanguage()
   const items: PreviewProject[] = projects.map((p, i) => ({ ...p, ...t.projects.items[i] }))
@@ -350,6 +444,49 @@ export default function Projects() {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const [hoverInfo, setHoverInfo] = useState<{ localIndex: number; clientX: number; clientY: number } | null>(null)
   const galleryRef = useRef<SolarSystemGalleryHandle>(null)
+  // Card-gallery mode: the camera pulls away from the galaxy, a wormhole
+  // carries you through, and every project's card spreads out ('on');
+  // the galaxy button reverses it. 'out'/'in' are the jumps in between.
+  const [gallery, setGallery] = useState<'off' | 'out' | 'on' | 'in'>('off')
+  const [showCards, setShowCards] = useState(false)
+  const [spread, setSpread] = useState(false)
+  const [wormholeRun, setWormholeRun] = useState(0)
+  const [wormholeOn, setWormholeOn] = useState(false)
+  const reduceMotion = useReducedMotion()
+  const timers = useRef<number[]>([])
+  useEffect(() => () => timers.current.forEach(clearTimeout), [])
+  const after = (ms: number, fn: () => void) => {
+    timers.current.push(window.setTimeout(fn, reduceMotion ? Math.min(ms, 200) : ms))
+  }
+  const runWormhole = () => {
+    if (reduceMotion) return
+    setWormholeRun((n) => n + 1)
+    setWormholeOn(true)
+    after(WORMHOLE_MS, () => setWormholeOn(false))
+  }
+  const openGallery = () => {
+    if (gallery !== 'off') return
+    setGallery('out')
+    galleryRef.current?.setWarp(true)
+    after(450, runWormhole)
+    after(1150, () => {
+      setShowCards(true)
+      setGallery('on')
+      // Mount stacked at the center, then let them fly out to the grid.
+      requestAnimationFrame(() => requestAnimationFrame(() => setSpread(true)))
+    })
+  }
+  const closeGallery = () => {
+    if (gallery !== 'on') return
+    setGallery('in')
+    setSpread(false)
+    after(550, () => {
+      setShowCards(false)
+      runWormhole()
+    })
+    after(1150, () => galleryRef.current?.setWarp(false))
+    after(2050, () => setGallery('off'))
+  }
   const wrapperRef = useRef<HTMLDivElement>(null)
   const flybyLabelRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const openIdRef = useRef(openId)
@@ -492,7 +629,7 @@ export default function Projects() {
             <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-surface-card border border-gold/15">
               <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
               <span className="text-white/40 text-xs font-mono">
-                {activePlanetId === null ? t.projects.liveBadgeOverview : t.projects.liveBadgeEntered}
+                {gallery !== 'off' ? t.projects.liveBadgeGallery : activePlanetId === null ? t.projects.liveBadgeOverview : t.projects.liveBadgeEntered}
               </span>
             </div>
           </FadeIn>
@@ -526,7 +663,7 @@ export default function Projects() {
         {/* Top-left: in the overview, a badge per content planet (an
             alternate entry point to clicking the tiny 3D mesh); once
             entered, a back button plus a badge per project on that planet. */}
-        <div className="pointer-events-none absolute left-2 top-2 z-10 flex items-center gap-1.5 sm:left-4 sm:top-4 sm:gap-2">
+        <div className="pointer-events-none absolute left-2 top-2 z-30 flex items-center gap-1.5 sm:left-4 sm:top-4 sm:gap-2">
           <AnimatePresence mode="wait">
             {activePlanetId === null ? (
               <motion.div
@@ -543,18 +680,47 @@ export default function Projects() {
                 // farther apart than the rest.
                 className="flex items-center gap-3 sm:gap-3.5"
               >
-                {CONTENT_PLANET_IDS.map((id) => (
-                  <PlanetBadge
-                    key={id}
-                    textureUrl={PLANET_TEXTURES[id]}
-                    label={PLANET_LABELS[id]}
-                    color={PLANET_COLORS[id]}
-                    intensity={PLANET_INTENSITIES[id]}
-                    ring={id === 'saturn'}
-                    sphere
-                    onClick={() => galleryRef.current?.enterPlanet(id)}
-                  />
-                ))}
+                {/* Hidden (not just faded) while in the card gallery, so
+                    they can't be clicked through to a planet out there. */}
+                <div
+                  aria-hidden={gallery !== 'off'}
+                  className="flex items-center gap-3 sm:gap-3.5"
+                  style={{ opacity: gallery === 'off' ? 1 : 0, visibility: gallery === 'off' ? 'visible' : 'hidden', transition: 'opacity 0.5s, visibility 0.5s' }}
+                >
+                  {CONTENT_PLANET_IDS.map((id) => (
+                    <PlanetBadge
+                      key={id}
+                      textureUrl={PLANET_TEXTURES[id]}
+                      label={PLANET_LABELS[id]}
+                      color={PLANET_COLORS[id]}
+                      intensity={PLANET_INTENSITIES[id]}
+                      ring={id === 'saturn'}
+                      sphere
+                      onClick={() => galleryRef.current?.enterPlanet(id)}
+                    />
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={gallery === 'off' ? openGallery : closeGallery}
+                  disabled={gallery === 'out' || gallery === 'in'}
+                  aria-label={gallery === 'off' ? t.projects.galleryView : t.projects.backToGalaxy}
+                  title={gallery === 'off' ? t.projects.galleryView : t.projects.backToGalaxy}
+                  className="pointer-events-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/[0.04] text-white/70 backdrop-blur-sm transition-all duration-300 hover:scale-110 hover:border-white/45 hover:text-white active:scale-95 disabled:cursor-default sm:h-7 sm:w-7"
+                >
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.span
+                      key={gallery === 'off' || gallery === 'out' ? 'grid' : 'galaxy'}
+                      initial={{ opacity: 0, rotate: -90, scale: 0.5 }}
+                      animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                      exit={{ opacity: 0, rotate: 90, scale: 0.5 }}
+                      transition={{ duration: 0.25 }}
+                      className="flex"
+                    >
+                      {gallery === 'off' || gallery === 'out' ? <GridIcon /> : <GalaxyIcon />}
+                    </motion.span>
+                  </AnimatePresence>
+                </button>
               </motion.div>
             ) : (
               <motion.div
@@ -591,6 +757,75 @@ export default function Projects() {
             )}
           </AnimatePresence>
         </div>
+
+        {wormholeOn && <Wormhole key={wormholeRun} duration={WORMHOLE_MS} />}
+
+        {/* The card gallery: every project's preview card, stacked at the
+            center on arrival and spread out into a grid (framer's layout
+            animation carries each one between the two), then gathered
+            back before the jump home. */}
+        <AnimatePresence>
+          {showCards && (
+            <motion.div
+              key="card-gallery"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.25 } }}
+              className="absolute inset-0 z-20 overflow-y-auto bg-black/35 px-4 pb-12 pt-14 sm:px-8 sm:pt-16"
+            >
+              <div
+                className={
+                  spread
+                    ? 'mx-auto grid max-w-5xl grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4'
+                    : 'grid h-full place-items-center'
+                }
+              >
+                {items.map((project, i) => (
+                  <motion.button
+                    key={project.id}
+                    type="button"
+                    layout
+                    initial={{ opacity: 0, scale: 0.3 }}
+                    animate={{ opacity: 1, scale: spread ? 1 : 0.85, rotate: spread ? 0 : (i - (items.length - 1) / 2) * 5 }}
+                    exit={{ opacity: 0, scale: 0.3 }}
+                    transition={{
+                      type: 'spring',
+                      stiffness: 160,
+                      damping: 22,
+                      delay: spread ? i * 0.05 : (items.length - 1 - i) * 0.03,
+                    }}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect()
+                      setOpenOriginRect({ top: r.top, left: r.left, width: r.width, height: r.height })
+                      setOpenId(project.id)
+                    }}
+                    className={`group overflow-hidden rounded-xl border bg-black/55 text-left backdrop-blur-md ${spread ? 'w-full' : 'w-44 sm:w-56'}`}
+                    style={{
+                      gridArea: spread ? undefined : '1 / 1',
+                      borderColor: `${project.color}55`,
+                      boxShadow: `0 0 18px ${project.color}22`,
+                    }}
+                  >
+                    <div className="aspect-[16/10] overflow-hidden bg-black/40">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={project.image} alt="" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                    </div>
+                    <div className="p-2.5 sm:p-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ background: project.color }} />
+                        <span className="font-mono text-[8px] uppercase tracking-[0.2em] text-white/40 sm:text-[9px]">
+                          {PLANET_LABELS[PROJECT_PLANET_ID[project.id]] ?? ''}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs font-semibold leading-tight text-white/90 sm:text-sm">{project.title}</p>
+                      <p className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-white/45 sm:text-[11px]">{project.subtitle}</p>
+                    </div>
+                  </motion.button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Carrier/HUD-style readout — only once a project's actually
             focused, not just while idling on the ring. */}

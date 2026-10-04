@@ -94,6 +94,10 @@ export interface SolarSystemGalleryHandle {
    *  the camera from a top-down view toward a look-up one as it rises
    *  (see App.pitch). Caller-driven (a scroll listener), not polled. */
   setScrollTilt: (t: number) => void
+  /** Pull the overview camera far back (1) — the first beat of the
+   *  wormhole jump to the card gallery — or fly it home again (0). Eased
+   *  over ~0.9s; while fully warped out the scene stops rendering. */
+  setWarp: (on: boolean) => void
 }
 
 interface HoverInfo {
@@ -2625,6 +2629,11 @@ class App {
    *  `focusScaleAdjust`/`craftOffsetXY`) so every PlanetInstance reads the
    *  live value without the App needing a per-planet setter. */
   pitch = { value: TILT_PITCH_TOP }
+  /** 0..1 progress of the wormhole pull-back (see setWarp) and where it's
+   *  heading. Eased with a cube, so leaving accelerates away and coming
+   *  back decelerates into the usual overview. */
+  warp = 0
+  warpTarget = 0
   hoveredIndex = -1
   time = 0
 
@@ -2778,7 +2787,17 @@ class App {
   // so it tracks scroll continuously.
   updateOverviewCamera() {
     const pitch = this.pitch.value
-    const d = this._overviewDistance
+    const w = this.warp * this.warp * this.warp
+    const d = this._overviewDistance * (1 + w * 5)
+    // Keep the receding system inside the far plane, and widen the lens a
+    // touch as it goes for a sense of speed.
+    const far = Math.max(400, d * 1.6)
+    const fov = CAMERA_FOV + w * 25
+    if (this.camera.far !== far || this.camera.fov !== fov) {
+      this.camera.far = far
+      this.camera.fov = fov
+      this.camera.updateProjectionMatrix()
+    }
     this.overviewCameraPos.set(0, Math.sin(pitch) * d, Math.cos(pitch) * d)
     // The up vector sweeps together with position — always perpendicular
     // to the view direction within the same vertical plane — so there's
@@ -3191,6 +3210,10 @@ class App {
     this.scrollTilt = clamp(t, 0, 1)
   }
 
+  setWarp(on: boolean) {
+    this.warpTarget = on ? 1 : 0
+  }
+
   setHover(localIndex: number) {
     if (localIndex === this.hoveredIndex) return
     this.hoveredIndex = localIndex
@@ -3457,6 +3480,14 @@ class App {
 
   update() {
     this.time += 0.016
+    if (this.warp !== this.warpTarget) {
+      const step = 1 / (0.9 * 60)
+      this.warp = this.warpTarget > this.warp ? Math.min(this.warpTarget, this.warp + step) : Math.max(this.warpTarget, this.warp - step)
+    } else if (this.warp === 1) {
+      // Fully jumped to the card gallery — nothing of the scene is visible.
+      this.raf = window.requestAnimationFrame(this.update.bind(this))
+      return
+    }
     this.pitch.value = THREE.MathUtils.lerp(TILT_PITCH_TOP, TILT_PITCH_BOTTOM, this.scrollTilt)
     this.updateOverviewCamera()
 
@@ -3596,6 +3627,7 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     getFlybyLabels: () => appRef.current?.getFlybyLabels() ?? [],
     setPreviewOpen: (open: boolean) => appRef.current?.setPreviewOpen(open),
     setScrollTilt: (t: number) => appRef.current?.setScrollTilt(t),
+    setWarp: (on: boolean) => appRef.current?.setWarp(on),
   }), [])
 
   useEffect(() => {

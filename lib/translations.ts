@@ -56,6 +56,9 @@ export interface Dict {
     liveBadgeOverview: string
     liveBadgeEntered: string
     hudLabel: string
+    galleryView: string
+    backToGalaxy: string
+    liveBadgeGallery: string
     comingSoon: string
     moreSoonTitle: string
     moreSoonDesc: string
@@ -185,6 +188,9 @@ export const translations: Record<Language, Dict> = {
       liveBadgeOverview: 'Click a planet icon on the left to explore',
       liveBadgeEntered: 'Click a craft or badge for details',
       hudLabel: 'Project Intel',
+      galleryView: 'Spread out every project',
+      backToGalaxy: 'Back to the galaxy',
+      liveBadgeGallery: 'Click a card for details',
       comingSoon: 'Coming soon',
       moreSoonTitle: 'More in the works',
       moreSoonDesc: 'New builds land here as they ship.',
@@ -352,6 +358,9 @@ export const translations: Record<Language, Dict> = {
       liveBadgeOverview: '点击左侧图标探索已上线的星球',
       liveBadgeEntered: '点击飞行器或图标查看详情',
       hudLabel: '项目情报',
+      galleryView: '铺开所有项目',
+      backToGalaxy: '返回星系',
+      liveBadgeGallery: '点击卡片查看详情',
       comingSoon: '即将上线',
       moreSoonTitle: '更多项目开发中',
       moreSoonDesc: '新项目上线后会陆续加入这里。',
