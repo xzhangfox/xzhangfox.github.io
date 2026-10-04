@@ -330,16 +330,20 @@ function RingGlyph({ half }: { half: 'back' | 'front' }) {
   )
 }
 
-// The wormhole, as a single fragment shader over a full-screen quad: an
-// aperture opens in space with a hot gravitational-lensing ring at its
-// rim; inside, a spiralling tunnel of luminous filaments over a faint
-// spacetime grid rushes past toward a white-hot exit. `u_env` (0→1→0)
-// opens, holds and closes it; `u_t` drives the flight.
+// The wormhole: a round portal torn open in the dark. Light from the
+// surrounding void streams inward through an accretion ring and a
+// lensing halo (with a chromatic split at the event horizon); inside, a
+// spiralling tunnel of luminous filaments over a faint spacetime grid
+// rushes toward a white-hot exit that flares to fill the portal as you
+// emerge. `u_env` (0→1→0) opens, holds and closes it; `u_t` drives the
+// flight; `u_flash` is the exit flare. Units are fractions of the
+// canvas's shorter side, so it stays a circle at any aspect.
 const WORMHOLE_FRAG = `
 precision highp float;
 uniform vec2 u_res;
 uniform float u_t;
 uniform float u_env;
+uniform float u_flash;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float noise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -351,54 +355,59 @@ float fbm(vec2 p) {
   for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; }
   return v;
 }
-// fbm around the tunnel's circumference (x in turns) without a seam where
-// the angle wraps: the last fifth cross-fades into the start.
+// fbm around a circumference (x in turns) without a seam where the angle
+// wraps: the last fifth cross-fades into the start.
 float ringFbm(float x, float y, float k) {
   float f = fract(x);
   return mix(fbm(vec2(f * k, y)), fbm(vec2((f - 1.0) * k, y)), smoothstep(0.8, 1.0, f));
 }
 void main() {
-  vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+  vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / min(u_res.x, u_res.y);
   float r = length(uv);
   float a = atan(uv.y, uv.x);
-  float aperture = 0.08 + 1.1 * u_env;
-  // Tunnel coordinates: depth grows toward the centre, the walls twist.
-  float depth = 0.32 / max(r, 0.001) + u_t * 7.0;
-  float ang = a / 6.2831853 + depth * 0.11 + u_t * 0.35;
-  // Filaments: noise stretched along depth, sharpened into strands.
-  float n = ringFbm(ang, depth * 0.3, 26.0);
-  float strands = pow(smoothstep(0.5, 0.95, n), 3.0);
+  float turn = a / 6.2831853;
+  float aperture = 0.02 + 0.40 * u_env;
+
+  // ---- inside: the tunnel ----
+  float rr = r / max(aperture, 0.001) * 0.45; // tunnel coords scale with the portal
+  float depth = 0.32 / max(rr, 0.001) + u_t * 7.0;
+  float ang = turn + depth * 0.11 + u_t * 0.35;
+  float strands = pow(smoothstep(0.5, 0.95, ringFbm(ang, depth * 0.3, 26.0)), 3.0);
   float violet = pow(smoothstep(0.55, 0.95, ringFbm(ang + 0.37, depth * 0.22, 14.0)), 2.5);
   float fine = pow(smoothstep(0.62, 1.0, ringFbm(ang + 0.71, depth * 0.9, 70.0)), 3.0);
-  // Faint spacetime grid on the tunnel wall.
   float rings = smoothstep(0.93, 1.0, fract(depth * 0.5)) * 0.35;
   float meridians = smoothstep(0.985, 1.0, abs(cos(ang * 6.2831853 * 8.0))) * 0.25;
-  float near = smoothstep(0.0, 0.6, r); // walls closer to the eye read brighter
-  // Dark walls with depth haze, so the light reads as filaments, not fill.
-  vec3 deep = mix(vec3(0.01, 0.015, 0.06), vec3(0.07, 0.025, 0.17), smoothstep(0.15, 1.0, r));
-  vec3 col = deep;
+  float near = smoothstep(0.0, 0.6, rr);
+  vec3 col = mix(vec3(0.01, 0.015, 0.06), vec3(0.07, 0.025, 0.17), smoothstep(0.15, 1.0, rr));
   col += vec3(0.25, 0.75, 1.0) * strands * (0.35 + 1.3 * near);
   col += vec3(0.55, 0.3, 1.0) * violet * (0.25 + 0.7 * near);
   col += vec3(1.0, 0.35, 0.85) * fine * 0.8 * near;
   col += vec3(0.45, 0.6, 1.0) * (rings + meridians) * near * 0.8;
-  // White-hot exit at the far end.
-  col += vec3(0.85, 0.95, 1.0) * exp(-r * 9.0) * 1.6 + vec3(0.4, 0.7, 1.0) * exp(-r * 3.5) * 0.5;
-  // Aperture: tunnel inside, lensing ring on the rim, space outside.
-  float inside = 1.0 - smoothstep(aperture - 0.05, aperture, r);
-  float rim = exp(-pow((r - aperture) * 18.0, 2.0));
-  float rimNoise = 0.6 + 0.8 * ringFbm(a / 6.2831853 + u_t * 0.6, u_t * 2.0, 19.0);
-  vec3 rimCol = mix(vec3(0.5, 0.85, 1.0), vec3(1.0, 0.82, 0.45), 0.5 + 0.5 * sin(a * 2.0 + u_t * 3.0));
-  vec3 outCol = col * inside + rimCol * rim * rimNoise * 1.4;
-  float alpha = clamp(inside + rim * rimNoise, 0.0, 1.0) * u_env;
-  // Dissolve into the page on every side rather than stopping at the
-  // container's edge: a soft falloff from each edge plus an elliptical
-  // vignette, applied to colour and alpha alike (premultiplied).
-  vec2 q = gl_FragCoord.xy / u_res;
-  float edgeDist = min(min(gl_FragCoord.x, u_res.x - gl_FragCoord.x), min(gl_FragCoord.y, u_res.y - gl_FragCoord.y));
-  float edgeFade = smoothstep(0.0, 0.24 * min(u_res.x, u_res.y), edgeDist);
-  float vignette = 1.0 - smoothstep(0.62, 1.08, length((q - 0.5) * 2.0));
-  float fade = edgeFade * vignette;
-  gl_FragColor = vec4(outCol * u_env * fade, alpha * fade);
+  col += vec3(0.85, 0.95, 1.0) * exp(-rr * 9.0) * 1.6 + vec3(0.4, 0.7, 1.0) * exp(-rr * 3.5) * 0.5;
+  // Exit flare: the white core swells to fill the portal.
+  col = mix(col, vec3(1.0), u_flash * (1.0 - smoothstep(0.0, aperture * (0.4 + 0.8 * u_flash), r)));
+  float inside = 1.0 - smoothstep(aperture - 0.012, aperture, r);
+
+  // ---- the event horizon: a hot rim with a chromatic split ----
+  float rimNoise = 0.6 + 0.8 * ringFbm(turn + u_t * 0.6, u_t * 2.0, 19.0);
+  float rimR = exp(-pow((r - aperture - 0.006) * 70.0, 2.0));
+  float rimG = exp(-pow((r - aperture) * 70.0, 2.0));
+  float rimB = exp(-pow((r - aperture + 0.006) * 70.0, 2.0));
+  vec3 rimCol = vec3(rimR * 1.1, rimG * 0.95, rimB * 1.25) * rimNoise * 1.5;
+
+  // ---- outside: accretion streams pulled inward, and a lensing halo ----
+  float out_ = max(r - aperture, 0.0);
+  float swirl = ringFbm(turn + 0.06 / max(r, 0.02) - u_t * 1.1, r * 14.0 - u_t * 9.0, 48.0);
+  float accretion = pow(smoothstep(0.52, 0.95, swirl), 2.2) * exp(-out_ * 11.0) * step(aperture - 0.01, r);
+  vec3 accCol = mix(vec3(1.0, 0.78, 0.42), vec3(0.45, 0.85, 1.0), 0.5 + 0.5 * sin(turn * 12.566 + u_t * 2.0));
+  float halo = exp(-out_ * 7.0) * 0.35 * step(aperture, r);
+
+  vec3 outCol = col * inside + rimCol + accCol * accretion * 1.6 + vec3(0.35, 0.55, 1.0) * halo;
+  float alpha = clamp(inside + max(max(rimR, rimG), rimB) * rimNoise + accretion + halo, 0.0, 1.0);
+  // Round all the way out: nothing reaches past the portal's own reach.
+  float reach = 1.0 - smoothstep(0.36, 0.5, r);
+  float k = u_env * reach;
+  gl_FragColor = vec4(outCol * k, alpha * k);
 }`
 
 /** The jump between the galaxy and the card gallery (see WORMHOLE_FRAG),
@@ -434,14 +443,20 @@ function Wormhole({ duration }: { duration: number }) {
     gl.uniform2f(gl.getUniformLocation(prog, 'u_res'), c.width, c.height)
     const uT = gl.getUniformLocation(prog, 'u_t')
     const uEnv = gl.getUniformLocation(prog, 'u_env')
+    const uFlash = gl.getUniformLocation(prog, 'u_flash')
+    const smooth = (e0: number, e1: number, x: number) => {
+      const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
+      return t * t * (3 - 2 * t)
+    }
     const start = performance.now()
     let raf = 0
     const frame = (now: number) => {
       const t = Math.min(1, (now - start) / duration)
-      // Opens fast, holds, then closes — eased so the throat "swallows".
-      const env = t < 0.35 ? 1 - (1 - t / 0.35) ** 3 : t > 0.8 ? 1 - ((t - 0.8) / 0.2) ** 2 : 1
+      // Tears open fast, holds while you fly, flares at the exit, closes.
+      const env = t < 0.3 ? 1 - (1 - t / 0.3) ** 3 : t > 0.84 ? 1 - ((t - 0.84) / 0.16) ** 2 : 1
       gl.uniform1f(uT, t * t * 1.6 + t * 0.4)
       gl.uniform1f(uEnv, env)
+      gl.uniform1f(uFlash, smooth(0.66, 0.84, t) * (1 - smooth(0.84, 1, t)))
       gl.clearColor(0, 0, 0, 0)
       gl.clear(gl.COLOR_BUFFER_BIT)
       gl.drawArrays(gl.TRIANGLES, 0, 3)
@@ -450,7 +465,183 @@ function Wormhole({ duration }: { duration: number }) {
     raf = requestAnimationFrame(frame)
     return () => cancelAnimationFrame(raf)
   }, [duration])
-  return <canvas ref={ref} aria-hidden className="pointer-events-none absolute inset-0 z-20 h-full w-full" />
+  return <canvas ref={ref} aria-hidden className="pointer-events-none absolute inset-0 z-[18] h-full w-full" />
+}
+
+/** The card gallery's sky: a drifting nebula, a faint Milky Way band and a
+ *  few hundred stars. With `warp` on, the stars stream past as hyperspace
+ *  streaks; switching it off decelerates them into a slow, twinkling drift
+ *  — so the sky arrives as you drop out of the jump (mount it with `warp`
+ *  off and `arriving`) and streaks away again as you leave. */
+function Starfield({ warp, arriving }: { warp: boolean; arriving: boolean }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const warpRef = useRef(warp)
+  warpRef.current = warp
+  useEffect(() => {
+    const c = ref.current
+    const ctx = c?.getContext('2d')
+    if (!c || !ctx) return
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    let w = 0
+    let h = 0
+    const resize = () => {
+      w = c.clientWidth
+      h = c.clientHeight
+      c.width = w * dpr
+      c.height = h * dpr
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+    resize()
+    const ro = new ResizeObserver(resize)
+    ro.observe(c)
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    // A third of the stars cluster along a diagonal "Milky Way" band.
+    const band = (x: number) => x * -0.42 + 0.1
+    const N = 520
+    const stars = Array.from({ length: N }, (_, i) => {
+      const inBand = i % 3 === 0
+      const x = Math.random() * 2 - 1
+      const y = inBand ? band(x) + (Math.random() + Math.random() + Math.random() - 1.5) * 0.18 : Math.random() * 2 - 1
+      return { x, y, z: Math.random() * 0.95 + 0.05, tw: Math.random() * 6.28, hue: Math.random() }
+    })
+    let speed = arriving && !reduce ? 1.6 : 0.012
+    let last = performance.now()
+    let raf = 0
+    const frame = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000)
+      last = now
+      const target = warpRef.current && !reduce ? 2.4 : 0.012
+      speed += (target - speed) * (1 - Math.exp(-dt * (warpRef.current ? 2.2 : 2.8)))
+      ctx.clearRect(0, 0, w, h)
+      const t = now / 1000
+      // Nebula washes, drifting very slowly.
+      const neb = (x: number, y: number, rad: number, rgb: string, a: number) => {
+        const g = ctx.createRadialGradient(x, y, 0, x, y, rad)
+        g.addColorStop(0, `rgba(${rgb},${a})`)
+        g.addColorStop(1, `rgba(${rgb},0)`)
+        ctx.fillStyle = g
+        ctx.fillRect(0, 0, w, h)
+      }
+      neb(w * (0.26 + 0.02 * Math.sin(t * 0.05)), h * 0.32, Math.max(w, h) * 0.55, '120,80,200', 0.16)
+      neb(w * (0.78 + 0.02 * Math.cos(t * 0.04)), h * 0.72, Math.max(w, h) * 0.5, '40,150,190', 0.12)
+      neb(w * 0.55, h * 0.5, Math.max(w, h) * 0.35, '210,170,90', 0.06)
+      // The galactic band's glow.
+      ctx.save()
+      ctx.translate(w / 2, h / 2)
+      ctx.rotate(Math.atan(-0.42))
+      const bandGrad = ctx.createLinearGradient(0, -h * 0.25, 0, h * 0.25)
+      bandGrad.addColorStop(0, 'rgba(160,170,230,0)')
+      bandGrad.addColorStop(0.5, 'rgba(170,175,235,0.07)')
+      bandGrad.addColorStop(1, 'rgba(160,170,230,0)')
+      ctx.fillStyle = bandGrad
+      ctx.fillRect(-w, -h * 0.25, w * 2, h * 0.5)
+      ctx.restore()
+
+      const f = Math.min(w, h) * 0.6
+      const cx = w / 2
+      const cy = h / 2
+      for (const s of stars) {
+        s.z -= speed * dt * 0.5
+        if (s.z <= 0.03) {
+          s.z = 1
+          s.x = Math.random() * 2 - 1
+          s.y = s.hue < 0.33 ? band(s.x) + (Math.random() - 0.5) * 0.3 : Math.random() * 2 - 1
+        }
+        const px = cx + (s.x / s.z) * f
+        const py = cy + (s.y / s.z) * f
+        if (px < -50 || px > w + 50 || py < -50 || py > h + 50) continue
+        const near = 1 - s.z
+        const tw = 0.65 + 0.35 * Math.sin(t * (1.5 + s.hue * 3) + s.tw)
+        const alpha = Math.min(1, 0.25 + near * 0.9) * (speed > 0.2 ? 1 : tw)
+        const color = s.hue > 0.86 ? `rgba(255,214,150,${alpha})` : s.hue > 0.7 ? `rgba(150,205,255,${alpha})` : `rgba(235,240,255,${alpha})`
+        // Streak length follows speed: long hyperspace lines at warp,
+        // collapsing to points as the sky settles.
+        const back = Math.min(0.5, speed * 0.09)
+        if (back > 0.004) {
+          const z2 = s.z + back
+          ctx.strokeStyle = color
+          ctx.lineWidth = 0.6 + near * 1.4
+          ctx.beginPath()
+          ctx.moveTo(cx + (s.x / z2) * f, cy + (s.y / z2) * f)
+          ctx.lineTo(px, py)
+          ctx.stroke()
+        } else {
+          ctx.fillStyle = color
+          const r = 0.35 + near * 1.25
+          ctx.beginPath()
+          ctx.arc(px, py, r, 0, Math.PI * 2)
+          ctx.fill()
+        }
+      }
+      raf = requestAnimationFrame(frame)
+    }
+    raf = requestAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return <canvas ref={ref} aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" />
+}
+
+/** Transit read-out over the jump: a rotating targeting reticle, corner
+ *  brackets and a few live telemetry lines. Purely decorative. */
+function TransitHud({ direction }: { direction: 'out' | 'in' }) {
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 70)
+    return () => clearInterval(id)
+  }, [])
+  const v = Math.min(0.99, 0.12 + tick * 0.028).toFixed(2)
+  const pad = (n: number, l = 2) => String(Math.floor(n)).padStart(l, '0')
+  const ra = `${pad(5 + (tick % 7))}h ${pad((tick * 7) % 60)}m ${pad((tick * 13) % 60)}s`
+  const dec = `−${pad(5 + (tick % 4))}° ${pad((tick * 11) % 60)}′`
+  const lines =
+    direction === 'out'
+      ? ['FLUX DRIVE · ENGAGED', 'DEST · PROJECT ARCHIVE', `RA ${ra} · DEC ${dec}`, `Δv ${v}c`]
+      : ['FLUX DRIVE · RETURN', 'DEST · SOL SYSTEM', `RA ${ra} · DEC ${dec}`, `Δv ${v}c`]
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.4 }}
+      aria-hidden
+      className="pointer-events-none absolute inset-0 z-[25] font-mono text-[9px] uppercase tracking-[0.28em] text-[#9fd8ff]/70 sm:text-[10px]"
+    >
+      {/* Corner brackets */}
+      {['left-4 top-4 border-l border-t', 'right-4 top-4 border-r border-t', 'left-4 bottom-4 border-l border-b', 'right-4 bottom-4 border-r border-b'].map((c) => (
+        <span key={c} className={`absolute h-6 w-6 border-[#9fd8ff]/40 ${c}`} />
+      ))}
+      <div className="absolute left-8 top-10 space-y-1.5 sm:left-10">
+        <p className="text-gold/80">{lines[0]}</p>
+        <p>{lines[1]}</p>
+      </div>
+      <div className="absolute bottom-10 left-8 sm:left-10">{lines[2]}</div>
+      <div className="absolute bottom-10 right-8 text-right sm:right-10">
+        <p className="text-gold/80">{lines[3]}</p>
+        <div className="mt-1.5 h-px w-28 overflow-hidden bg-white/10">
+          <div className="h-full bg-[#9fd8ff]/70" style={{ width: `${Math.min(100, tick * 3)}%` }} />
+        </div>
+      </div>
+      {/* Targeting reticle, centred on the portal */}
+      <svg viewBox="0 0 200 200" className="absolute left-1/2 top-1/2 h-[min(78%,520px)] w-[min(78%,520px)] -translate-x-1/2 -translate-y-1/2">
+        <g fill="none" stroke="rgba(159,216,255,0.35)" strokeWidth="0.4">
+          <circle cx="100" cy="100" r="96" strokeDasharray="1 3" className="origin-center [transform-box:fill-box] animate-[spin_24s_linear_infinite]" />
+          <circle cx="100" cy="100" r="88" strokeDasharray="22 6 2 6" className="origin-center [transform-box:fill-box] animate-[spin_16s_linear_infinite_reverse]" />
+          {Array.from({ length: 36 }, (_, i) => {
+            const a = (i / 36) * Math.PI * 2
+            const r1 = i % 9 === 0 ? 78 : 82
+            return <line key={i} x1={100 + Math.cos(a) * r1} y1={100 + Math.sin(a) * r1} x2={100 + Math.cos(a) * 85} y2={100 + Math.sin(a) * 85} />
+          })}
+        </g>
+        <g className="animate-[spin_3s_linear_infinite]" style={{ transformOrigin: '100px 100px' }}>
+          <path d="M100 4 A96 96 0 0 1 196 100" fill="none" stroke="rgba(214,177,92,0.6)" strokeWidth="0.8" />
+        </g>
+      </svg>
+    </motion.div>
+  )
 }
 
 /** Spread / galaxy toggle icons — a 2×2 card grid, and a two-armed spiral. */
@@ -475,7 +666,7 @@ function GalaxyIcon() {
 }
 
 // Wormhole-jump timings (ms) — see openGallery/closeGallery.
-const WORMHOLE_MS = 1500
+const WORMHOLE_MS = 1600
 
 export default function Projects() {
   const { t } = useLanguage()
@@ -506,6 +697,12 @@ export default function Projects() {
   const [spread, setSpread] = useState(false)
   const [wormholeRun, setWormholeRun] = useState(0)
   const [wormholeOn, setWormholeOn] = useState(false)
+  // The jump's other layers: the universe going black, the transit HUD,
+  // and the gallery's own sky (streaking while `starWarp`).
+  const [voidOn, setVoidOn] = useState(false)
+  const [hud, setHud] = useState<'out' | 'in' | null>(null)
+  const [stars, setStars] = useState(false)
+  const [starWarp, setStarWarp] = useState(false)
   const reduceMotion = useReducedMotion()
   const timers = useRef<number[]>([])
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
@@ -518,28 +715,50 @@ export default function Projects() {
     setWormholeOn(true)
     after(WORMHOLE_MS, () => setWormholeOn(false))
   }
+  // Out: the galaxy falls away, the universe goes black, a portal tears
+  // open and carries you through, you drop out of hyperspace into a new
+  // sky, and the cards spread out across it.
   const openGallery = () => {
     if (gallery !== 'off') return
     setGallery('out')
     galleryRef.current?.setWarp(true)
-    after(450, runWormhole)
-    after(1750, () => {
+    // Let the galaxy visibly fall away first; only then does it go dark.
+    after(650, () => {
+      setVoidOn(true)
+      setHud('out')
+    })
+    after(1200, runWormhole)
+    after(2450, () => {
+      setStarWarp(false)
+      setStars(true)
+    })
+    after(2750, () => {
+      setHud(null)
       setShowCards(true)
       setGallery('on')
       // Mount stacked at the center, then let them fly out to the grid.
       requestAnimationFrame(() => requestAnimationFrame(() => setSpread(true)))
     })
   }
+  // Back: the cards gather, the stars streak away, the void returns, the
+  // portal carries you home and the galaxy fades up as the camera flies in.
   const closeGallery = () => {
     if (gallery !== 'on') return
     setGallery('in')
     setSpread(false)
-    after(550, () => {
+    setStarWarp(true)
+    after(450, () => {
       setShowCards(false)
+      setHud('in')
+    })
+    after(700, () => {
+      setStars(false)
       runWormhole()
     })
-    after(1700, () => galleryRef.current?.setWarp(false))
-    after(2700, () => setGallery('off'))
+    after(1500, () => galleryRef.current?.setWarp(false))
+    after(1950, () => setVoidOn(false))
+    after(2250, () => setHud(null))
+    after(2900, () => setGallery('off'))
   }
   const wrapperRef = useRef<HTMLDivElement>(null)
   const flybyLabelRefs = useRef<Map<number, HTMLDivElement>>(new Map())
@@ -829,7 +1048,30 @@ export default function Projects() {
           )}
         </AnimatePresence>
 
+        {/* The universe going dark between the galaxy and the gallery. */}
+        <motion.div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-[15] bg-black"
+          initial={false}
+          animate={{ opacity: voidOn ? 1 : 0 }}
+          transition={{ duration: voidOn ? 0.7 : 0.9, ease: 'easeInOut' }}
+        />
+        <AnimatePresence>
+          {stars && (
+            <motion.div
+              key="gallery-sky"
+              className="pointer-events-none absolute inset-0 z-[16]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, transition: { duration: 0.35 } }}
+              transition={{ duration: 0.6 }}
+            >
+              <Starfield warp={starWarp} arriving />
+            </motion.div>
+          )}
+        </AnimatePresence>
         {wormholeOn && <Wormhole key={wormholeRun} duration={WORMHOLE_MS} />}
+        <AnimatePresence>{hud && !reduceMotion && <TransitHud key={hud} direction={hud} />}</AnimatePresence>
 
         {/* The card gallery: every project's preview card, stacked at the
             center on arrival and spread out into a grid (framer's layout
@@ -842,7 +1084,7 @@ export default function Projects() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0, transition: { duration: 0.25 } }}
-              className="absolute inset-0 z-20 overflow-y-auto bg-black/35 px-4 pb-12 pt-14 sm:px-8 sm:pt-16"
+              className="absolute inset-0 z-20 overflow-y-auto px-4 pb-12 pt-14 sm:px-8 sm:pt-16"
             >
               <div
                 className={
