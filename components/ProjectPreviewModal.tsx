@@ -28,6 +28,7 @@ export default function ProjectPreviewModal({
   project,
   planetColor,
   originRect,
+  restWidth,
   onClose,
 }: {
   project: PreviewProject
@@ -40,6 +41,10 @@ export default function ProjectPreviewModal({
    *  was showing, so opening just moves/grows that same image into place
    *  rather than fading a new one in. Null skips the morph (plain fade). */
   originRect: ScreenRect | null
+  /** Resting width override, for an origin that isn't the hologram
+   *  screen itself (a gallery card): the width that screen would have, so
+   *  the detail page looks the same however it was opened. */
+  restWidth?: number
   onClose: () => void
 }) {
   const { t } = useLanguage()
@@ -153,7 +158,7 @@ export default function ProjectPreviewModal({
           // this stays correctly sized on any device without extra logic
           // here. Falls back to a fixed width only in the (practically
           // unreachable) case this opens with no origin at all.
-          width: originRect ? `${originRect.width}px` : 'min(600px, 100%)',
+          width: restWidth ? `${restWidth}px` : originRect ? `${originRect.width}px` : 'min(600px, 100%)',
           maxWidth: 'calc(100vw - 2rem)',
           ['--holo-rgb' as string]: hexToRgb(planetColor),
         } as React.CSSProperties}

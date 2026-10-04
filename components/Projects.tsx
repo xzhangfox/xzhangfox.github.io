@@ -330,68 +330,107 @@ function RingGlyph({ half }: { half: 'back' | 'front' }) {
   )
 }
 
-/** The jump between the galaxy and the card gallery: rings of the site's
- *  neon (cyan, magenta, gold) rushing at the viewer around a bright
- *  throat, with star streaks — swelling in and out over `duration`. A
- *  plain 2D canvas over the 3D scene, so it needs nothing from three.js. */
+// The wormhole, as a single fragment shader over a full-screen quad: an
+// aperture opens in space with a hot gravitational-lensing ring at its
+// rim; inside, a spiralling tunnel of luminous filaments over a faint
+// spacetime grid rushes past toward a white-hot exit. `u_env` (0→1→0)
+// opens, holds and closes it; `u_t` drives the flight.
+const WORMHOLE_FRAG = `
+precision highp float;
+uniform vec2 u_res;
+uniform float u_t;
+uniform float u_env;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; }
+  return v;
+}
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * u_res) / u_res.y;
+  float r = length(uv);
+  float a = atan(uv.y, uv.x);
+  float aperture = 0.08 + 1.1 * u_env;
+  // Tunnel coordinates: depth grows toward the centre, the walls twist.
+  float depth = 0.32 / max(r, 0.001) + u_t * 7.0;
+  float ang = a / 6.2831853 + depth * 0.11 + u_t * 0.35;
+  // Filaments: noise stretched along depth, sharpened into strands.
+  float n = fbm(vec2(ang * 26.0, depth * 0.3));
+  float strands = pow(smoothstep(0.5, 0.95, n), 3.0);
+  float violet = pow(smoothstep(0.55, 0.95, fbm(vec2(ang * 14.0 - 7.3, depth * 0.22))), 2.5);
+  float fine = pow(smoothstep(0.62, 1.0, fbm(vec2(ang * 70.0 + 3.1, depth * 0.9))), 3.0);
+  // Faint spacetime grid on the tunnel wall.
+  float rings = smoothstep(0.93, 1.0, fract(depth * 0.5)) * 0.35;
+  float meridians = smoothstep(0.985, 1.0, abs(cos(ang * 6.2831853 * 8.0))) * 0.25;
+  float near = smoothstep(0.0, 0.6, r); // walls closer to the eye read brighter
+  // Dark walls with depth haze, so the light reads as filaments, not fill.
+  vec3 deep = mix(vec3(0.01, 0.015, 0.06), vec3(0.07, 0.025, 0.17), smoothstep(0.15, 1.0, r));
+  vec3 col = deep;
+  col += vec3(0.25, 0.75, 1.0) * strands * (0.35 + 1.3 * near);
+  col += vec3(0.55, 0.3, 1.0) * violet * (0.25 + 0.7 * near);
+  col += vec3(1.0, 0.35, 0.85) * fine * 0.8 * near;
+  col += vec3(0.45, 0.6, 1.0) * (rings + meridians) * near * 0.8;
+  // White-hot exit at the far end.
+  col += vec3(0.85, 0.95, 1.0) * exp(-r * 9.0) * 1.6 + vec3(0.4, 0.7, 1.0) * exp(-r * 3.5) * 0.5;
+  // Aperture: tunnel inside, lensing ring on the rim, space outside.
+  float inside = 1.0 - smoothstep(aperture - 0.05, aperture, r);
+  float rim = exp(-pow((r - aperture) * 18.0, 2.0));
+  float rimNoise = 0.6 + 0.8 * fbm(vec2(a * 3.0 + u_t * 4.0, u_t * 2.0));
+  vec3 rimCol = mix(vec3(0.5, 0.85, 1.0), vec3(1.0, 0.82, 0.45), 0.5 + 0.5 * sin(a * 2.0 + u_t * 3.0));
+  vec3 outCol = col * inside + rimCol * rim * rimNoise * 1.4;
+  float alpha = clamp(inside + rim * rimNoise, 0.0, 1.0) * u_env;
+  gl_FragColor = vec4(outCol * u_env, alpha);
+}`
+
+/** The jump between the galaxy and the card gallery (see WORMHOLE_FRAG),
+ *  played over `duration` ms on a canvas laid over the 3D scene. Silently
+ *  skipped if WebGL isn't available. */
 function Wormhole({ duration }: { duration: number }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     const c = ref.current
-    const ctx = c?.getContext('2d')
-    if (!c || !ctx) return
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    const w = c.clientWidth
-    const h = c.clientHeight
-    c.width = w * dpr
-    c.height = h * dpr
-    ctx.scale(dpr, dpr)
-    const cx = w / 2
-    const cy = h / 2
-    const reach = Math.hypot(w, h) / 2
-    const hues = ['26, 242, 255', '255, 46, 196', '201, 168, 76']
-    const streaks = Array.from({ length: 160 }, () => ({ a: Math.random() * Math.PI * 2, z: Math.random(), rgb: hues[(Math.random() * 3) | 0] }))
-    const RINGS = 16
+    const gl = c?.getContext('webgl', { premultipliedAlpha: true, alpha: true })
+    if (!c || !gl) return
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+    c.width = c.clientWidth * dpr
+    c.height = c.clientHeight * dpr
+    gl.viewport(0, 0, c.width, c.height)
+    const shader = (type: number, src: string) => {
+      const sh = gl.createShader(type)!
+      gl.shaderSource(sh, src)
+      gl.compileShader(sh)
+      return sh
+    }
+    const prog = gl.createProgram()!
+    gl.attachShader(prog, shader(gl.VERTEX_SHADER, 'attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }'))
+    gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, WORMHOLE_FRAG))
+    gl.linkProgram(prog)
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return
+    gl.useProgram(prog)
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer())
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
+    const loc = gl.getAttribLocation(prog, 'p')
+    gl.enableVertexAttribArray(loc)
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0)
+    gl.uniform2f(gl.getUniformLocation(prog, 'u_res'), c.width, c.height)
+    const uT = gl.getUniformLocation(prog, 'u_t')
+    const uEnv = gl.getUniformLocation(prog, 'u_env')
     const start = performance.now()
     let raf = 0
     const frame = (now: number) => {
       const t = Math.min(1, (now - start) / duration)
-      const env = Math.sin(Math.PI * t)
-      const travel = t * t * 5 // accelerating through the throat
-      ctx.clearRect(0, 0, w, h)
-      const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, reach)
-      bg.addColorStop(0, `rgba(255, 255, 255, ${0.95 * env ** 3})`)
-      bg.addColorStop(0.06, `rgba(150, 220, 255, ${0.55 * env})`)
-      bg.addColorStop(0.35, `rgba(30, 10, 60, ${0.85 * env})`)
-      bg.addColorStop(1, `rgba(0, 0, 0, ${env})`)
-      ctx.fillStyle = bg
-      ctx.fillRect(0, 0, w, h)
-      ctx.lineCap = 'round'
-      for (let i = 0; i < RINGS; i++) {
-        const z = 1 - ((i / RINGS + travel) % 1) // 1 = far, ~0 = at the viewer
-        const r = (reach * 0.06) / Math.max(z, 0.02)
-        if (r > reach * 1.6) continue
-        ctx.save()
-        ctx.translate(cx, cy)
-        ctx.rotate(z * 3 + t * 2)
-        ctx.strokeStyle = `rgba(${hues[i % 3]}, ${env * (1 - z) * 0.9})`
-        ctx.lineWidth = 1 + (1 - z) * 5
-        ctx.beginPath()
-        ctx.ellipse(0, 0, r, r * 0.86, 0, 0, Math.PI * 2)
-        ctx.stroke()
-        ctx.restore()
-      }
-      for (const s of streaks) {
-        const z = 1 - ((s.z + travel * 1.4) % 1)
-        const r1 = (reach * 0.05) / Math.max(z, 0.02)
-        const r2 = (reach * 0.05) / Math.max(z + 0.08, 0.02)
-        ctx.strokeStyle = `rgba(${s.rgb}, ${env * (1 - z)})`
-        ctx.lineWidth = 0.6 + (1 - z) * 1.6
-        ctx.beginPath()
-        ctx.moveTo(cx + Math.cos(s.a) * r2, cy + Math.sin(s.a) * r2)
-        ctx.lineTo(cx + Math.cos(s.a) * r1, cy + Math.sin(s.a) * r1)
-        ctx.stroke()
-      }
+      // Opens fast, holds, then closes — eased so the throat "swallows".
+      const env = t < 0.35 ? 1 - (1 - t / 0.35) ** 3 : t > 0.8 ? 1 - ((t - 0.8) / 0.2) ** 2 : 1
+      gl.uniform1f(uT, t * t * 1.6 + t * 0.4)
+      gl.uniform1f(uEnv, env)
+      gl.clearColor(0, 0, 0, 0)
+      gl.clear(gl.COLOR_BUFFER_BIT)
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
       if (t < 1) raf = requestAnimationFrame(frame)
     }
     raf = requestAnimationFrame(frame)
@@ -422,7 +461,7 @@ function GalaxyIcon() {
 }
 
 // Wormhole-jump timings (ms) — see openGallery/closeGallery.
-const WORMHOLE_MS = 1100
+const WORMHOLE_MS = 1500
 
 export default function Projects() {
   const { t } = useLanguage()
@@ -436,6 +475,7 @@ export default function Projects() {
 
   const [openId, setOpenId] = useState<string | null>(null)
   const [openOriginRect, setOpenOriginRect] = useState<ScreenRect | null>(null)
+  const [openRestWidth, setOpenRestWidth] = useState<number | undefined>(undefined)
   const openProject = items.find((p) => p.id === openId) ?? null
 
   // null activePlanetId = the solar-system overview; activeIndex is local
@@ -469,7 +509,7 @@ export default function Projects() {
     setGallery('out')
     galleryRef.current?.setWarp(true)
     after(450, runWormhole)
-    after(1150, () => {
+    after(1750, () => {
       setShowCards(true)
       setGallery('on')
       // Mount stacked at the center, then let them fly out to the grid.
@@ -484,8 +524,8 @@ export default function Projects() {
       setShowCards(false)
       runWormhole()
     })
-    after(1150, () => galleryRef.current?.setWarp(false))
-    after(2050, () => setGallery('off'))
+    after(1700, () => galleryRef.current?.setWarp(false))
+    after(2700, () => setGallery('off'))
   }
   const wrapperRef = useRef<HTMLDivElement>(null)
   const flybyLabelRefs = useRef<Map<number, HTMLDivElement>>(new Map())
@@ -501,6 +541,7 @@ export default function Projects() {
       const project = currentProjects[index]
       if (project) {
         setOpenOriginRect(rect)
+        setOpenRestWidth(undefined)
         setOpenId(project.id)
         // The modal's own backdrop is translucent and doesn't span the
         // whole viewport-relative craft position, so tell the gallery to
@@ -700,27 +741,6 @@ export default function Projects() {
                     />
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={gallery === 'off' ? openGallery : closeGallery}
-                  disabled={gallery === 'out' || gallery === 'in'}
-                  aria-label={gallery === 'off' ? t.projects.galleryView : t.projects.backToGalaxy}
-                  title={gallery === 'off' ? t.projects.galleryView : t.projects.backToGalaxy}
-                  className="pointer-events-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/[0.04] text-white/70 backdrop-blur-sm transition-all duration-300 hover:scale-110 hover:border-white/45 hover:text-white active:scale-95 disabled:cursor-default sm:h-7 sm:w-7"
-                >
-                  <AnimatePresence mode="wait" initial={false}>
-                    <motion.span
-                      key={gallery === 'off' || gallery === 'out' ? 'grid' : 'galaxy'}
-                      initial={{ opacity: 0, rotate: -90, scale: 0.5 }}
-                      animate={{ opacity: 1, rotate: 0, scale: 1 }}
-                      exit={{ opacity: 0, rotate: 90, scale: 0.5 }}
-                      transition={{ duration: 0.25 }}
-                      className="flex"
-                    >
-                      {gallery === 'off' || gallery === 'out' ? <GridIcon /> : <GalaxyIcon />}
-                    </motion.span>
-                  </AnimatePresence>
-                </button>
               </motion.div>
             ) : (
               <motion.div
@@ -757,6 +777,43 @@ export default function Projects() {
             )}
           </AnimatePresence>
         </div>
+
+        {/* Top-right: spread every project out as cards (from the
+            overview), or — once out there — head back to the galaxy. */}
+        <AnimatePresence>
+          {activePlanetId === null && (
+            <motion.div
+              key="gallery-toggle"
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.3 }}
+              className="absolute right-2 top-2 z-30 sm:right-4 sm:top-4"
+            >
+          <button
+            type="button"
+            onClick={gallery === 'off' ? openGallery : closeGallery}
+            disabled={gallery === 'out' || gallery === 'in'}
+            aria-label={gallery === 'off' ? t.projects.galleryView : t.projects.backToGalaxy}
+            title={gallery === 'off' ? t.projects.galleryView : t.projects.backToGalaxy}
+            className="pointer-events-auto flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-white/20 bg-white/[0.04] text-white/70 backdrop-blur-sm transition-all duration-300 hover:scale-110 hover:border-white/45 hover:text-white active:scale-95 disabled:cursor-default sm:h-7 sm:w-7"
+          >
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.span
+                key={gallery === 'off' || gallery === 'out' ? 'grid' : 'galaxy'}
+                initial={{ opacity: 0, rotate: -90, scale: 0.5 }}
+                animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                exit={{ opacity: 0, rotate: 90, scale: 0.5 }}
+                transition={{ duration: 0.25 }}
+                className="flex"
+              >
+                {gallery === 'off' || gallery === 'out' ? <GridIcon /> : <GalaxyIcon />}
+              </motion.span>
+            </AnimatePresence>
+          </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {wormholeOn && <Wormhole key={wormholeRun} duration={WORMHOLE_MS} />}
 
@@ -795,8 +852,13 @@ export default function Projects() {
                       delay: spread ? i * 0.05 : (items.length - 1 - i) * 0.03,
                     }}
                     onClick={(e) => {
-                      const r = e.currentTarget.getBoundingClientRect()
+                      // Morph from the card's own picture, and rest at the
+                      // size the hologram screen would — the same detail
+                      // page the galaxy opens.
+                      const img = e.currentTarget.querySelector('img') ?? e.currentTarget
+                      const r = img.getBoundingClientRect()
                       setOpenOriginRect({ top: r.top, left: r.left, width: r.width, height: r.height })
+                      setOpenRestWidth(galleryRef.current?.getFocusScreenWidth())
                       setOpenId(project.id)
                     }}
                     className={`group overflow-hidden rounded-xl border bg-black/55 text-left backdrop-blur-md ${spread ? 'w-full' : 'w-44 sm:w-56'}`}
@@ -806,9 +868,9 @@ export default function Projects() {
                       boxShadow: `0 0 18px ${project.color}22`,
                     }}
                   >
-                    <div className="aspect-[16/10] overflow-hidden bg-black/40">
+                    <div className="aspect-video overflow-hidden bg-black/40">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={project.image} alt="" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                      <img src={project.image} alt="" className="h-full w-full object-cover object-top transition-transform duration-500 group-hover:scale-105" />
                     </div>
                     <div className="p-2.5 sm:p-3">
                       <div className="flex items-center gap-1.5">
@@ -926,6 +988,7 @@ export default function Projects() {
             project={openProject}
             planetColor={PLANET_COLORS[PROJECT_PLANET_ID[openProject.id]] ?? openProject.color}
             originRect={openOriginRect}
+            restWidth={openRestWidth}
             onClose={closeActiveProject}
           />
         )}

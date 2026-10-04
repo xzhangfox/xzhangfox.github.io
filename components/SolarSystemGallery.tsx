@@ -98,6 +98,10 @@ export interface SolarSystemGalleryHandle {
    *  wormhole jump to the card gallery — or fly it home again (0). Eased
    *  over ~0.9s; while fully warped out the scene stops rendering. */
   setWarp: (on: boolean) => void
+  /** The width, in CSS px, a focused hologram screen settles at on this
+   *  viewport — what a preview opened from a craft rests at, so one opened
+   *  from anywhere else can rest at exactly the same size. */
+  getFocusScreenWidth: () => number
 }
 
 interface HoverInfo {
@@ -3214,6 +3218,14 @@ class App {
     this.warpTarget = on ? 1 : 0
   }
 
+  getFocusScreenWidth() {
+    // Same reference-distance geometry as the clamp in onResize.
+    const distance = BASE_CAMERA_OFFSET.z - BASE_FOCUS_OFFSET.z
+    const visibleWidth = 2 * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV) / 2) * distance * this.camera.aspect
+    const worldWidth = SCREEN_HEIGHT * this.aspect * this.focusScaleAdjust.value
+    return (worldWidth / visibleWidth) * this.renderer.domElement.clientWidth
+  }
+
   setHover(localIndex: number) {
     if (localIndex === this.hoveredIndex) return
     this.hoveredIndex = localIndex
@@ -3441,7 +3453,7 @@ class App {
     // size and camera distance are scaled by the same `viewScale` factor,
     // so one shared clamp is valid for all of them.
     const distance = BASE_CAMERA_OFFSET.z - BASE_FOCUS_OFFSET.z
-    const vFov = THREE.MathUtils.degToRad(this.camera.fov)
+    const vFov = THREE.MathUtils.degToRad(CAMERA_FOV)
     const visibleHeight = 2 * Math.tan(vFov / 2) * distance
     const visibleWidth = visibleHeight * this.camera.aspect
     const screenWorldWidth = SCREEN_HEIGHT * this.aspect
@@ -3628,6 +3640,7 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
     setPreviewOpen: (open: boolean) => appRef.current?.setPreviewOpen(open),
     setScrollTilt: (t: number) => appRef.current?.setScrollTilt(t),
     setWarp: (on: boolean) => appRef.current?.setWarp(on),
+    getFocusScreenWidth: () => appRef.current?.getFocusScreenWidth() ?? 600,
   }), [])
 
   useEffect(() => {
