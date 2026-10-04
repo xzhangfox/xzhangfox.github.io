@@ -233,7 +233,7 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI Photo Retouching Studio',
           description:
-            'A beauty camera that runs entirely in the browser. MediaPipe’s 478-point face mesh drives frequency-separation skin smoothing and 3D relighting, 26 face-shape controls built as bounded local mesh transforms (so even ±100 stays natural), one-tap Looks like Baby Face and Chiseled, face-tracked AR effects from kitty ears to a web-slinger mask, and stickers, emoji and text on the finished photo — live or on a still, every pixel processed on-device.',
+            'A beauty camera that runs entirely in the browser. MediaPipe’s 478-point face mesh drives frequency-separation skin smoothing and 3D relighting, 26 face-shape controls built as bounded local mesh transforms (so even ±100 stays natural), one-tap Looks like Baby Face and Chiseled, face-tracked 3D AR effects — shell-rendered fur ears, face-conforming masks and modeled eyewear lit by light estimated from the photo — and stickers, emoji and text on the finished photo — live or on a still, every pixel processed on-device.',
           highlights: ['26 shape controls that stay natural even at the extremes', 'Looks, AR effects and stickers previewed on your own face', 'Fully on-device — nothing is ever uploaded'],
         },
         {
@@ -409,7 +409,7 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI 智能修图工作室',
           description:
-            '完全在浏览器中运行的美颜相机。MediaPipe 478 点人脸网格驱动频率分离磨皮与 3D 补光；26 项五官微调以有界的局部网格变换实现，拉到 ±100 依然自然；一键风格模板如幼态、硬朗；从猫耳到蜘蛛侠面具的人脸追踪特效；成片还能加贴纸、表情和文字 —— 实时拍摄或单张照片皆可，所有像素都在本地处理。',
+            '完全在浏览器中运行的美颜相机。MediaPipe 478 点人脸网格驱动频率分离磨皮与 3D 补光；26 项五官微调以有界的局部网格变换实现，拉到 ±100 依然自然；一键风格模板如幼态、硬朗；人脸追踪 3D 特效 —— 毛绒质感的立体耳朵、贴合脸型建模的面具与真实镜框眼镜，光影取自照片本身；成片还能加贴纸、表情和文字 —— 实时拍摄或单张照片皆可，所有像素都在本地处理。',
           highlights: ['26 项五官微调，拉到极限依然自然', '风格模板、AR 特效与贴纸，都在你脸上实时预览', '全程本地处理，照片从不上传'],
         },
         {
