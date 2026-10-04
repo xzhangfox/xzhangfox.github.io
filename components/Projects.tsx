@@ -686,7 +686,7 @@ export default function Projects() {
           anything, and is disabled once something is. Clicking empty
           space while something's selected closes it. Only the back
           button returns to the overview. */}
-      <div ref={wrapperRef} className="relative h-[65vh] max-h-[760px] min-h-[420px] w-full overflow-hidden sm:h-[72vh]">
+      <div ref={wrapperRef} id="flux-galaxy" className="relative h-[65vh] max-h-[760px] min-h-[420px] w-full overflow-hidden sm:h-[72vh]">
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-bg to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-20 bg-gradient-to-t from-bg to-transparent" />
 

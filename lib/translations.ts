@@ -185,7 +185,7 @@ export const translations: Record<Language, Dict> = {
       headingPost: ' Galaxy',
       subDesc:
         'AI-powered platforms built from scratch — each solving a different domain with the same design language and engineering standard.',
-      liveBadgeOverview: 'Click a planet icon on the left to explore',
+      liveBadgeOverview: 'Click a planet icon to explore',
       liveBadgeEntered: 'Click a craft or badge for details',
       hudLabel: 'Project Intel',
       galleryView: 'Spread out every project',
@@ -355,7 +355,7 @@ export const translations: Record<Language, Dict> = {
       headingGold: 'Flux',
       headingPost: ' 星系',
       subDesc: '从零构建的 AI 驱动平台 —— 各自解决不同领域的问题，却共享同一套设计语言与工程标准。',
-      liveBadgeOverview: '点击左侧图标探索已上线的星球',
+      liveBadgeOverview: '点击星球图标开始探索',
       liveBadgeEntered: '点击飞行器或图标查看详情',
       hudLabel: '项目情报',
       galleryView: '铺开所有项目',

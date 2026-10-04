@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { scrollToSection } from '@/lib/scrollToSection'
 import { motion } from 'framer-motion'
 import { useLanguage } from '@/lib/i18n'
 
@@ -130,7 +131,7 @@ export default function Hero() {
           className="flex items-center justify-center gap-4 flex-wrap"
         >
           <button
-            onClick={() => document.querySelector('#projects')?.scrollIntoView({ behavior: 'smooth' })}
+            onClick={() => scrollToSection('#projects')}
             className="px-7 py-3 bg-gold text-black font-semibold text-sm rounded-xl hover:bg-gold-light transition-all duration-200 hover:scale-105 active:scale-95"
           >
             {t.hero.viewProjects}

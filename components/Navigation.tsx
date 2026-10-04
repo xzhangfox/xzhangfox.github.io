@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { scrollToSection } from '@/lib/scrollToSection'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useLanguage } from '@/lib/i18n'
 
@@ -25,8 +26,7 @@ export default function Navigation() {
 
   const handleNav = (href: string) => {
     setMenuOpen(false)
-    const el = document.querySelector(href)
-    el?.scrollIntoView({ behavior: 'smooth' })
+    scrollToSection(href)
   }
 
   return (

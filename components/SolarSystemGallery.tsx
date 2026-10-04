@@ -273,9 +273,10 @@ const CRAFT_SCALE_FAR = 0.5
 const CRAFT_SCALE_NEAR = 1.6
 
 // Eased speed for `flightT` (see PlanetInstance) flying an item IN toward
-// the camera — slow and deliberate so the approach is actually watchable
-// rather than a blur.
-const FLIGHT_OPEN_EASE = 0.011
+// the camera — deliberate enough to watch, but brisk: the camera's
+// bottom-to-top settle rides this same value, and at half this rate it
+// dragged on for ~4s.
+const FLIGHT_OPEN_EASE = 0.022
 // Flying back OUT to the ring on close reuses the same eased-convergence
 // mechanism but at its own, snappier rate — nobody asked for the retreat
 // to be slower too, and an exponential ease's tail-end duration barely
@@ -403,18 +404,20 @@ const SCREEN_FRAGMENT = `
         vec2 caCenter = vUv - 0.5;
         float caDist = length(caCenter);
         vec2 caDir = caDist > 0.0001 ? caCenter / caDist : vec2(0.0);
-        float caAmount = 0.007 * smoothstep(0.18, 0.5, caDist);
+        // Kept to a hairline at the very rim so the picture itself stays
+        // crisp; the negative LOD bias picks the sharper mip.
+        float caAmount = 0.0035 * smoothstep(0.3, 0.5, caDist);
         vec3 base = vec3(
-          texture2D(uMap, uv + caDir * caAmount).r,
-          texture2D(uMap, uv).g,
-          texture2D(uMap, uv - caDir * caAmount).b
+          texture2D(uMap, uv + caDir * caAmount, -0.6).r,
+          texture2D(uMap, uv, -0.6).g,
+          texture2D(uMap, uv - caDir * caAmount, -0.6).b
         );
         float imgNoise = hash(floor(vUv * vec2(140.0, 90.0)) + floor(uTime * 30.0));
         base = mix(base, uLaserWhite * imgNoise, glitchActive * 0.55);
         // Fine persistent scanlines across the whole revealed image — the
         // classic CRT/hologram cyberpunk texture, not just the sweeping
         // band below.
-        base *= 0.9 + 0.1 * sin(vUv.y * 240.0);
+        base *= 0.965 + 0.035 * sin(vUv.y * 420.0);
         float imgAlpha = mix(1.0, 0.55, glitchActive);
         // The revealed image itself no longer dims/flickers with uFlicker —
         // it holds steady once shown; only the edge glow below carries the
@@ -430,6 +433,18 @@ const SCREEN_FRAGMENT = `
         float scanDist = abs(vUv.y - (1.0 - scanY));
         float scanBand = smoothstep(0.05, 0.0, scanDist) * 0.32;
         color += uLaserWhite * scanBand * reveal;
+
+        // An iridescent inner rim in the project's own neon pair, drifting
+        // in hue — the light reads as pooling at the projection's edge.
+        float rim = smoothstep(-0.028, -0.004, dClean);
+        vec3 rimColor = mix(uNeonA, uNeonB, 0.5 + 0.5 * sin(vUv.x * 5.0 + vUv.y * 3.0 + uTime * 1.3));
+        color += rimColor * rim * 0.3 * reveal;
+
+        // Every few seconds a soft diagonal sheen sweeps across the glass.
+        float sheenPos = vUv.x * 0.8 + (1.0 - vUv.y) * 0.5;
+        float sheenAt = fract(uTime * 0.14) * 2.4 - 0.5;
+        float sheen = smoothstep(0.09, 0.0, abs(sheenPos - sheenAt));
+        color += uLaserWhite * sheen * 0.16 * reveal;
       }
     }
 
@@ -771,6 +786,154 @@ const LASER_FRAGMENT = `
     gl_FragColor = vec4(uColor, alpha);
   }
 `
+
+// ---- Tyndall rig: the craft stays the projector once the image is up ----
+// Thin light shafts from the craft to points across the screen, each
+// flaring now and then (light catching dust in the beam), plus a drift of
+// motes travelling down the beam. World-space vertices rewritten each
+// frame, like the laser pyramid.
+const SHAFT_COUNT = 7
+// Set from the renderer once it exists; used to keep preview textures
+// crisp when the screen is seen at an angle.
+let MAX_ANISOTROPY = 1
+const MOTE_COUNT = 70
+
+const SHAFT_VERTEX = `
+  attribute float aAlong;
+  attribute float aSide;
+  attribute float aSeed;
+  varying float vAlong;
+  varying float vSide;
+  varying float vSeed;
+  void main() {
+    vAlong = aAlong;
+    vSide = aSide;
+    vSeed = aSeed;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+const SHAFT_FRAGMENT = `
+  precision highp float;
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  uniform float uTime;
+  varying float vAlong;
+  varying float vSide;
+  varying float vSeed;
+  float hash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
+  void main() {
+    // Cross-section: soft at both edges of the shaft (vSide/vAlong is the
+    // shaft-relative offset, -1..1, at any distance from the apex).
+    float across = 1.0 - smoothstep(0.15, 1.0, abs(vSide / max(vAlong, 0.001)));
+    // Brightest at the craft, gone well before the screen — the picture
+    // itself must stay clear.
+    float fade = pow(1.0 - vAlong, 2.6);
+    // Each shaft idles faint and, now and then, flares and shimmers.
+    float slot = floor(uTime * 1.7 + vSeed * 3.1);
+    float flare = step(0.62, hash(slot * 7.13 + vSeed * 19.7));
+    float shimmer = 0.75 + 0.25 * sin(uTime * 37.0 + vSeed * 11.0);
+    float glint = flare * shimmer * (0.55 + 0.45 * sin(fract(uTime * 1.7 + vSeed * 3.1) * 3.14159));
+    float a = across * fade * (0.05 + 0.4 * glint) * uOpacity;
+    gl_FragColor = vec4(uColor, a);
+  }
+`
+const MOTE_VERTEX = `
+  attribute float aT;
+  attribute float aSeed;
+  uniform float uSize;
+  uniform float uRefDist;
+  uniform float uTime;
+  varying float vAlpha;
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_Position = projectionMatrix * mv;
+    gl_PointSize = uSize * (uRefDist / max(-mv.z, 0.001)) * (1.15 - aT * 0.6);
+    float twinkle = 0.45 + 0.55 * sin(uTime * (4.0 + aSeed * 6.0) + aSeed * 40.0);
+    vAlpha = smoothstep(0.0, 0.12, aT) * (1.0 - smoothstep(0.75, 1.0, aT)) * twinkle;
+  }
+`
+const MOTE_FRAGMENT = `
+  precision highp float;
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  varying float vAlpha;
+  void main() {
+    float d = length(gl_PointCoord - 0.5);
+    float a = smoothstep(0.5, 0.0, d);
+    gl_FragColor = vec4(uColor, a * a * vAlpha * uOpacity * 0.8);
+  }
+`
+
+function createShafts(): THREE.Mesh {
+  const n = SHAFT_COUNT * 3
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage))
+  const along = new Float32Array(n), side = new Float32Array(n), seed = new Float32Array(n)
+  for (let k = 0; k < SHAFT_COUNT; k++) {
+    along.set([0, 1, 1], k * 3)
+    side.set([0, -1, 1], k * 3)
+    seed.fill(k + 1, k * 3, k * 3 + 3)
+  }
+  g.setAttribute('aAlong', new THREE.BufferAttribute(along, 1))
+  g.setAttribute('aSide', new THREE.BufferAttribute(side, 1))
+  g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1))
+  const mesh = new THREE.Mesh(
+    g,
+    new THREE.ShaderMaterial({
+      vertexShader: SHAFT_VERTEX,
+      fragmentShader: SHAFT_FRAGMENT,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      uniforms: {
+        uColor: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
+        uOpacity: { value: 0 },
+        uTime: { value: 0 },
+      },
+    })
+  )
+  mesh.frustumCulled = false
+  mesh.visible = false
+  return mesh
+}
+
+function createMotes(): THREE.Points {
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MOTE_COUNT * 3), 3).setUsage(THREE.DynamicDrawUsage))
+  g.setAttribute('aT', new THREE.BufferAttribute(new Float32Array(MOTE_COUNT), 1).setUsage(THREE.DynamicDrawUsage))
+  const seed = new Float32Array(MOTE_COUNT)
+  for (let j = 0; j < MOTE_COUNT; j++) seed[j] = Math.random()
+  g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1))
+  const pts = new THREE.Points(
+    g,
+    new THREE.ShaderMaterial({
+      vertexShader: MOTE_VERTEX,
+      fragmentShader: MOTE_FRAGMENT,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      uniforms: {
+        uColor: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
+        uOpacity: { value: 0 },
+        uTime: { value: 0 },
+        uSize: { value: 2.4 },
+        uRefDist: { value: 6 },
+      },
+    })
+  )
+  pts.frustumCulled = false
+  pts.visible = false
+  return pts
+}
+
+/** 0..1, mostly 0: brief flare-ups of the residual beam, as when a gust of
+ *  dust drifts through a projector's light. */
+function tyndallFlare(time: number) {
+  const slot = Math.floor(time * 0.9)
+  const on = Math.abs(Math.sin(slot * 91.7) * 43758.5453) % 1 > 0.6
+  return on ? Math.sin((time * 0.9 - slot) * Math.PI) : 0
+}
 
 // A 4-sided pyramid, not a smooth round cone — apex at the craft, base
 // the screen's own four actual corners. Its vertex positions are written
@@ -1253,6 +1416,11 @@ class PlanetInstance {
   screens: THREE.Mesh[] = []
   screenHalos: THREE.Mesh[] = []
   lasers: THREE.Mesh[] = []
+  // One Tyndall rig per planet — only one item ever flies at a time.
+  shafts: THREE.Mesh | null = null
+  motes: THREE.Points | null = null
+  _shaftTargets: { u: number; v: number; w: number }[] = []
+  _moteState: { t: number; speed: number; u: number; v: number; jx: number; jy: number }[] = []
   revealTimer: number[] = []
   itemOrbitRadius = 0
 
@@ -1668,12 +1836,71 @@ class PlanetInstance {
 
       loader.load(item.image, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace
+        tex.anisotropy = MAX_ANISOTROPY
         screenMaterial.uniforms.uMap.value = tex
         screenMaterial.uniforms.uImageSize.value.set(tex.image.width, tex.image.height)
       })
     })
 
     this.revealTimer = new Array(this.count).fill(0)
+
+    if (items.length > 0) {
+      this.shafts = createShafts()
+      this.motes = createMotes()
+      this.scene.add(this.shafts, this.motes)
+      for (let k = 0; k < SHAFT_COUNT; k++) this._shaftTargets.push({ u: 0.12 + Math.random() * 0.76, v: 0.12 + Math.random() * 0.76, w: 0.03 + Math.random() * 0.05 })
+      for (let j = 0; j < MOTE_COUNT; j++) this._moteState.push({ t: Math.random(), speed: 0.0025 + Math.random() * 0.005, u: Math.random(), v: Math.random(), jx: Math.random() - 0.5, jy: Math.random() - 0.5 })
+    }
+  }
+
+  hideTyndall() {
+    if (this.shafts) this.shafts.visible = false
+    if (this.motes) this.motes.visible = false
+  }
+
+  /** Lays the shafts and motes out between the craft (apex) and the
+   *  screen rectangle, and sets their strength. */
+  updateTyndall(apex: THREE.Vector3, focus: THREE.Vector3, halfW: number, halfH: number, time: number, strength: number) {
+    const shafts = this.shafts
+    const motes = this.motes
+    if (!shafts || !motes) return
+    const sp = shafts.geometry.getAttribute('position') as THREE.BufferAttribute
+    this._shaftTargets.forEach((t, k) => {
+      const x = focus.x + (t.u * 2 - 1) * halfW
+      const y = focus.y + (t.v * 2 - 1) * halfH
+      const w = t.w * halfW
+      sp.setXYZ(k * 3, apex.x, apex.y, apex.z)
+      sp.setXYZ(k * 3 + 1, x - w, y, focus.z)
+      sp.setXYZ(k * 3 + 2, x + w, y, focus.z)
+    })
+    sp.needsUpdate = true
+    const sm = shafts.material as THREE.ShaderMaterial
+    sm.uniforms.uTime.value = time
+    sm.uniforms.uOpacity.value = strength
+    shafts.visible = true
+
+    const mp = motes.geometry.getAttribute('position') as THREE.BufferAttribute
+    const mt = motes.geometry.getAttribute('aT') as THREE.BufferAttribute
+    this._moteState.forEach((m, j) => {
+      m.t += m.speed
+      if (m.t > 1) {
+        m.t -= 1
+        m.u = Math.random()
+        m.v = Math.random()
+      }
+      const tx = focus.x + (m.u * 2 - 1) * halfW * 0.92
+      const ty = focus.y + (m.v * 2 - 1) * halfH * 0.92
+      const wob = Math.sin(time * 1.3 + j) * 0.04 * halfH
+      mp.setXYZ(j, apex.x + (tx - apex.x) * m.t + m.jx * 0.06 * halfH, apex.y + (ty - apex.y) * m.t + m.jy * 0.06 * halfH + wob, apex.z + (focus.z - apex.z) * m.t)
+      mt.setX(j, m.t)
+    })
+    mp.needsUpdate = true
+    mt.needsUpdate = true
+    const mm = motes.material as THREE.ShaderMaterial
+    mm.uniforms.uTime.value = time
+    mm.uniforms.uOpacity.value = strength
+    mm.uniforms.uRefDist.value = 6 * this.viewScale
+    motes.visible = true
   }
 
   advanceOrbit(parentPos: THREE.Vector3, time: number) {
@@ -1732,6 +1959,7 @@ class PlanetInstance {
       this.screens.forEach((s) => (s.visible = false))
       this.screenHalos.forEach((s) => (s.visible = false))
       this.lasers.forEach((l) => (l.visible = false))
+      this.hideTyndall()
     }
   }
 
@@ -1817,6 +2045,7 @@ class PlanetInstance {
       s.visible = false
     })
     this.lasers.forEach((l) => (l.visible = false))
+    this.hideTyndall()
   }
 
   // Cheap idle circulation for every item on the ring/orbit — used both
@@ -1920,7 +2149,10 @@ class PlanetInstance {
       // after (by ~0.80) as the image reveals. Closing keeps its old,
       // simpler shape — the screen just shrinks away, no beam.
       const laserAppear = opening ? smoothstep(0.3, 0.45, flightT) : 0
-      const laserFadeOut = opening ? 1 - smoothstep(0.64, 0.8, flightT) : 1
+      // Once the image is up the beam doesn't vanish: the craft is still
+      // the projector, so a faint residual beam holds, flaring now and then.
+      const beamResidual = 0.05 + 0.13 * tyndallFlare(time + i * 1.7)
+      const laserFadeOut = opening ? 1 - smoothstep(0.64, 0.8, flightT) * (1 - beamResidual) : 1
       const laserVisibility = laserAppear * laserFadeOut
 
       let scaleX: number
@@ -1985,6 +2217,18 @@ class PlanetInstance {
       // the screen's own edge so they read as one system.
       haloMat.uniforms.uFlicker.value = flicker * reveal
 
+      // Shafts and motes take over as the image settles in, and fade out
+      // with the screen on close.
+      const tyndall = (opening ? smoothstep(0.6, 0.85, flightT) : smoothstep(0.4, 0.8, flightT)) * reveal
+      if (tyndall > 0.01 && !this.previewOpen) {
+        this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
+        const hw = SCREEN_HEIGHT * this.aspect * 0.5 * focusScaleAdjust * this.viewScale * scaleX
+        const hh = SCREEN_HEIGHT * 0.5 * focusScaleAdjust * this.viewScale * scaleY
+        this.updateTyndall(this._craftWorldPos, focusWorld, hw, hh, time, tyndall)
+      } else {
+        this.hideTyndall()
+      }
+
       if (laserVisibility > 0.01) {
         this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
 
@@ -2047,6 +2291,7 @@ class PlanetInstance {
         // `ringPhase` this flight started at (it was never touched).
         screen.visible = false
         laser.visible = false
+        this.hideTyndall()
         this.flightIndex = -1
         this.anySelected = false
       }
@@ -2132,6 +2377,12 @@ class PlanetInstance {
       l.geometry.dispose()
       ;(l.material as THREE.Material).dispose()
     })
+    for (const o of [this.shafts, this.motes]) {
+      if (!o) continue
+      this.scene.remove(o)
+      o.geometry.dispose()
+      ;(o.material as THREE.Material).dispose()
+    }
   }
 }
 
@@ -2699,6 +2950,7 @@ class App {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
+    MAX_ANISOTROPY = this.renderer.capabilities.getMaxAnisotropy()
     container.appendChild(this.renderer.domElement)
 
     this.camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.1, 400)
