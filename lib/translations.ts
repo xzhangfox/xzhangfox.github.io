@@ -210,8 +210,8 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI Career Intelligence Platform',
           description:
-            'A force-directed D3 graph maps your next five job titles by real market gravity, a world map plots where they’re hiring, and an AI match engine scores your resume against a live job description — then rewrites the resume and cover letter for you, on a multi-model pipeline with automatic fallback routing.',
-          highlights: ['D3 force graph of your real career trajectory', 'AI ATS match scoring plus a full resume rewrite', '40% lower AI latency via smart model fallback'],
+            'Career Intel turns your profile into a living market map: a constellation where every recommended role orbits you at the distance its match sets, a match × salary bubble chart sized by live openings, and a world map of hiring hubs. Paste any job description and the AI match engine scores your resume against it, then rewrites the resume and cover letter — and one click exports your whole profile as a designed PDF.',
+          highlights: ['Constellation, market and hiring-hub views of your fit', 'AI match scoring plus a tailored resume and cover letter', 'One-click PDF dossier of your entire profile'],
         },
         {
           subtitle: 'AI Financial Management Platform',
@@ -233,8 +233,8 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI Photo Retouching Studio',
           description:
-            'MediaPipe’s 478-point face mesh drives true frequency-separation skin smoothing and localized pinch-warp contour slimming — live from the camera or a single photo, every pixel processed client-side with nothing ever uploaded.',
-          highlights: ['True frequency-separation skin smoothing, not a flat blur', 'Live camera preview — see every slider change in real time', '478-point face mesh, fully client-side, nothing uploaded'],
+            'A beauty camera that runs entirely in the browser. MediaPipe’s 478-point face mesh drives frequency-separation skin smoothing, whitening, blemish and wrinkle removal, mesh-based face shaping, and film-style filters previewed on your own face — live from the camera or on a photo, with hold-to-compare, and every pixel processed on-device.',
+          highlights: ['Frequency-separation smoothing, not a flat blur', 'Face-mesh shaping and filters previewed on your own face', 'Fully on-device — nothing is ever uploaded'],
         },
       ],
     },
@@ -380,8 +380,8 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI 求职智能平台',
           description:
-            'D3 力导向图谱按真实市场引力展示你的下五个职业方向，世界地图标出各地招聘热点，AI 匹配引擎将简历与真实职位描述对比打分 —— 然后直接帮你重写简历和求职信，背后是带自动故障转移的多模型 AI 流水线。',
-          highlights: ['D3 力导向图谱展示真实职业路径', 'AI ATS 匹配评分 + 简历/求职信重写', '智能模型故障转移，AI 延迟降低 40%'],
+            'Career Intel 把你的履历变成一张实时的市场地图：推荐职位按匹配度环绕你运行的「星座图」、以匹配度 × 薪资定位并按 24 小时职位数定大小的气泡图，以及全球招聘热点地图。粘贴任意职位描述，AI 匹配引擎会对比打分，并为你重写简历和求职信；整份个人资料还能一键导出为精美的 PDF。',
+          highlights: ['星座图、市场气泡图与招聘热点地图三重视角', 'AI 匹配评分 + 定制简历与求职信', '一键导出完整个人资料 PDF'],
         },
         {
           subtitle: 'AI 财务管理平台',
@@ -403,8 +403,8 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI 智能修图工作室',
           description:
-            '基于 MediaPipe 478 点人脸网格，驱动真正的频率分离磨皮算法与局部像素挤压式瘦脸调整 —— 支持实时摄像头或单张照片，所有像素处理均在本地完成，照片从不上传。',
-          highlights: ['真正的频率分离磨皮，而非简单模糊', '实时摄像头预览 —— 每次调整参数即时可见', '478 点人脸网格，完全在本地运行，照片从不上传'],
+            '完全在浏览器中运行的美颜相机。MediaPipe 478 点人脸网格驱动频率分离磨皮、美白、祛痘祛皱、基于网格的脸型精修，以及在你自己脸上实时预览的胶片风滤镜 —— 支持实时摄像头或单张照片，长按即可对比原图，所有像素都在本地处理。',
+          highlights: ['频率分离磨皮，而非简单模糊', '人脸网格精修 + 在你脸上实时预览的滤镜', '全程本地处理，照片从不上传'],
         },
       ],
     },
