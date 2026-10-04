@@ -158,7 +158,7 @@ export const projects: Project[] = [
     gallery: [
       { src: '/images/projects/flux-glow/cover.jpg', caption: 'Before and after — smoothing, whitening and the Peach filter, on-device' },
       { src: '/images/projects/flux-glow/compare.jpg', caption: 'Hold to compare — the original and the retouch, side by side' },
-      { src: '/images/projects/flux-glow/effects.jpg', caption: '3D AR effects — fur ears, a moulded mask and real eyewear, lit by your own scene' },
+      { src: '/images/projects/flux-glow/effects.jpg', caption: '3D AR effects — a glossy cowl, plush fur ears and acetate shades, lit by your own scene' },
       { src: '/images/projects/flux-glow/create.jpg', caption: 'One-tap Looks, stickers and text, and per-feature Shape tabs' },
       { src: '/images/projects/flux-glow/panels.jpg', caption: 'Beauty, Shape and Filter — every adjustment previewed live' },
     ],
