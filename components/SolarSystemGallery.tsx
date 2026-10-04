@@ -558,177 +558,218 @@ const RING_FRAGMENT = `
   }
 `
 
-// A small shared craft design, loosely modeled on a chunky sci-fi
-// cargo-hauler reference (rounded hull, a big glowing sensor "eye" at the
-// nose, small swept fins, a couple of antenna spikes) rather than the
-// original plain cone+flat-wings silhouette: a rounded capsule hull, a
-// glowing nose lens (doubling as where the laser visually originates,
-// since the nose is already the craft's established forward axis — see
-// NOSE_FLIP_QUAT), swept fins, antenna spikes, a dimmer rear thruster
-// glow, and a soft pulsing halo ring. Instanced once per project (the
-// lens/engine tint varies by index).
+// The craft: a small white survey probe in the spirit of real spacecraft —
+// a white-painted pressure hull with a gold MLI-foil-wrapped service
+// module, twin deployable solar wings, a high-gain dish, RCS thruster
+// quads, an engine bell with a faint ion glow, and blinking nav lights
+// (red to port, green to starboard, a white strobe on top). The nose
+// carries the projector aperture the beam leaves from (CRAFT_NOSE_Z, see
+// NOSE_FLIP_QUAT). Instanced once per project; only the aperture's tint
+// varies by index.
+const CRAFT_NOSE_Z = 0.172
 function createCraftGeometry() {
-  const body = new THREE.CapsuleGeometry(0.075, 0.2, 4, 8)
-  body.rotateX(Math.PI / 2)
-  const fin = new THREE.BoxGeometry(0.22, 0.012, 0.08)
-  const antenna = new THREE.CylinderGeometry(0.004, 0.006, 0.13, 4)
-  const lens = new THREE.CircleGeometry(0.05, 20)
-  const lensRim = new THREE.RingGeometry(0.05, 0.066, 20)
-  const halo = new THREE.RingGeometry(0.19, 0.225, 28)
-  const greeble = new THREE.BoxGeometry(0.028, 0.014, 0.02)
-  const vent = new THREE.BoxGeometry(0.05, 0.008, 0.03)
-  const spine = new THREE.BoxGeometry(0.018, 0.03, 0.09)
-  const windowStrip = new THREE.BoxGeometry(0.012, 0.006, 0.11)
-  return { body, fin, antenna, lens, lensRim, halo, greeble, vent, spine, windowStrip }
+  const lathe = (pts: [number, number][], seg = 28) =>
+    new THREE.LatheGeometry(pts.map(([r, z]) => new THREE.Vector2(r, z)), seg).rotateX(Math.PI / 2)
+  // Lathe profiles run along local +Y, rotated onto +Z (the nose axis).
+  const hull = lathe([[0.0, -0.13], [0.068, -0.13], [0.07, -0.12], [0.07, 0.035], [0.062, 0.07], [0.05, 0.12], [0.044, 0.15], [0.0, 0.15]])
+  const foil = new THREE.CylinderGeometry(0.0725, 0.0725, 0.075, 28, 1, true).rotateX(Math.PI / 2)
+  const band = new THREE.CylinderGeometry(0.0715, 0.0715, 0.008, 28, 1, true).rotateX(Math.PI / 2)
+  const skirt = new THREE.TorusGeometry(0.068, 0.006, 6, 28)
+  const bell = lathe([[0.02, 0], [0.023, -0.01], [0.03, -0.03], [0.04, -0.052]], 24)
+  const nozzleGlow = new THREE.CircleGeometry(0.022, 20)
+  const apertureRim = new THREE.TorusGeometry(0.03, 0.006, 8, 28)
+  const glass = new THREE.CircleGeometry(0.03, 28)
+  const lens = new THREE.CircleGeometry(0.014, 20)
+  const tracker = new THREE.CylinderGeometry(0.009, 0.011, 0.024, 10).rotateX(Math.PI / 2)
+  const boom = new THREE.CylinderGeometry(0.0045, 0.0045, 1, 6)
+  const wing = new THREE.BoxGeometry(0.17, 0.004, 0.07)
+  const dish = lathe([[0.0, 0.0], [0.02, 0.002], [0.035, 0.007], [0.048, 0.015]], 24).rotateX(-Math.PI / 2)
+  const feed = new THREE.ConeGeometry(0.006, 0.03, 6)
+  const rcs = new THREE.BoxGeometry(0.018, 0.014, 0.018)
+  const navLight = new THREE.SphereGeometry(0.008, 8, 6)
+  const whip = new THREE.CylinderGeometry(0.0015, 0.002, 0.07, 4)
+  const halo = new THREE.RingGeometry(0.34, 0.37, 40)
+  return { hull, foil, band, skirt, bell, nozzleGlow, apertureRim, glass, lens, tracker, boom, wing, dish, feed, rcs, navLight, whip, halo }
 }
 const CRAFT_GEO = createCraftGeometry()
 
-// A small procedural texture (faint grain + panel-line grid) for the
-// hull material — called lazily from inside createCraft (never at module
-// scope, since `document` doesn't exist wherever this module might get
-// evaluated outside the browser) and cached so every craft instance
-// shares the one canvas instead of each generating its own. Turns the
-// hull from a single flat color into something that reads as worn,
-// paneled metal.
-let hullTexture: THREE.CanvasTexture | null = null
-function getHullTexture(): THREE.CanvasTexture {
-  if (hullTexture) return hullTexture
-  const size = 128
+// Procedural textures — built lazily (never at module scope: `document`
+// doesn't exist wherever this module might get evaluated outside the
+// browser) and shared by every craft.
+const craftTextures: Partial<Record<'hull' | 'foil' | 'solar', THREE.CanvasTexture>> = {}
+function canvasTexture(key: 'hull' | 'foil' | 'solar', w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void) {
+  if (craftTextures[key]) return craftTextures[key]!
   const canvas = document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = '#b7c0cb'
-  ctx.fillRect(0, 0, size, size)
-  const imgData = ctx.getImageData(0, 0, size, size)
-  for (let i = 0; i < imgData.data.length; i += 4) {
-    const n = (Math.random() - 0.5) * 20
-    imgData.data[i] = Math.min(255, Math.max(0, imgData.data[i] + n))
-    imgData.data[i + 1] = Math.min(255, Math.max(0, imgData.data[i + 1] + n))
-    imgData.data[i + 2] = Math.min(255, Math.max(0, imgData.data[i + 2] + n))
+  canvas.width = w
+  canvas.height = h
+  draw(canvas.getContext('2d')!)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
+  return (craftTextures[key] = tex)
+}
+const grain = (ctx: CanvasRenderingContext2D, w: number, h: number, amount: number) => {
+  const img = ctx.getImageData(0, 0, w, h)
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (Math.random() - 0.5) * amount
+    img.data[i] += n
+    img.data[i + 1] += n
+    img.data[i + 2] += n
   }
-  ctx.putImageData(imgData, 0, 0)
-  ctx.strokeStyle = 'rgba(35,38,44,0.55)'
-  ctx.lineWidth = 1
-  for (let y = 14; y < size; y += 28) {
-    ctx.beginPath()
-    ctx.moveTo(0, y)
-    ctx.lineTo(size, y)
-    ctx.stroke()
-  }
-  for (let x = 20; x < size; x += 42) {
-    ctx.beginPath()
-    ctx.moveTo(x, 0)
-    ctx.lineTo(x, size)
-    ctx.stroke()
-  }
-  hullTexture = new THREE.CanvasTexture(canvas)
-  hullTexture.wrapS = THREE.RepeatWrapping
-  hullTexture.wrapT = THREE.RepeatWrapping
-  hullTexture.repeat.set(3, 1)
-  return hullTexture
+  ctx.putImageData(img, 0, 0)
+}
+// White painted hull: panel seams, a few service hatches, a black
+// roll-reference stripe and the FLUX callsign on both flanks.
+// (x = around the hull, y = along it.)
+function getHullTexture() {
+  return canvasTexture('hull', 512, 256, (ctx) => {
+    ctx.fillStyle = '#eef0f2'
+    ctx.fillRect(0, 0, 512, 256)
+    grain(ctx, 512, 256, 6)
+    ctx.strokeStyle = 'rgba(120,128,140,0.45)'
+    ctx.lineWidth = 1.2
+    for (let x = 0; x < 512; x += 64) { ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, 256); ctx.stroke() }
+    for (const y of [40, 96, 150, 205]) { ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(512, y + 0.5); ctx.stroke() }
+    ctx.strokeStyle = 'rgba(90,96,108,0.5)'
+    for (const [x, y, w, h] of [[150, 104, 30, 22], [404, 104, 30, 22], [20, 160, 22, 34], [276, 160, 22, 34]]) ctx.strokeRect(x + 0.5, y + 0.5, w, h)
+    ctx.fillStyle = '#1b1d22'
+    ctx.fillRect(0, 214, 512, 10)
+    ctx.font = 'bold 26px "Helvetica Neue", Arial, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const x of [96, 352]) {
+      ctx.save()
+      ctx.translate(x, 122)
+      ctx.rotate(Math.PI / 2)
+      ctx.fillText('FLUX', 0, 0)
+      ctx.restore()
+    }
+  })
+}
+// Crinkled gold multi-layer insulation.
+function getFoilTexture() {
+  return canvasTexture('foil', 256, 128, (ctx) => {
+    ctx.fillStyle = '#dcae45'
+    ctx.fillRect(0, 0, 256, 128)
+    for (let i = 0; i < 260; i++) {
+      const x = Math.random() * 256, y = Math.random() * 128
+      ctx.fillStyle = Math.random() < 0.5 ? `rgba(255,236,160,${0.15 + Math.random() * 0.35})` : `rgba(90,55,10,${0.15 + Math.random() * 0.3})`
+      ctx.beginPath()
+      ctx.moveTo(x, y)
+      ctx.lineTo(x + (Math.random() - 0.5) * 40, y + (Math.random() - 0.5) * 14)
+      ctx.lineTo(x + (Math.random() - 0.5) * 30, y + (Math.random() - 0.5) * 24)
+      ctx.fill()
+    }
+    grain(ctx, 256, 128, 18)
+  })
+}
+// Solar wing: two hinged panels of deep-blue cells with silver bus lines.
+function getSolarTexture() {
+  return canvasTexture('solar', 256, 128, (ctx) => {
+    ctx.fillStyle = '#c8ccd2'
+    ctx.fillRect(0, 0, 256, 128)
+    for (const x0 of [6, 132]) {
+      ctx.fillStyle = '#10204a'
+      ctx.fillRect(x0, 6, 118, 116)
+      for (let cx = 0; cx < 8; cx++) for (let cy = 0; cy < 6; cy++) {
+        ctx.fillStyle = (cx + cy) % 3 ? '#1a3270' : '#1d3a80'
+        ctx.fillRect(x0 + 2 + cx * 14.5, 8 + cy * 19, 13, 17.5)
+      }
+      ctx.fillStyle = 'rgba(210,215,225,0.7)'
+      for (let cy = 0; cy < 6; cy++) ctx.fillRect(x0, 8 + cy * 19 + 8, 118, 0.8)
+    }
+  })
 }
 
 function createCraft(index: number): { group: THREE.Group; halo: THREE.Mesh } {
   const group = new THREE.Group()
-  const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0xb9c2cc,
-    map: getHullTexture(),
-    roughness: 0.4,
-    roughnessMap: getHullTexture(),
-    metalness: 0.75,
-  })
-  const body = new THREE.Mesh(CRAFT_GEO.body, bodyMat)
-  group.add(body)
-
-  // A raised dorsal spine and a few small greebled panels/vents break up
-  // the capsule's smooth surface into something that reads as an
-  // assembled hull rather than a bare primitive.
-  // Positioned at roughly the hull's own radius (0.075) so each sits
-  // half-embedded, half-protruding — clearly raised off the surface
-  // rather than buried inside it.
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x33373f, roughness: 0.55, metalness: 0.65 })
-  const spine = new THREE.Mesh(CRAFT_GEO.spine, darkMat)
-  spine.position.set(0, 0.078, -0.01)
-  group.add(spine)
-
-  const greebleMat = new THREE.MeshStandardMaterial({ color: 0x4a4f58, roughness: 0.6, metalness: 0.55 })
-  const greebleSpecs: [number, number, number][] = [
-    [-0.046, 0.06, 0.06],
-    [0.053, 0.053, -0.04],
-    [-0.066, -0.036, -0.09],
-  ]
-  for (const [x, y, z] of greebleSpecs) {
-    const g = new THREE.Mesh(CRAFT_GEO.greeble, greebleMat)
-    g.position.set(x, y, z)
-    group.add(g)
+  const G = CRAFT_GEO
+  // Painted white, not polished metal: there's no environment map in this
+  // scene, so a high-metalness hull would render grey-to-black.
+  const white = new THREE.MeshStandardMaterial({ map: getHullTexture(), roughness: 0.5, metalness: 0.05 })
+  const gold = new THREE.MeshStandardMaterial({ map: getFoilTexture(), roughness: 0.28, metalness: 0.3, side: THREE.DoubleSide })
+  const dark = new THREE.MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.55, metalness: 0.5 })
+  const steel = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.35, metalness: 0.6 })
+  const panelWhite = new THREE.MeshStandardMaterial({ color: 0xf2f3f5, roughness: 0.55, metalness: 0.05, side: THREE.DoubleSide })
+  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0) => {
+    const m = new THREE.Mesh(geo, mat)
+    m.position.set(x, y, z)
+    group.add(m)
+    return m
   }
-  const vent = new THREE.Mesh(CRAFT_GEO.vent, darkMat)
-  vent.position.set(0, -0.078, -0.11)
-  group.add(vent)
 
-  const finMat = new THREE.MeshStandardMaterial({ color: 0x82899a, roughness: 0.5, metalness: 0.6 })
-  const finL = new THREE.Mesh(CRAFT_GEO.fin, finMat)
-  finL.position.set(-0.1, -0.008, 0.03)
-  finL.rotation.z = 0.22
-  const finR = finL.clone()
-  finR.position.x = 0.1
-  finR.rotation.z = -0.22
-  group.add(finL, finR)
+  add(G.hull, white)
+  add(G.foil, gold, 0, 0, -0.075)
+  add(G.band, dark, 0, 0, -0.035)
+  add(G.skirt, dark, 0, 0, -0.128)
+  // Dark aft bulkhead around the engine mount.
+  add(G.glass, dark, 0, 0, -0.1315).scale.setScalar(2.2)
+  group.children[group.children.length - 1].rotation.y = Math.PI
 
-  const antennaMat = new THREE.MeshStandardMaterial({ color: 0x5c6270, roughness: 0.6, metalness: 0.5 })
-  const antennaL = new THREE.Mesh(CRAFT_GEO.antenna, antennaMat)
-  antennaL.position.set(-0.07, 0.05, 0.02)
-  antennaL.rotation.set(0.3, 0, 0.35)
-  const antennaR = antennaL.clone()
-  antennaR.position.x = 0.07
-  antennaR.rotation.z = -0.35
-  group.add(antennaL, antennaR)
+  // Engine bell with a faint blue ion glow deep inside it.
+  add(G.bell, dark, 0, 0, -0.13).material = new THREE.MeshStandardMaterial({ color: 0x8a8f98, roughness: 0.4, metalness: 0.45, side: THREE.DoubleSide })
+  const plasma = add(G.nozzleGlow, new THREE.MeshBasicMaterial({ color: 0x7fc8ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide }), 0, 0, -0.14)
+  plasma.rotation.y = Math.PI
 
-  const engineHue = 0.5 + ((index * 0.21) % 1) * 0.12
-  const engineColor = new THREE.Color().setHSL(engineHue, 0.9, 0.6)
-  // The nose "eye" — a bright sensor/laser lens in this project's own
-  // accent hue, right at the tip the craft is already oriented to point
-  // (see NOSE_FLIP_QUAT), so the beam visually originates from it.
-  const lens = new THREE.Mesh(
-    CRAFT_GEO.lens,
-    new THREE.MeshStandardMaterial({
-      color: engineColor,
-      emissive: engineColor,
-      emissiveIntensity: 2.4,
-      roughness: 0.3,
-      side: THREE.DoubleSide,
-    })
-  )
-  lens.position.z = 0.176
-  const lensRim = new THREE.Mesh(
-    CRAFT_GEO.lensRim,
-    new THREE.MeshStandardMaterial({ color: 0x1a1c20, roughness: 0.5, metalness: 0.6, side: THREE.DoubleSide })
-  )
-  lensRim.position.z = 0.175
-  group.add(lens, lensRim)
+  // Projector aperture at the nose — the beam's source, tinted per project.
+  const tint = new THREE.Color().setHSL(0.5 + ((index * 0.21) % 1) * 0.12, 0.85, 0.62)
+  // A small bright emitter inside dark coated glass, ringed by a docking
+  // collar — reads as optics rather than a lamp.
+  add(G.apertureRim, dark, 0, 0, CRAFT_NOSE_Z - 0.02)
+  add(G.glass, new THREE.MeshStandardMaterial({ color: 0x0b1018, roughness: 0.08, metalness: 0.6 }), 0, 0, CRAFT_NOSE_Z - 0.0215)
+  add(G.lens, new THREE.MeshStandardMaterial({ color: tint, emissive: tint, emissiveIntensity: 1.6, roughness: 0.15 }), 0, 0, CRAFT_NOSE_Z - 0.021)
+  // Twin star trackers on the forward shoulder.
+  for (const side of [-1, 1]) {
+    const t = add(G.tracker, dark, side * 0.026, 0.05, 0.1)
+    t.rotation.set(-0.35, side * 0.25, 0)
+  }
 
-  // A thin glowing "window strip" along the flank, in the same accent
-  // hue — echoes the reference ship's lit cabin windows.
-  const windowStrip = new THREE.Mesh(
-    CRAFT_GEO.windowStrip,
-    new THREE.MeshStandardMaterial({ color: engineColor, emissive: engineColor, emissiveIntensity: 1.8, roughness: 0.3 })
-  )
-  windowStrip.position.set(0.077, 0.01, 0.02)
-  group.add(windowStrip)
+  // Solar wings on booms, port and starboard of the service module.
+  const solar = new THREE.MeshStandardMaterial({ map: getSolarTexture(), roughness: 0.28, metalness: 0.35, emissive: 0x0a1430, emissiveIntensity: 0.6 })
+  for (const side of [-1, 1]) {
+    const boom = add(G.boom, steel, side * 0.095, 0, -0.075)
+    boom.scale.y = 0.05
+    boom.rotation.z = Math.PI / 2
+    const wing = add(G.wing, solar, side * 0.205, 0, -0.075)
+    wing.rotation.x = 0.12
+  }
 
-  // A dimmer rear thruster glow, echoing the nose lens's own hue.
-  const engine = new THREE.Mesh(
-    new THREE.SphereGeometry(0.032, 8, 8),
-    new THREE.MeshStandardMaterial({ color: engineColor, emissive: engineColor, emissiveIntensity: 1.6, roughness: 0.4 })
-  )
-  engine.position.z = -0.19
-  group.add(engine)
+  // High-gain dish on a short mast, angled back toward "home".
+  const mast = add(G.boom, steel, 0, 0.09, -0.02)
+  mast.scale.y = 0.04
+  const dish = add(G.dish, panelWhite, 0, 0.112, -0.02)
+  dish.rotation.x = -0.5
+  const feed = add(G.feed, steel, 0, 0.122, -0.026)
+  feed.rotation.x = -0.5
+
+  // RCS thruster quads ringing the forward hull, and a whip antenna.
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2 + Math.PI / 4
+    const q = add(G.rcs, dark, Math.cos(a) * 0.066, Math.sin(a) * 0.066, 0.05)
+    q.rotation.z = a
+  }
+  const whip = add(G.whip, steel, 0.02, -0.07, 0.02)
+  whip.rotation.x = 0.5
+
+  // Nav lights: port red / starboard green steady-blinking, a white
+  // anti-collision strobe double-flashing on top. Phase-offset per craft.
+  const blink = (mat: THREE.MeshBasicMaterial, fn: (t: number) => boolean) => (mesh: THREE.Mesh) => {
+    mesh.onBeforeRender = () => { mat.opacity = fn(performance.now() / 1000 + index * 0.37) ? 1 : 0.08 }
+  }
+  const navSpecs: [number, number, number, number, (t: number) => boolean][] = [
+    [0xff3b3b, -0.292, 0, -0.075, (t) => t % 1.6 < 0.9],
+    [0x3bff7a, 0.292, 0, -0.075, (t) => t % 1.6 < 0.9],
+    [0xffffff, 0, 0.073, 0.06, (t) => { const p = t % 1.4; return p < 0.06 || (p > 0.16 && p < 0.22) }],
+  ]
+  for (const [color, x, y, z, fn] of navSpecs) {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true })
+    blink(mat, fn)(add(G.navLight, mat, x, y, z))
+  }
 
   // A gently pulsing ring around the craft — a "this is clickable" cue
   // while it idles on the ring, before anything's been selected.
   const halo = new THREE.Mesh(
-    CRAFT_GEO.halo,
+    G.halo,
     new THREE.MeshBasicMaterial({
       color: LASER_WHITE,
       transparent: true,
@@ -2220,8 +2261,13 @@ class PlanetInstance {
       // Shafts and motes take over as the image settles in, and fade out
       // with the screen on close.
       const tyndall = (opening ? smoothstep(0.6, 0.85, flightT) : smoothstep(0.4, 0.8, flightT)) * reveal
+      // The beam leaves from the nose aperture, not the craft's center.
+      this._craftWorldPos
+        .set(0, 0, CRAFT_NOSE_Z * craft.scale.x)
+        .applyQuaternion(craft.quaternion)
+        .add(this._localPos)
+        .applyMatrix4(this.group.matrixWorld)
       if (tyndall > 0.01 && !this.previewOpen) {
-        this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
         const hw = SCREEN_HEIGHT * this.aspect * 0.5 * focusScaleAdjust * this.viewScale * scaleX
         const hh = SCREEN_HEIGHT * 0.5 * focusScaleAdjust * this.viewScale * scaleY
         this.updateTyndall(this._craftWorldPos, focusWorld, hw, hh, time, tyndall)
@@ -2230,7 +2276,6 @@ class PlanetInstance {
       }
 
       if (laserVisibility > 0.01) {
-        this._craftWorldPos.copy(this._localPos).applyMatrix4(this.group.matrixWorld)
 
         // The screen's own actual four world-space corners — its
         // geometry is an unrotated plane always facing the camera, so
