@@ -153,7 +153,7 @@ export const projects: Project[] = [
     description:
       'A beauty camera that runs entirely in the browser. MediaPipe’s 478-point face mesh drives frequency-separation skin smoothing and 3D relighting, 26 face-shape controls built as bounded local mesh transforms (so even ±100 stays natural), one-tap Looks like Baby Face and Chiseled, face-tracked 3D AR effects — shell-rendered fur ears, face-conforming masks and modeled eyewear lit by light estimated from the photo — and stickers, emoji and text on the finished photo — live or on a still, every pixel processed on-device.',
     tech: ['React 19', 'MediaPipe', 'Canvas API', 'TypeScript', 'Vite'],
-    link: 'https://flux-glow-f60xl28cu-fox-1121.vercel.app/',
+    link: 'https://flux-glow.vercel.app/',
     image: '/images/projects/flux-glow/cover.jpg',
     gallery: [
       { src: '/images/projects/flux-glow/cover.jpg', caption: 'Before and after — smoothing, whitening and the Peach filter, on-device' },
