@@ -58,7 +58,7 @@ export const projects: Project[] = [
     description:
       'Six reading systems — Bazi, Ziwei, Tarot, Face Reading, Human Design, and a three-lens Affinity Reading — all running on deterministic Chinese-astrology math (real planetary positions, not LLM guesses), with a live 3D star chart and “The Chartkeeper,” an AI that reads your actual computed chart. Invite a friend to a blind, 60-second Mirror Draw before it scores your compatibility.',
     tech: ['Next.js', 'React Three Fiber', 'Astronomy Engine', 'Claude API', 'Gemini AI', 'Zustand'],
-    link: 'https://parallax-nine-taupe.vercel.app/',
+    link: 'https://flux-path-fox-1121.vercel.app/',
     image: '/images/projects/flux-path/showcase.jpg',
     video: '/videos/flux-path.mp4',
     gallery: [
