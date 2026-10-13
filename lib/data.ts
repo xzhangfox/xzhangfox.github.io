@@ -38,7 +38,7 @@ export const projects: Project[] = [
     description:
       'Snap a photo and Gemini Vision draws a bounding box around every item on your plate, gram by gram. “Dr. Flux,” an AI nutritionist, reads your live macro telemetry and calorie budget to coach you in real time — backed by real TDEE/PSMF metabolic math, not guesswork.',
     tech: ['React 19', 'Gemini Vision', 'Tailwind CSS 4', 'TDEE Modeling', 'Mifflin-St Jeor'],
-    link: 'https://flux-nutrition-61764787893.us-west1.run.app/#/dashboard',
+    link: 'https://flux-fox-1121.vercel.app/',
     image: '/images/projects/flux-nutrition/showcase.jpg',
     video: '/videos/flux-nutrition.mp4',
     gallery: [
@@ -83,7 +83,7 @@ export const projects: Project[] = [
     description:
       'Career Intel turns your profile into a living market map: a constellation where every recommended role orbits you at the distance its match sets, a match × salary bubble chart sized by live openings, and a world map of hiring hubs. Paste any job description and the AI match engine scores your resume against it, then rewrites the resume and cover letter — and one click exports your whole profile as a designed PDF.',
     tech: ['React 19', 'Gemini AI', 'D3.js', 'Supabase', 'Express', 'NLP'],
-    link: 'https://flux-career-367989884274.us-west1.run.app/',
+    link: 'https://flux-career-cyan.vercel.app/',
     image: '/images/projects/flux-career/cover.jpg',
     video: '/videos/flux-career.mp4',
     gallery: [
@@ -104,7 +104,7 @@ export const projects: Project[] = [
     description:
       'Snap a receipt and Gemini Flash itemizes it straight into your ledger — no manual entry. A resource-allocation donut and a velocity trend chart track spend in real time, a full calendar heat-maps every day’s total, and a Google Search-grounded feed keeps market data current to the second.',
     tech: ['React 19', 'Gemini Flash', 'Recharts', 'Google Search API', 'Supabase'],
-    link: 'https://flux-finance-1093821759886.us-west1.run.app/',
+    link: 'https://flux-finance-ivory.vercel.app/',
     image: '/images/projects/flux-finance/cover.jpg',
     video: '/videos/flux-finance.mp4',
     gallery: [
