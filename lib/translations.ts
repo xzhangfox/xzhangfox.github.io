@@ -198,8 +198,8 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI Dietary & Metabolic Tracker',
           description:
-            'Snap a photo and Gemini Vision draws a bounding box around every item on your plate, gram by gram. “Dr. Flux,” an AI nutritionist, reads your live macro telemetry and calorie budget to coach you in real time — backed by real TDEE/PSMF metabolic math, not guesswork.',
-          highlights: ['Vision AI turns one photo into a full macro breakdown', '“Dr. Flux” AI coach reads your live telemetry', 'Real TDEE/PSMF metabolic math, not guesswork'],
+            'Snap a meal and Flux Vision boxes every food on the plate with its calories and macros: adjust the portions, log it in one tap, or share the annotated photo. Dr. Flux, an AI nutritionist, answers from your live targets and the published research, and logs a meal from one sentence. Pick a goal, a diet method and a cycle, and Flux builds the whole plan: every day’s targets, training and meals on one calendar.',
+          highlights: ['Food detection with bounding boxes, shareable as one photo', 'An AI nutritionist that cites the research and knows your day', 'A full diet plan from a goal, a method and a cycle'],
         },
         {
           subtitle: 'Bazi & Ziwei Astrology Engine',
@@ -210,8 +210,8 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI Career Intelligence Platform',
           description:
-            'Career Intel turns your profile into a living market map: a constellation where every recommended role orbits you at the distance its match sets, a match × salary bubble chart sized by live openings, and a world map of hiring hubs. Paste any job description and the AI match engine scores your resume against it, then rewrites the resume and cover letter — and one click exports your whole profile as a designed PDF.',
-          highlights: ['Constellation, market and hiring-hub views of your fit', 'AI match scoring plus a tailored resume and cover letter', 'One-click PDF dossier of your entire profile'],
+            'An AI career agent that knows your whole record (profile, applications and market fit) tells you which jobs to chase today and how to pitch yourself. Astro’s daily list arrives ranked by match; every job gets its own résumé, cover letter and ready answers, and the Flux Autofill extension fills in the application. Each résumé mirrors the posting’s keywords using only your true facts, and is checked against the job with a match score, its gaps and fixes.',
+          highlights: ['An AI career agent that plans your search from your real record', 'A daily apply queue: ranked jobs, ready answers, autofill', 'A résumé and cover letter per job, scored against the posting'],
         },
         {
           subtitle: 'AI Financial Management Platform',
@@ -374,8 +374,8 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI 饮食与代谢追踪应用',
           description:
-            '拍一张照片，Gemini Vision 就能给餐盘里的每样食物画出识别框，精确到克。AI 营养师"Dr. Flux"实时读取你的宏量营养素和热量缺口数据，给出即时建议 —— 背后是真正的 TDEE/PSMF 代谢数学模型，而非凭空猜测。',
-          highlights: ['拍照即出完整宏量营养分析', 'AI 教练 "Dr. Flux" 读取实时数据给建议', 'Mifflin-St Jeor TDEE/PSMF 代谢建模'],
+            '拍下一餐，Flux Vision 就为盘中每样食物画出识别框，标上热量和三大营养素；调好份量一键记录，或把带标注的照片直接分享出去。AI 营养师 Dr. Flux 结合你的实时目标和已发表的研究作答，一句话就能帮你记下一餐。选好目标、饮食方法和周期，Flux 会生成完整的饮食计划：每一天的目标、训练和餐食都排在同一张日历上。',
+          highlights: ['食物识别框 + 营养标注，一张图即可分享', '引用研究、了解你当天情况的 AI 营养师', '目标、方法、周期，三步生成完整饮食计划'],
         },
         {
           subtitle: '八字与紫微命理引擎',
@@ -386,8 +386,8 @@ export const translations: Record<Language, Dict> = {
         {
           subtitle: 'AI 求职智能平台',
           description:
-            'Career Intel 把你的履历变成一张实时的市场地图：推荐职位按匹配度环绕你运行的「星座图」、以匹配度 × 薪资定位并按 24 小时职位数定大小的气泡图，以及全球招聘热点地图。粘贴任意职位描述，AI 匹配引擎会对比打分，并为你重写简历和求职信；整份个人资料还能一键导出为精美的 PDF。',
-          highlights: ['星座图、市场气泡图与招聘热点地图三重视角', 'AI 匹配评分 + 定制简历与求职信', '一键导出完整个人资料 PDF'],
+            'AI 职业规划师了解你的全部履历——个人资料、投递记录和市场匹配度——告诉你今天先投哪些职位、怎样介绍自己。Astro 的每日职位清单按匹配度排好序；每个职位都有专属的简历、求职信和现成的申请问答，Flux Autofill 插件替你填好申请表。每份简历只用你的真实经历去对应职位描述的关键词，并与职位逐项比对，给出匹配分、差距和改进建议。',
+          highlights: ['基于真实履历规划求职的 AI 职业规划师', '每日投递清单：排序职位、现成问答、自动填表', '每个职位一份简历和求职信，并按职位要求评分'],
         },
         {
           subtitle: 'AI 财务管理平台',
