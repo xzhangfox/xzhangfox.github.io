@@ -225,26 +225,20 @@ const Y_AXIS = new THREE.Vector3(0, 1, 0)
 const NOSE_FLIP_QUAT = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, Math.PI)
 const ORIGIN = new THREE.Vector3(0, 0, 0)
 
-// Shared by the laser material and the screen's glow/scan-band tint so the
-// beam and the hologram it projects read as one continuous piece of light —
-// "laser white."
+// Shared by the laser material and the screen's edge, rod and calibration
+// grid so the beam and the picture it projects read as one continuous piece
+// of light — "laser white."
 const LASER_WHITE = new THREE.Color(0xeaf6ff)
-// The screen's own edge/static tint — a cyberpunk cyan-magenta duotone
-// instead of flat white, so the hologram's border and forming-static read
-// as neon rather than a plain light.
+// The screen's corner-bracket tint when its project has no color of its own.
 const NEON_CYAN = new THREE.Color(0x1af2ff)
-const NEON_MAGENTA = new THREE.Color(0xff2ec4)
 
-// Derives a hologram's neon duotone from a single project color, the same
-// hue-shift trick used for the planet aura's two-tone gradient — keeps every
-// project's screen visually distinct instead of sharing the one global pair.
-function neonDuotoneFrom(hex: string): [THREE.Color, THREE.Color] {
-  const a = new THREE.Color(hex)
+// A screen's corner-bracket tint from its project color, saturated and
+// held to a mid lightness so it reads against both the picture and space —
+// keeps every project's screen visually distinct.
+function neonFrom(hex: string): THREE.Color {
   const hsl = { h: 0, s: 0, l: 0 }
-  a.getHSL(hsl)
-  const boosted = new THREE.Color().setHSL(hsl.h, Math.min(hsl.s + 0.35, 1), Math.min(Math.max(hsl.l, 0.45), 0.62))
-  const b = new THREE.Color().setHSL((hsl.h + 0.32) % 1, Math.min(hsl.s + 0.35, 1), Math.min(Math.max(hsl.l, 0.45), 0.62))
-  return [boosted, b]
+  new THREE.Color(hex).getHSL(hsl)
+  return new THREE.Color().setHSL(hsl.h, Math.min(hsl.s + 0.35, 1), Math.min(Math.max(hsl.l, 0.45), 0.62))
 }
 
 const SELF_SPIN_SPEED = 0.0018
@@ -291,10 +285,10 @@ const TRAVEL_END = 0.52
 // depends on how far it started, so sharing one rate would have made
 // every close take several seconds for no reason.
 const FLIGHT_CLOSE_EASE = 0.06
-// Per-frame step for the screen's own reveal timer, independent of
-// FLIGHT_OPEN_EASE — reaches 1 in ~20 frames (~0.33s) once the plane has
-// formed, so the "flickering to life" moment always resolves quickly.
-const REVEAL_TIMER_STEP = 1 / 20
+// Per-frame step for the screen's own reveal timer (the lens pulling focus),
+// independent of FLIGHT_OPEN_EASE — reaches 1 in ~30 frames (~0.5s) once
+// the curtain is fully down, so the focus pull is watchable but brief.
+const REVEAL_TIMER_STEP = 1 / 30
 
 const SCREEN_HEIGHT = 3.4
 const FOCUS_SCALE = 1.05
@@ -321,225 +315,105 @@ const SCREEN_VERTEX = `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
+// A projected picture, not a glitchy hologram: a clean sheet of light whose
+// edge IS its border — a soft line of light right on the edge, brighter and
+// tinted at the corners, and nothing beyond it. While the curtain unrolls it
+// carries the projector's calibration grid; once it's down, the lens pulls
+// focus and the picture comes up — brightest and most solid at the centre,
+// thinning toward the border the way a real projector's light does.
 const SCREEN_FRAGMENT = `
   precision highp float;
   uniform sampler2D uMap;
   uniform vec2 uImageSize;
   uniform vec2 uPlaneSize;
   uniform float uBorderRadius;
-  // 1 while the point/line/plane is still forming — solid laser-white,
-  // no noise, no image, so the shape it draws reads as pure light.
+  // 1 while it's still the rod of light strung between the top anchors —
+  // solid laser-white, nothing else.
   uniform float uGlow;
-  // 0 while showing hologram static (the real image is never sampled at
-  // all during this) — 1 once fully revealed.
+  // 0 showing the calibration grid (the picture isn't sampled sharp yet),
+  // 1 fully in focus.
   uniform float uReveal;
   uniform float uFlicker;
-  uniform float uTime;
   // 0..1 — how far the curtain has unrolled down from its top edge.
   uniform float uUnroll;
   uniform vec3 uLaserWhite;
   uniform vec3 uNeonA;
-  uniform vec3 uNeonB;
   varying vec2 vUv;
 
   float roundedBoxSDF(vec2 p, vec2 b, float r) {
     vec2 d = abs(p) - b;
     return length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - r;
   }
-  float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  // 1 on a hairline at distance 0, ~w pixels wide.
+  float hairline(float dist, float w) {
+    return 1.0 - smoothstep(0.0, w, abs(dist));
   }
 
   void main() {
-    float dClean = roundedBoxSDF(vUv - 0.5, vec2(0.5 - uBorderRadius), uBorderRadius);
+    // Plane-space position, in screen heights, so lines keep their width at
+    // any screen size and the corners stay round.
+    float aspect = uPlaneSize.x / uPlaneSize.y;
+    vec2 halfSize = vec2(aspect, 1.0) * 0.5;
+    vec2 p = (vUv - 0.5) * vec2(aspect, 1.0);
+    float d = roundedBoxSDF(p, halfSize - uBorderRadius, uBorderRadius);
+    float px = fwidth(d);
+    float inside = 1.0 - smoothstep(-px, 0.0, d);
+    if (inside <= 0.0) discard;
+    float rim = -d;
 
-    // Fray the boundary itself rather than leaving it a perfectly crisp
-    // vector line — a coarse, slowly-crawling perturbation for a few small
-    // "torn" notches, plus fine high-frequency jitter for a grainy dissolve
-    // right at the line, so the silhouette itself reads as unstable light
-    // rather than a flat rounded-rect shape.
-    float frayCoarse = (hash(floor(vUv * vec2(22.0, 14.0)) + floor(uTime * 1.6)) - 0.5) * 0.022;
-    float frayFine = (hash(floor(vUv * vec2(90.0, 56.0)) + floor(uTime * 9.0)) - 0.5) * 0.007;
-    float d = dClean + frayCoarse + frayFine;
-    if (d > 0.02) discard;
     // Rows below the roller haven't unrolled yet; the roller itself is a
-    // bright line of laser light sweeping down the picture, not a squash.
+    // bright line of laser light sweeping down, uncovering, not squashing.
     float below = (1.0 - uUnroll) - vUv.y;
     if (below > 0.0) discard;
-    float roller = (1.0 - smoothstep(0.0, 0.025, -below)) * (1.0 - step(0.999, uUnroll));
-    // A soft dissolve right at the torn edge instead of a hard cutoff —
-    // thins out to nothing rather than snapping off.
-    float dissolveAlpha = 1.0 - smoothstep(0.0, 0.02, d);
+    float roller = hairline(below, fwidth(vUv.y) * 3.0) * (1.0 - step(0.999, uUnroll));
 
-    // Ambient "unstable projection" glitch — independent of open/close
-    // state. Rare, brief bursts, not a constant shimmer. Drives BOTH the
-    // edge noise below and (synced to the same instant) a dip in the main
-    // image's opacity plus its own noise wash, so border and image glitch
-    // together rather than independently.
-    float glitchSlot = hash(vec2(floor(uTime * 2.2), 7.0));
-    float glitchActive = step(0.9, glitchSlot) * (0.5 + 0.5 * sin(uTime * 70.0));
+    // Calibration grid: square cells, a centre ring and crosshair.
+    vec2 g = vUv * vec2(12.0, 12.0 / aspect);
+    vec2 gd = abs(fract(g + 0.5) - 0.5) / fwidth(g);
+    float grid = 1.0 - smoothstep(0.0, 1.2, min(gd.x, gd.y));
+    float r = length(p);
+    float target = max(hairline(r - 0.16, fwidth(r) * 1.5), max(hairline(p.x, fwidth(p.x) * 1.5), hairline(p.y, fwidth(p.y) * 1.5)) * step(r, 0.24));
+    vec3 calib = uLaserWhite * (0.02 + 0.35 * grid + 0.6 * target);
+    float calibAlpha = 0.12 + 0.55 * max(grid, target);
 
-    vec3 color;
-    float alpha = 1.0;
+    // The picture, cover-fitted; the lens pulls focus as uReveal rises.
+    vec2 ratio = vec2(
+      min((uPlaneSize.x / uPlaneSize.y) / (uImageSize.x / uImageSize.y), 1.0),
+      min((uPlaneSize.y / uPlaneSize.x) / (uImageSize.y / uImageSize.x), 1.0)
+    );
+    vec2 uv = vUv * ratio + (1.0 - ratio) * 0.5;
+    float focus = smoothstep(0.0, 1.0, uReveal);
+    vec3 img = texture2D(uMap, uv, mix(5.0, -0.6, focus)).rgb;
+    vec2 q = vUv - 0.5;
+    img *= 1.05 - 0.4 * dot(q, q);
+    float lum = dot(img, vec3(0.299, 0.587, 0.114));
+
+    vec3 color = mix(calib, img, focus) * uFlicker;
+    float alpha = mix(calibAlpha, 0.975 + 0.025 * smoothstep(0.0, 0.25, lum), focus);
+
+    // The picture runs right up to the border line, growing more
+    // see-through as it gets there.
+    alpha *= mix(0.3, 1.0, smoothstep(0.0, 0.08, rim));
+
+    // The border line: soft light on the edge itself, brighter and tinted in
+    // the project's color for a short way from each corner.
+    vec2 toEdge = halfSize - abs(p);
+    float corner = 1.0 - smoothstep(0.045, 0.09, max(toEdge.x, toEdge.y));
+    float line = exp(-rim / (3.0 * px)) * (0.35 + 0.45 * corner);
+    color = mix(color, mix(uLaserWhite, uNeonA, 0.6 * corner), line);
+    alpha = max(alpha, line);
+
     if (uGlow > 0.5) {
-      // Forming: the point/line/plane itself is made of laser light,
-      // nothing else — no noise, no image.
-      float pulse = 0.88 + 0.12 * sin(uTime * 34.0);
-      color = uLaserWhite * pulse;
-    } else {
-      float reveal = clamp(uReveal, 0.0, 1.0);
-      color = vec3(0.0);
-      if (reveal < 0.999) {
-        // Pure noise/scanline hologram static — the preview image is never
-        // sampled here, so nothing of it can leak through before reveal.
-        // Tinted cyan-to-magenta across the frame rather than flat white,
-        // a cyberpunk duotone static instead of a plain TV-snow look.
-        float noise = hash(floor(vUv * vec2(160.0, 100.0)) + floor(uTime * 22.0));
-        float scan = 0.6 + 0.4 * sin(vUv.y * 380.0 - uTime * 46.0);
-        vec3 staticTint = mix(uNeonA, uNeonB, vUv.x);
-        color = staticTint * (noise * 0.7 + 0.3) * scan * uFlicker;
-      }
-      if (reveal > 0.001) {
-        vec2 ratio = vec2(
-          min((uPlaneSize.x / uPlaneSize.y) / (uImageSize.x / uImageSize.y), 1.0),
-          min((uPlaneSize.y / uPlaneSize.x) / (uImageSize.y / uImageSize.x), 1.0)
-        );
-        vec2 uv = vec2(
-          vUv.x * ratio.x + (1.0 - ratio.x) * 0.5,
-          vUv.y * ratio.y + (1.0 - ratio.y) * 0.5
-        );
-        // Clean and stable once revealed — no per-frame animated ripple
-        // here. uFlicker still dims it during the brief pre-close flicker,
-        // but otherwise this holds rock-steady except for the synced
-        // glitch burst below.
-        // Chromatic aberration — the red/blue channels sample slightly
-        // outward from center, growing toward the edges, the classic
-        // "unstable projection" fringe. Clean at the center, colored fringe
-        // at the rim, reinforcing it as light rather than a flat image.
-        vec2 caCenter = vUv - 0.5;
-        float caDist = length(caCenter);
-        vec2 caDir = caDist > 0.0001 ? caCenter / caDist : vec2(0.0);
-        // Kept to a hairline at the very rim so the picture itself stays
-        // crisp; the negative LOD bias picks the sharper mip.
-        float caAmount = 0.0035 * smoothstep(0.3, 0.5, caDist);
-        vec3 base = vec3(
-          texture2D(uMap, uv + caDir * caAmount, -0.6).r,
-          texture2D(uMap, uv, -0.6).g,
-          texture2D(uMap, uv - caDir * caAmount, -0.6).b
-        );
-        float imgNoise = hash(floor(vUv * vec2(140.0, 90.0)) + floor(uTime * 30.0));
-        base = mix(base, uLaserWhite * imgNoise, glitchActive * 0.55);
-        // Fine persistent scanlines across the whole revealed image — the
-        // classic CRT/hologram cyberpunk texture, not just the sweeping
-        // band below.
-        base *= 0.965 + 0.035 * sin(vUv.y * 420.0);
-        float imgAlpha = mix(1.0, 0.55, glitchActive);
-        // The revealed image itself no longer dims/flickers with uFlicker —
-        // it holds steady once shown; only the edge glow below carries the
-        // flicker now, so the picture stays legible while the border still
-        // reads as unstable light.
-        color = mix(color, base, reveal);
-        alpha = mix(alpha, imgAlpha, reveal);
-
-        // A bright scan-band slowly sweeping down the revealed image —
-        // reads as an active projection/scan rather than instability, the
-        // way the static/glitch effects do.
-        float scanY = fract(uTime * 0.12);
-        float scanDist = abs(vUv.y - (1.0 - scanY));
-        float scanBand = smoothstep(0.05, 0.0, scanDist) * 0.32;
-        color += uLaserWhite * scanBand * reveal;
-
-        // An iridescent inner rim in the project's own neon pair, drifting
-        // in hue — the light reads as pooling at the projection's edge.
-        float rim = smoothstep(-0.028, -0.004, dClean);
-        vec3 rimColor = mix(uNeonA, uNeonB, 0.5 + 0.5 * sin(vUv.x * 5.0 + vUv.y * 3.0 + uTime * 1.3));
-        color += rimColor * rim * 0.3 * reveal;
-
-        // Every few seconds a soft diagonal sheen sweeps across the glass.
-        float sheenPos = vUv.x * 0.8 + (1.0 - vUv.y) * 0.5;
-        float sheenAt = fract(uTime * 0.14) * 2.4 - 0.5;
-        float sheen = smoothstep(0.09, 0.0, abs(sheenPos - sheenAt));
-        color += uLaserWhite * sheen * 0.16 * reveal;
-      }
+      color = uLaserWhite;
+      alpha = 1.0;
     }
-
-    // Narrower band than the original (was -0.045..-0.01) so the glow
-    // reads as a defined edge rather than a wide halo eating into the
-    // image. uFlicker lives ONLY here now — the image content above holds
-    // steady regardless of it, so what actually flickers is just this
-    // ring of light around the picture, not the picture itself.
-    float edge = smoothstep(-0.026, -0.008, d);
-    vec3 edgeNoise = vec3(hash(vUv * 300.0 + uTime * 5.0));
-    // Square mosaic noise along the border instead of a smooth chasing
-    // gradient — blocks of a few different sizes, each independently
-    // flickering on/off at a steady cadence, so the edge reads as
-    // corrupted/glitching pixels rather than a clean ring. Laser white
-    // rather than a neon tint — the border reads as the same light as the
-    // beam and the forming-plane glow, not a separately-colored accent.
-    float mosaicTick = floor(uTime * 5.5);
-    // A coarse macro-cell picks this patch's block-size tier so the mosaic
-    // isn't uniform — three candidate densities mixed across the frame.
-    float tier = hash(floor(vUv * 6.0) + 41.0);
-    float density = tier < 0.33 ? 9.0 : (tier < 0.66 ? 16.0 : 26.0);
-    vec2 mosaicCell = floor(vUv * density);
-    float cellSeed = hash(mosaicCell * 1.37 + mosaicTick * 3.11);
-    float cellOn = step(0.42, cellSeed);
-    vec3 edgeColor = mix(uLaserWhite * cellOn, edgeNoise, glitchActive * 0.7);
-    float edgeStrength = edge * 0.6 * cellOn * (1.0 + glitchActive * 0.6) * uFlicker;
-    color = mix(color, edgeColor, clamp(edgeStrength, 0.0, 1.0));
-    float edgeAlpha = edge * mix(0.3, 1.0, cellOn) * uFlicker;
-    alpha = mix(alpha, 1.0, edgeAlpha);
-    alpha *= dissolveAlpha;
     color = mix(color, uLaserWhite * 1.1, roller);
-    alpha = max(alpha, roller * dissolveAlpha);
+    alpha = max(alpha, roller);
 
-    gl_FragColor = vec4(color, alpha);
-  }
-`
-
-// The screen's own content (image + torn border) occupies the centered
-// inner fraction of the larger halo plane below — this fixes how much
-// margin surrounds it. Shared between the JS geometry sizing and the
-// shader's matching inner-box math so they can't drift apart.
-const SCREEN_HALO_CONTENT_SCALE = 0.72
-// A handful of small, lazily-twinkling laser-white points scattered in
-// the margin just outside the hologram's own edge — projector light
-// scatter/dust rather than a second border, so just a few soft dots
-// fading out toward the plane's rim, not a dense field.
-const SCREEN_HALO_FRAGMENT = `
-  precision highp float;
-  uniform vec3 uLaserWhite;
-  uniform float uTime;
-  uniform float uFlicker;
-  varying vec2 vUv;
-
-  float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-  }
-
-  void main() {
-    const float inner = 0.5 * ${SCREEN_HALO_CONTENT_SCALE};
-    vec2 p = vUv - 0.5;
-    float d = max(abs(p.x), abs(p.y)) - inner;
-    // Only the margin band outside the content box, fading out toward
-    // the plane's own outer edge.
-    float fade = 1.0 - smoothstep(0.0, 0.16, d);
-    if (d <= 0.0 || fade <= 0.0) discard;
-
-    float tick = floor(uTime * 2.2);
-    vec2 cellUv = vUv * 9.0;
-    vec2 cell = floor(cellUv);
-    vec2 cellLocal = fract(cellUv) - 0.5;
-    // Sparse — only a small handful of cells are ever lit at once, each
-    // a small soft point rather than a filled block.
-    float seed = hash(cell * 1.7 + tick * 2.6);
-    if (seed < 0.94) discard;
-    float twinkle = hash(cell * 0.9 + tick * 1.3 + 4.0);
-    float dot = 1.0 - smoothstep(0.0, 0.16, length(cellLocal));
-    if (dot <= 0.0) discard;
-
-    float alpha = dot * fade * (0.5 + 0.5 * twinkle) * uFlicker;
-    gl_FragColor = vec4(uLaserWhite, alpha);
+    gl_FragColor = vec4(color, alpha * inside);
+    // The picture was decoded to linear light (SRGBColorSpace) — back out
+    // to the canvas's sRGB, or every projected picture shows a gamma dark.
+    #include <colorspace_fragment>
   }
 `
 
@@ -850,16 +724,16 @@ const LASER_FRAGMENT = `
 `
 
 // ---- Tyndall rig: the craft stays the projector once the image is up ----
-// Thin light shafts from the craft to points across the screen, each
-// flaring now and then (light catching dust in the beam), plus a drift of
-// motes travelling down the beam. World-space vertices rewritten each
-// frame, like the laser pyramid.
-const SHAFT_COUNT = 7
+// A drift of dust motes travelling down the beam, catching its light —
+// the only thing that shows a projector's light in vacuum. World-space
+// vertices rewritten each frame, like the laser pyramid.
 // Set from the renderer once it exists; used to keep preview textures
 // crisp when the screen is seen at an angle.
 let MAX_ANISOTROPY = 1
 const MOTE_COUNT = 70
 
+// Thin rays from an apex to points on the screen (see createRays): vAlong
+// runs 0 at the apex to 1 at the far end, vSide/vAlong across the ray.
 const SHAFT_VERTEX = `
   attribute float aAlong;
   attribute float aSide;
@@ -874,35 +748,10 @@ const SHAFT_VERTEX = `
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
-const SHAFT_FRAGMENT = `
-  precision highp float;
-  uniform vec3 uColor;
-  uniform float uOpacity;
-  uniform float uTime;
-  varying float vAlong;
-  varying float vSide;
-  varying float vSeed;
-  float hash(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
-  void main() {
-    // Cross-section: soft at both edges of the shaft (vSide/vAlong is the
-    // shaft-relative offset, -1..1, at any distance from the apex).
-    float across = 1.0 - smoothstep(0.15, 1.0, abs(vSide / max(vAlong, 0.001)));
-    // Brightest at the craft, gone well before the screen — the picture
-    // itself must stay clear.
-    float fade = pow(1.0 - vAlong, 2.6);
-    // Each shaft idles faint and, now and then, flares and shimmers.
-    float slot = floor(uTime * 1.7 + vSeed * 3.1);
-    float flare = step(0.62, hash(slot * 7.13 + vSeed * 19.7));
-    float shimmer = 0.75 + 0.25 * sin(uTime * 37.0 + vSeed * 11.0);
-    float glint = flare * shimmer * (0.55 + 0.45 * sin(fract(uTime * 1.7 + vSeed * 3.1) * 3.14159));
-    float a = across * fade * (0.05 + 0.4 * glint) * uOpacity;
-    gl_FragColor = vec4(uColor, a);
-  }
-`
 // ---- Anchor shots: how the screen gets a surface at all ----
 // There's nothing in space to project onto, so before any picture the
 // craft fires four thin laser shots, one to each corner of the screen it's
-// about to hang (createShafts geometry, one ray each, vSeed = ray 1..4).
+// about to hang (createRays geometry, one ray each, vSeed = ray 1..4).
 // Each draws out as a bright travelling head (uHead, 0..1 along the ray)
 // over a faint trail, then fades (uFade) once the curtain takes over.
 const ANCHOR_FRAGMENT = `
@@ -969,7 +818,7 @@ const MOTE_FRAGMENT = `
   }
 `
 
-function createShafts(count = SHAFT_COUNT, fragmentShader = SHAFT_FRAGMENT, extraUniforms: Record<string, THREE.IUniform> = {}): THREE.Mesh {
+function createRays(count: number, fragmentShader: string, extraUniforms: Record<string, THREE.IUniform> = {}): THREE.Mesh {
   const n = count * 3
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage))
@@ -1520,17 +1369,14 @@ class PlanetInstance {
   crafts: THREE.Group[] = []
   crewHalos: THREE.Mesh[] = []
   screens: THREE.Mesh[] = []
-  screenHalos: THREE.Mesh[] = []
   lasers: THREE.Mesh[] = []
   // One Tyndall rig per planet — only one item ever flies at a time.
-  shafts: THREE.Mesh | null = null
   motes: THREE.Points | null = null
   // The same goes for the screen-deploying rig: the four anchor shots, the
   // sparks where they strike, and the glint of the projector's own lens.
   anchors: THREE.Mesh | null = null
   anchorGlints: THREE.Sprite[] = []
   lensGlint: THREE.Sprite | null = null
-  _shaftTargets: { u: number; v: number; w: number }[] = []
   _moteState: { t: number; speed: number; u: number; v: number; jx: number; jy: number }[] = []
   revealTimer: number[] = []
   itemOrbitRadius = 0
@@ -1886,11 +1732,10 @@ class PlanetInstance {
     const height = SCREEN_HEIGHT
     const width = height * aspect
     const screenGeometry = new THREE.PlaneGeometry(width, height)
-    const haloGeometry = new THREE.PlaneGeometry(width / SCREEN_HALO_CONTENT_SCALE, height / SCREEN_HALO_CONTENT_SCALE)
     const loader = new THREE.TextureLoader()
 
     items.forEach((item, index) => {
-      const [neonA, neonB] = item.color ? neonDuotoneFrom(item.color) : [NEON_CYAN, NEON_MAGENTA]
+      const neon = item.color ? neonFrom(item.color) : NEON_CYAN
       const { group: craft, halo } = createCraft(index)
       craft.userData.index = index
       craft.visible = false
@@ -1921,11 +1766,9 @@ class PlanetInstance {
           uGlow: { value: 0 },
           uReveal: { value: 0 },
           uFlicker: { value: 1 },
-          uTime: { value: 0 },
           uUnroll: { value: 1 },
           uLaserWhite: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
-          uNeonA: { value: new THREE.Vector3(neonA.r, neonA.g, neonA.b) },
-          uNeonB: { value: new THREE.Vector3(neonB.r, neonB.g, neonB.b) },
+          uNeonA: { value: new THREE.Vector3(neon.r, neon.g, neon.b) },
         },
       })
       const screen = new THREE.Mesh(screenGeometry, screenMaterial)
@@ -1934,28 +1777,6 @@ class PlanetInstance {
       screen.scale.set(0.0001, 0.0001, 1)
       this.scene.add(screen)
       this.screens.push(screen)
-
-      // A few small laser-white points scattered just outside the
-      // screen's own edge — drawn on a larger plane behind it so they
-      // only ever show in the margin the screen doesn't already cover.
-      const haloMaterial = new THREE.ShaderMaterial({
-        vertexShader: SCREEN_VERTEX,
-        fragmentShader: SCREEN_HALO_FRAGMENT,
-        transparent: true,
-        depthWrite: false,
-        uniforms: {
-          uTime: { value: 0 },
-          uFlicker: { value: 0 },
-          uLaserWhite: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
-        },
-      })
-      const screenHalo = new THREE.Mesh(haloGeometry, haloMaterial)
-      screenHalo.userData.index = index
-      screenHalo.visible = false
-      screenHalo.renderOrder = -1
-      screenHalo.scale.set(0.0001, 0.0001, 1)
-      this.scene.add(screenHalo)
-      this.screenHalos.push(screenHalo)
 
       loader.load(item.image, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace
@@ -1968,20 +1789,17 @@ class PlanetInstance {
     this.revealTimer = new Array(this.count).fill(0)
 
     if (items.length > 0) {
-      this.shafts = createShafts()
       this.motes = createMotes()
-      this.scene.add(this.shafts, this.motes)
-      this.anchors = createShafts(ANCHOR_COUNT, ANCHOR_FRAGMENT, { uHead: { value: new THREE.Vector4() }, uFade: { value: new THREE.Vector4() } })
+      this.scene.add(this.motes)
+      this.anchors = createRays(ANCHOR_COUNT, ANCHOR_FRAGMENT, { uHead: { value: new THREE.Vector4() }, uFade: { value: new THREE.Vector4() } })
       this.anchorGlints = Array.from({ length: ANCHOR_COUNT }, () => createGlint(0.55 * this.viewScale))
       this.lensGlint = createGlint(0.42 * this.viewScale)
       this.scene.add(this.anchors, this.lensGlint, ...this.anchorGlints)
-      for (let k = 0; k < SHAFT_COUNT; k++) this._shaftTargets.push({ u: 0.12 + Math.random() * 0.76, v: 0.12 + Math.random() * 0.76, w: 0.03 + Math.random() * 0.05 })
       for (let j = 0; j < MOTE_COUNT; j++) this._moteState.push({ t: Math.random(), speed: 0.0025 + Math.random() * 0.005, u: Math.random(), v: Math.random(), jx: Math.random() - 0.5, jy: Math.random() - 0.5 })
     }
   }
 
   hideTyndall() {
-    if (this.shafts) this.shafts.visible = false
     if (this.motes) this.motes.visible = false
   }
 
@@ -2025,27 +1843,11 @@ class PlanetInstance {
     anchors.visible = opacity > 0.01
   }
 
-  /** Lays the shafts and motes out between the craft (apex) and the
-   *  screen rectangle, and sets their strength. */
+  /** Lays the motes out between the craft (apex) and the screen
+   *  rectangle, and sets their strength. */
   updateTyndall(apex: THREE.Vector3, focus: THREE.Vector3, halfW: number, halfH: number, time: number, strength: number) {
-    const shafts = this.shafts
     const motes = this.motes
-    if (!shafts || !motes) return
-    const sp = shafts.geometry.getAttribute('position') as THREE.BufferAttribute
-    this._shaftTargets.forEach((t, k) => {
-      const x = focus.x + (t.u * 2 - 1) * halfW
-      const y = focus.y + (t.v * 2 - 1) * halfH
-      const w = t.w * halfW
-      sp.setXYZ(k * 3, apex.x, apex.y, apex.z)
-      sp.setXYZ(k * 3 + 1, x - w, y, focus.z)
-      sp.setXYZ(k * 3 + 2, x + w, y, focus.z)
-    })
-    sp.needsUpdate = true
-    const sm = shafts.material as THREE.ShaderMaterial
-    sm.uniforms.uTime.value = time
-    sm.uniforms.uOpacity.value = strength
-    shafts.visible = true
-
+    if (!motes) return
     const mp = motes.geometry.getAttribute('position') as THREE.BufferAttribute
     const mt = motes.geometry.getAttribute('aT') as THREE.BufferAttribute
     this._moteState.forEach((m, j) => {
@@ -2124,7 +1926,6 @@ class PlanetInstance {
     this.crafts.forEach((c) => (c.visible = visible))
     if (!visible) {
       this.screens.forEach((s) => (s.visible = false))
-      this.screenHalos.forEach((s) => (s.visible = false))
       this.lasers.forEach((l) => (l.visible = false))
       this.hideTyndall()
       this.hideAnchors()
@@ -2208,10 +2009,6 @@ class PlanetInstance {
       s.scale.set(0.0001, 0.0001, 1)
       s.visible = false
     })
-    this.screenHalos.forEach((s) => {
-      s.scale.set(0.0001, 0.0001, 1)
-      s.visible = false
-    })
     this.lasers.forEach((l) => (l.visible = false))
     this.hideTyndall()
     this.hideAnchors()
@@ -2282,7 +2079,6 @@ class PlanetInstance {
       if (i !== flying) {
         this._idlePosition(i, wrap01(masterT + i / this.count), time)
         this.screens[i].visible = false
-        this.screenHalos[i].visible = false
         this.lasers[i].visible = false
         this.revealTimer[i] = 0
         continue
@@ -2350,28 +2146,24 @@ class PlanetInstance {
       const fullHalfW = SCREEN_HEIGHT * this.aspect * 0.5 * focusScaleAdjust * this.viewScale
       const fullHalfH = SCREEN_HEIGHT * 0.5 * focusScaleAdjust * this.viewScale
 
-      // The image reveal/flicker-out runs on its own fixed-duration timer
-      // once the plane has formed (glow drops), rather than tracking
-      // `flightT` directly — `flightT`'s own convergence speed can take
-      // seconds (that's the point, so the approach is watchable), which
-      // would stretch the intentional brief "static flickering to life"
-      // moment into something that reads as stuck flickering. A bounded
-      // timer guarantees the flicker always resolves quickly regardless.
-      if (glow > 0.5) {
+      // The focus pull runs on its own fixed-duration timer once the
+      // curtain is fully down, rather than tracking `flightT` directly —
+      // `flightT`'s own convergence slows to a crawl near the end (that's
+      // the point, so the approach is watchable), which would drag the
+      // brief snap into focus out into a long blur. A bounded timer keeps
+      // it brisk regardless.
+      if (glow > 0.5 || rolledY < 0.999) {
         this.revealTimer[i] = 0
       } else {
         this.revealTimer[i] = Math.min(1, this.revealTimer[i] + REVEAL_TIMER_STEP)
       }
       const reveal = opening ? this.revealTimer[i] : smoothstep(0.75, 0.92, flightT)
 
-      // ONE flicker value drives both the screen's edge and the beam —
-      // they're the same light, so they flicker together rather than
-      // independently.
+      // ONE flicker value drives the picture, its light bleed and the
+      // beam — they're the same light. It stays steady while projecting;
+      // only switching off flickers, like a lamp cutting out.
       let flicker = 1
-      if (glow < 0.5 && reveal < 0.999) {
-        const screenFlickerNoise = Math.sin(time * 39 + i * 3) * Math.sin(time * 17 + i)
-        flicker = screenFlickerNoise > -0.3 ? 1 : 0.35
-      } else if (!opening && reveal > 0.5) {
+      if (!opening && reveal > 0.5) {
         const closeFlickerNoise = Math.sin(time * 53 + i * 4) * Math.sin(time * 21 + i)
         flicker = closeFlickerNoise > 0.1 ? 1 : 0.4
       }
@@ -2385,23 +2177,11 @@ class PlanetInstance {
       )
       screenMat.uniforms.uGlow.value = glow
       screenMat.uniforms.uReveal.value = reveal
-      screenMat.uniforms.uTime.value = time
       screenMat.uniforms.uFlicker.value = flicker
       screenMat.uniforms.uUnroll.value = rolledY
 
-      const screenHalo = this.screenHalos[i]
-      screenHalo.visible = true
-      screenHalo.position.copy(screen.position)
-      screenHalo.scale.copy(screen.scale)
-      const haloMat = screenHalo.material as THREE.ShaderMaterial
-      haloMat.uniforms.uTime.value = time
-      // Fades in alongside the image reveal rather than showing during
-      // the plain-laser forming phase, and carries the same flicker as
-      // the screen's own edge so they read as one system.
-      haloMat.uniforms.uFlicker.value = flicker * reveal
-
-      // Shafts and motes take over as the image settles in, and fade out
-      // with the screen on close.
+      // Motes take over as the image settles in, and fade out with the
+      // screen on close.
       const tyndall = (opening ? smoothstep(0.6, 0.85, flightT) : smoothstep(0.4, 0.8, flightT)) * reveal
       // The beam leaves from the nose aperture, not the craft's center.
       this._craftWorldPos
@@ -2585,17 +2365,12 @@ class PlanetInstance {
       s.geometry.dispose()
       ;(s.material as THREE.Material).dispose()
     })
-    this.screenHalos.forEach((s) => {
-      this.scene.remove(s)
-      s.geometry.dispose()
-      ;(s.material as THREE.Material).dispose()
-    })
     this.lasers.forEach((l) => {
       this.scene.remove(l)
       l.geometry.dispose()
       ;(l.material as THREE.Material).dispose()
     })
-    for (const o of [this.shafts, this.motes, this.anchors]) {
+    for (const o of [this.motes, this.anchors]) {
       if (!o) continue
       this.scene.remove(o)
       o.geometry.dispose()
