@@ -10,14 +10,14 @@ import { useLanguage } from '@/lib/i18n'
 
 // Saturn hosts two of the Flux apps; the Moon hosts Flux Path and Flux
 // Glow on its own orbit around Earth; Venus hosts Flux Finance, the AI
-// Bubble Monitor, and Flux Scribe; Earth hosts Flux Mythos — a concept-stage game, not a live
-// app, which is why it has no `link` (see lib/data.ts) and falls back to
-// the shared modal's "coming soon" state instead of a "Visit Live Site"
-// button.
+// Bubble Monitor, and Flux Scribe; Earth hosts Eclipse — a game in
+// development, not a live app, which is why it has no `link` (see
+// lib/data.ts) and falls back to the shared modal's "coming soon" state
+// instead of a "Visit Live Site" button.
 const SATURN_PROJECT_IDS = ['flux-nutrition', 'flux-career']
 const MOON_PROJECT_IDS = ['flux-path', 'flux-glow']
 const VENUS_PROJECT_IDS = ['flux-finance', 'financial-tracker', 'flux-scribe']
-const EARTH_PROJECT_IDS = ['flux-mythos']
+const EARTH_PROJECT_IDS = ['eclipse']
 
 // Reverse lookup — which planet hosts a given project, so the detail
 // modal's border can match that planet's own mask color instead of the
@@ -30,7 +30,7 @@ const PROJECT_PLANET_ID: Record<string, string> = Object.fromEntries(
 const PLANET_LABELS: Record<string, string> = { saturn: 'Saturn', moon: 'The Moon', venus: 'Venus', earth: 'Earth' }
 const PLANET_TEXTURES: Record<string, string> = { saturn: '/textures/saturn.jpg', moon: '/textures/moon.jpg', venus: '/textures/venus.jpg', earth: '/textures/earth.jpg' }
 // Moon first (the flagship, densest halo), then Saturn, then Venus, then
-// Earth last — it hosts a concept teaser, not a shipped app.
+// Earth last — it hosts a game in development, not a shipped app.
 const CONTENT_PLANET_IDS = ['moon', 'saturn', 'venus', 'earth']
 // Per-project real app logos, where available — falls back to a cropped
 // screenshot (project.image) otherwise.

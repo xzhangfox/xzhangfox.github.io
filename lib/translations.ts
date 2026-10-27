@@ -226,8 +226,8 @@ export const translations: Record<Language, Dict> = {
           highlights: ['7 indicators, 3 frameworks, one daily score', 'Zero-lookahead scoring — no hindsight bias', 'Fully automated, self-updating pipeline'],
         },
         {
-          subtitle: 'TBD',
-          description: 'Details to be announced.',
+          subtitle: 'A JRPG of Light and Shadow',
+          description: 'In a world woven from light and shadow, explore the many stories hidden within.',
           highlights: [],
         },
         {
@@ -402,8 +402,8 @@ export const translations: Record<Language, Dict> = {
           highlights: ['7 项指标、3 套框架，浓缩成每日一个分数', '零前瞻评分 —— 杜绝事后诸葛亮', '全自动、自我更新的数据流水线'],
         },
         {
-          subtitle: '待定',
-          description: '详情待公布。',
+          subtitle: '光与暗的 RPG',
+          description: '在光与暗交织的世界里，探索一个个不同的故事。',
           highlights: [],
         },
         {

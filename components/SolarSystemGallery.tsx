@@ -186,19 +186,21 @@ const CAMERA_FOV = 45
 // size once entered, regardless of its real radius.
 const BASE_CAMERA_OFFSET = new THREE.Vector3(0, 1, 24)
 const BASE_FOCUS_OFFSET = new THREE.Vector3(0, 1, 18)
-// Closer to the camera (distance 5.2, was 7.4) than the original tuning —
-// the craft itself, not just its screen, should read as a clear, sizeable
-// presence once arrived, not a small accent beside the hologram.
-const BASE_CRAFT_FOCUS_OFFSET = new THREE.Vector3(0, 1, 18.8)
-// How far into the bottom-left quadrant the arrived craft sits, as a
-// fraction of the HALF visible width/height at its own focus distance
-// (see onResize's craftOffsetXY) — 1.0 would put it exactly at the frame
-// edge, so these stay well under that for a comfortable margin. The
-// hologram screen itself is untouched (still centered), so this alone is
-// what turns "craft dead center in front of its own screen" into "craft
-// off in the corner, laser firing diagonally up to the screen."
-const CRAFT_OFFSET_FRACTION_X = 0.42
-const CRAFT_OFFSET_FRACTION_Y = 0.4
+// The arrived craft is a projector, so it parks a real throw distance in
+// front of the screen plane (toward the camera) rather than nearly on it:
+// with only a sliver of depth between them the beam lay almost flat
+// against the picture and the craft hung over the image's own corner. At
+// this throw its cone opens up visibly from the nose to the four corners.
+const PROJECTOR_THROW = 2.4
+const BASE_CRAFT_FOCUS_OFFSET = new THREE.Vector3(0, 1, 18 + PROJECTOR_THROW)
+// Where the arrived craft sits on screen (see onResize's craftOffsetXY):
+// just outside the screen's own bottom-left corner, by its own apparent
+// size plus this gap in NDC, so it never covers the picture it projects —
+// and kept wholly inside the frame, which on a narrow (portrait) view
+// leaves it below the screen instead. CRAFT_HALF_EXTENT is roughly the
+// model's half-size as seen at its parked angle (see createCraftGeometry).
+const CRAFT_HALF_EXTENT = 0.24
+const PROJECTOR_NDC_GAP = 0.03
 // Saturn's own bare radius (its ring is a bonus on top, not counted) — the
 // reference every other planet's `viewScale` is computed against, so every
 // planet's actual sphere reads at the same apparent size once entered.
@@ -270,13 +272,19 @@ const IDLE_ORBIT_SPEED = 0.00026
 const FLYBY_LABEL_FRACTION = 0.12
 
 const CRAFT_SCALE_FAR = 0.5
-const CRAFT_SCALE_NEAR = 1.6
+// Sized for the projector station's distance from the camera (3.6), so the
+// arrived craft reads about as large on screen as it did parked at 5.2.
+const CRAFT_SCALE_NEAR = 1.2
 
 // Eased speed for `flightT` (see PlanetInstance) flying an item IN toward
 // the camera — deliberate enough to watch, but brisk: the camera's
 // bottom-to-top settle rides this same value, and at half this rate it
-// dragged on for ~4s.
-const FLIGHT_OPEN_EASE = 0.022
+// dragged on for ~4s. A touch slower than it was, now that the craft
+// arrives first and only then deploys the screen (see activeUpdate).
+const FLIGHT_OPEN_EASE = 0.018
+// The share of `flightT` the craft spends flying to its station (and the
+// camera settling); the screen deploys only after it.
+const TRAVEL_END = 0.52
 // Flying back OUT to the ring on close reuses the same eased-convergence
 // mechanism but at its own, snappier rate — nobody asked for the retreat
 // to be slower too, and an exponential ease's tail-end duration barely
@@ -327,6 +335,8 @@ const SCREEN_FRAGMENT = `
   uniform float uReveal;
   uniform float uFlicker;
   uniform float uTime;
+  // 0..1 — how far the curtain has unrolled down from its top edge.
+  uniform float uUnroll;
   uniform vec3 uLaserWhite;
   uniform vec3 uNeonA;
   uniform vec3 uNeonB;
@@ -352,6 +362,11 @@ const SCREEN_FRAGMENT = `
     float frayFine = (hash(floor(vUv * vec2(90.0, 56.0)) + floor(uTime * 9.0)) - 0.5) * 0.007;
     float d = dClean + frayCoarse + frayFine;
     if (d > 0.02) discard;
+    // Rows below the roller haven't unrolled yet; the roller itself is a
+    // bright line of laser light sweeping down the picture, not a squash.
+    float below = (1.0 - uUnroll) - vUv.y;
+    if (below > 0.0) discard;
+    float roller = (1.0 - smoothstep(0.0, 0.025, -below)) * (1.0 - step(0.999, uUnroll));
     // A soft dissolve right at the torn edge instead of a hard cutoff —
     // thins out to nothing rather than snapping off.
     float dissolveAlpha = 1.0 - smoothstep(0.0, 0.02, d);
@@ -475,6 +490,8 @@ const SCREEN_FRAGMENT = `
     float edgeAlpha = edge * mix(0.3, 1.0, cellOn) * uFlicker;
     alpha = mix(alpha, 1.0, edgeAlpha);
     alpha *= dissolveAlpha;
+    color = mix(color, uLaserWhite * 1.1, roller);
+    alpha = max(alpha, roller * dissolveAlpha);
 
     gl_FragColor = vec4(color, alpha);
   }
@@ -801,9 +818,11 @@ const LASER_VERTEX = `
 // faking a light shaft with a single hollow mesh) combined with a
 // coarse, slowly-drifting noise for visible motes drifting in the beam —
 // the Tyndall-effect look of light scattering off dust — and a strong
-// fade from bright at the craft (source, vUv.y=0) to faint at the screen
-// end (vUv.y=1), so the beam clearly reads as strongest right at the
-// emitter and dissipating with distance, not a uniform-intensity shaft.
+// fade from bright at the craft (source, vUv.y=0) to nothing at the screen
+// end (vUv.y=1). In vacuum a beam is only seen where something scatters
+// it, so it reads as strongest right at the emitter and gone before it
+// lands — the cone sits between the viewer and the picture, so any light
+// left at the far end would wash the image out.
 const LASER_FRAGMENT = `
   precision highp float;
   uniform vec3 uColor;
@@ -820,10 +839,12 @@ const LASER_FRAGMENT = `
   void main() {
     vec3 viewDir = normalize(vViewPos);
     float fresnel = pow(1.0 - clamp(abs(dot(normalize(vNormal), viewDir)), 0.0, 1.0), 2.2);
-    float lengthFade = pow(1.0 - clamp(vUv.y, 0.0, 1.0), 1.6);
+    float lengthFade = pow(1.0 - clamp(vUv.y, 0.0, 1.0), 3.0);
     float streak = hash(vec2(floor(vUv.y * 26.0 - uTime * 2.2), floor(vUv.x * 5.0)));
     float dust = 0.65 + 0.55 * streak;
-    float alpha = clamp(fresnel * 0.8 + 0.12, 0.0, 1.0) * mix(0.12, 1.0, lengthFade) * dust * uOpacity;
+    // A haze, not a solid fan: the cone's faces are seen almost edge-on
+    // from the camera, where the fresnel term alone would saturate them.
+    float alpha = clamp(fresnel * 0.55 + 0.05, 0.0, 1.0) * lengthFade * dust * uOpacity;
     gl_FragColor = vec4(uColor, alpha);
   }
 `
@@ -878,6 +899,49 @@ const SHAFT_FRAGMENT = `
     gl_FragColor = vec4(uColor, a);
   }
 `
+// ---- Anchor shots: how the screen gets a surface at all ----
+// There's nothing in space to project onto, so before any picture the
+// craft fires four thin laser shots, one to each corner of the screen it's
+// about to hang (createShafts geometry, one ray each, vSeed = ray 1..4).
+// Each draws out as a bright travelling head (uHead, 0..1 along the ray)
+// over a faint trail, then fades (uFade) once the curtain takes over.
+const ANCHOR_FRAGMENT = `
+  precision highp float;
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  uniform vec4 uHead;
+  uniform vec4 uFade;
+  varying float vAlong;
+  varying float vSide;
+  varying float vSeed;
+  void main() {
+    vec4 sel = vec4(equal(vec4(floor(vSeed - 0.5)), vec4(0.0, 1.0, 2.0, 3.0)));
+    float head = dot(uHead, sel);
+    if (vAlong > head) discard;
+    float across = 1.0 - smoothstep(0.0, 1.0, abs(vSide / max(vAlong, 0.001)));
+    float tip = exp(-(head - vAlong) * 16.0);
+    float a = across * (0.3 + 1.7 * tip) * (1.0 - dot(uFade, sel)) * uOpacity;
+    gl_FragColor = vec4(uColor, a);
+  }
+`
+const ANCHOR_COUNT = 4
+// The anchor sparks at the corners and the projector's lens glint share
+// the starfield's diffraction-spike sprite (see createSpikeTexture).
+let anchorSpikeTexture: THREE.CanvasTexture | null = null
+function createGlint(scale: number): THREE.Sprite {
+  anchorSpikeTexture ??= createSpikeTexture()
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: anchorSpikeTexture,
+    color: LASER_WHITE,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  }))
+  s.userData.baseScale = scale
+  s.visible = false
+  return s
+}
 const MOTE_VERTEX = `
   attribute float aT;
   attribute float aSeed;
@@ -905,12 +969,12 @@ const MOTE_FRAGMENT = `
   }
 `
 
-function createShafts(): THREE.Mesh {
-  const n = SHAFT_COUNT * 3
+function createShafts(count = SHAFT_COUNT, fragmentShader = SHAFT_FRAGMENT, extraUniforms: Record<string, THREE.IUniform> = {}): THREE.Mesh {
+  const n = count * 3
   const g = new THREE.BufferGeometry()
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage))
   const along = new Float32Array(n), side = new Float32Array(n), seed = new Float32Array(n)
-  for (let k = 0; k < SHAFT_COUNT; k++) {
+  for (let k = 0; k < count; k++) {
     along.set([0, 1, 1], k * 3)
     side.set([0, -1, 1], k * 3)
     seed.fill(k + 1, k * 3, k * 3 + 3)
@@ -922,7 +986,7 @@ function createShafts(): THREE.Mesh {
     g,
     new THREE.ShaderMaterial({
       vertexShader: SHAFT_VERTEX,
-      fragmentShader: SHAFT_FRAGMENT,
+      fragmentShader,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
@@ -931,6 +995,7 @@ function createShafts(): THREE.Mesh {
         uColor: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
         uOpacity: { value: 0 },
         uTime: { value: 0 },
+        ...extraUniforms,
       },
     })
   )
@@ -1460,6 +1525,11 @@ class PlanetInstance {
   // One Tyndall rig per planet — only one item ever flies at a time.
   shafts: THREE.Mesh | null = null
   motes: THREE.Points | null = null
+  // The same goes for the screen-deploying rig: the four anchor shots, the
+  // sparks where they strike, and the glint of the projector's own lens.
+  anchors: THREE.Mesh | null = null
+  anchorGlints: THREE.Sprite[] = []
+  lensGlint: THREE.Sprite | null = null
   _shaftTargets: { u: number; v: number; w: number }[] = []
   _moteState: { t: number; speed: number; u: number; v: number; jx: number; jy: number }[] = []
   revealTimer: number[] = []
@@ -1514,6 +1584,10 @@ class PlanetInstance {
   // createLaserGeometry's own comment on why a rigid transform can't do
   // this once the beam's direction is oblique).
   _laserCorners = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
+  // The fully unrolled screen's corners — where the anchor shots land —
+  // and the centre of the part of it unrolled so far.
+  _anchorCorners = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
+  _sheetCenter = new THREE.Vector3()
   // A reusable (never-rendered) camera purely for its lookAt math — see
   // `updateOverviewCamera`'s own comment on why a plain Object3D's lookAt
   // silently computes the wrong rotation and a Camera's doesn't. Reused
@@ -1528,16 +1602,23 @@ class PlanetInstance {
   _tiltDirScratch = new THREE.Vector3()
   _cameraQuatScratch = new THREE.Quaternion()
 
+  /** 0..1 progress of the flying craft's own trip to its projector
+   *  station — done by TRAVEL_END of `flightT`, before it deploys
+   *  anything (see activeUpdate). */
+  travel() {
+    return smoothstep(0, TRAVEL_END, this.flightT)
+  }
+
   // The baseline (Saturn-tuned) offset, blended toward a scroll-driven
   // tilted position by how far this planet's own active item is from
-  // idle — `flightT` is already exactly that progress (0 idling, 1 fully
-  // flying/open), so the hologram/laser/craft system (none of which
-  // tracks this rotation) only ever sees the untouched original geometry
-  // once something's actually open; the tilt is purely an ambient
-  // "browsing" effect that eases out of the way the moment an item flies.
+  // idle — the craft's `travel()` is exactly that progress (0 idling, 1
+  // parked), so the hologram/laser/craft system (none of which tracks
+  // this rotation) only ever sees the untouched original geometry: the
+  // camera has settled by the time the screen deploys. The tilt is purely
+  // an ambient "browsing" effect that eases out of the way as an item flies.
   cameraOffset(): THREE.Vector3 {
     const base = this._cameraOffsetScratch.copy(BASE_CAMERA_OFFSET).multiplyScalar(this.viewScale)
-    const idle = 1 - this.flightT
+    const idle = 1 - this.travel()
     if (idle <= 0.001 || !this._pitchRef) return base
     const pitch = this._pitchRef.value
     const dist = CAMERA_DIST * this.viewScale
@@ -1549,7 +1630,7 @@ class PlanetInstance {
   // original fixed framing) once idle=0, easing toward an actual lookAt
   // quaternion for the tilted offset as this planet idles.
   cameraQuat(): THREE.Quaternion {
-    const idle = 1 - this.flightT
+    const idle = 1 - this.travel()
     if (idle <= 0.001 || !this._pitchRef) return this._cameraQuatScratch.copy(IDENTITY_QUAT)
     const pitch = this._pitchRef.value
     this._tiltAimCam.up.set(0, Math.cos(pitch), -Math.sin(pitch))
@@ -1841,6 +1922,7 @@ class PlanetInstance {
           uReveal: { value: 0 },
           uFlicker: { value: 1 },
           uTime: { value: 0 },
+          uUnroll: { value: 1 },
           uLaserWhite: { value: new THREE.Vector3(LASER_WHITE.r, LASER_WHITE.g, LASER_WHITE.b) },
           uNeonA: { value: new THREE.Vector3(neonA.r, neonA.g, neonA.b) },
           uNeonB: { value: new THREE.Vector3(neonB.r, neonB.g, neonB.b) },
@@ -1889,6 +1971,10 @@ class PlanetInstance {
       this.shafts = createShafts()
       this.motes = createMotes()
       this.scene.add(this.shafts, this.motes)
+      this.anchors = createShafts(ANCHOR_COUNT, ANCHOR_FRAGMENT, { uHead: { value: new THREE.Vector4() }, uFade: { value: new THREE.Vector4() } })
+      this.anchorGlints = Array.from({ length: ANCHOR_COUNT }, () => createGlint(0.55 * this.viewScale))
+      this.lensGlint = createGlint(0.42 * this.viewScale)
+      this.scene.add(this.anchors, this.lensGlint, ...this.anchorGlints)
       for (let k = 0; k < SHAFT_COUNT; k++) this._shaftTargets.push({ u: 0.12 + Math.random() * 0.76, v: 0.12 + Math.random() * 0.76, w: 0.03 + Math.random() * 0.05 })
       for (let j = 0; j < MOTE_COUNT; j++) this._moteState.push({ t: Math.random(), speed: 0.0025 + Math.random() * 0.005, u: Math.random(), v: Math.random(), jx: Math.random() - 0.5, jy: Math.random() - 0.5 })
     }
@@ -1897,6 +1983,46 @@ class PlanetInstance {
   hideTyndall() {
     if (this.shafts) this.shafts.visible = false
     if (this.motes) this.motes.visible = false
+  }
+
+  hideAnchors() {
+    if (this.anchors) this.anchors.visible = false
+    for (const g of this.anchorGlints) g.visible = false
+    if (this.lensGlint) this.lensGlint.visible = false
+  }
+
+  /** A glint sprite at `pos`, scaled from its base size by `size`. */
+  showGlint(glint: THREE.Sprite, pos: THREE.Vector3, opacity: number, size: number) {
+    glint.visible = opacity > 0.01
+    if (!glint.visible) return
+    glint.position.copy(pos)
+    glint.scale.setScalar(glint.userData.baseScale * size)
+    ;(glint.material as THREE.SpriteMaterial).opacity = opacity
+  }
+
+  /** The four anchor shots from the craft's nose to the screen's corners
+   *  (c0..c3 — bottom-left, bottom-right, top-right, top-left), each drawn
+   *  out to `heads[k]` and faded by `fades[k]`. */
+  updateAnchors(apex: THREE.Vector3, corners: THREE.Vector3[], heads: number[], fades: number[], width: number, opacity: number) {
+    const anchors = this.anchors
+    if (!anchors) return
+    const p = anchors.geometry.getAttribute('position') as THREE.BufferAttribute
+    corners.forEach((c, k) => {
+      // Widened across the ray's own on-screen direction, so a shot that
+      // runs mostly sideways still shows as a line, not a sliver.
+      const dx = c.x - apex.x, dy = c.y - apex.y
+      const len = Math.hypot(dx, dy) || 1
+      const px = (-dy / len) * width, py = (dx / len) * width
+      p.setXYZ(k * 3, apex.x, apex.y, apex.z)
+      p.setXYZ(k * 3 + 1, c.x - px, c.y - py, c.z)
+      p.setXYZ(k * 3 + 2, c.x + px, c.y + py, c.z)
+    })
+    p.needsUpdate = true
+    const u = (anchors.material as THREE.ShaderMaterial).uniforms
+    u.uHead.value.fromArray(heads)
+    u.uFade.value.fromArray(fades)
+    u.uOpacity.value = opacity
+    anchors.visible = opacity > 0.01
   }
 
   /** Lays the shafts and motes out between the craft (apex) and the
@@ -2001,6 +2127,7 @@ class PlanetInstance {
       this.screenHalos.forEach((s) => (s.visible = false))
       this.lasers.forEach((l) => (l.visible = false))
       this.hideTyndall()
+      this.hideAnchors()
     }
   }
 
@@ -2087,6 +2214,7 @@ class PlanetInstance {
     })
     this.lasers.forEach((l) => (l.visible = false))
     this.hideTyndall()
+    this.hideAnchors()
   }
 
   // Cheap idle circulation for every item on the ring/orbit — used both
@@ -2126,9 +2254,9 @@ class PlanetInstance {
     this._craftFocusLocal.copy(this.group.position).add(this.craftFocusOffset())
     this.group.worldToLocal(this._craftFocusLocal)
     // The screen's own local position, so the arrived craft can aim its
-    // nose at it directly rather than just facing the camera — necessary
-    // now that the craft parks off in the bottom-left corner instead of
-    // dead center in front of its screen.
+    // nose at it directly rather than just facing the camera — its nose
+    // then lies along the axis of its own projection cone, the way a
+    // projector's lens points at the middle of the picture it throws.
     this._screenFocusLocal.copy(this.group.position).add(this.focusOffset())
     this.group.worldToLocal(this._screenFocusLocal)
     this._aimScratchCam.position.copy(this._craftFocusLocal)
@@ -2162,19 +2290,23 @@ class PlanetInstance {
 
       const flightT = this.flightT
       const opening = this.flightOpening
+      // The craft's own trip takes the first half of `flightT`, so it is
+      // parked and aimed before it fires anything — a projector that shot
+      // while still drifting would drag its picture with it.
+      const travel = this.travel()
 
       // A straight local-space lerp from the captured ring slot to the
       // focus spot — never along the ring, so it can't swing behind the
       // planet the way following the ring's own rotation could.
-      this._localPos.lerpVectors(this.flightHomeLocalPos, this._craftFocusLocal, flightT)
-      this._itemQuat.slerpQuaternions(this.flightHomeQuat, this._focusQuat, flightT)
+      this._localPos.lerpVectors(this.flightHomeLocalPos, this._craftFocusLocal, travel)
+      this._itemQuat.slerpQuaternions(this.flightHomeQuat, this._focusQuat, travel)
 
       const craft = this.crafts[i]
       craft.position.copy(this._localPos)
       craft.quaternion.copy(this._itemQuat)
-      craft.scale.setScalar((CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * flightT) * this.viewScale)
+      craft.scale.setScalar((CRAFT_SCALE_FAR + (CRAFT_SCALE_NEAR - CRAFT_SCALE_FAR) * travel) * this.viewScale)
       const halo = this.crewHalos[i]
-      ;(halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - flightT)
+      ;(halo.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - travel)
 
       const laser = this.lasers[i]
       const screen = this.screens[i]
@@ -2182,32 +2314,41 @@ class PlanetInstance {
       const focusWorld = this._focusWorldScratch.copy(this.group.position).add(this.focusOffset())
       const focusScaleAdjust = this._focusScaleAdjustRef!.value
 
-      // Opening sequence: the beam connects FIRST (0.30→0.45), fully
-      // visible and reaching the screen's actual corners before anything
-      // unfolds; only once it's connected does the screen unfold
-      // (0.45→0.60, width leading height very slightly for a subtle
-      // unfurl); the beam then holds through that and fades out shortly
-      // after (by ~0.80) as the image reveals. Closing keeps its old,
-      // simpler shape — the screen just shrinks away, no beam.
-      const laserAppear = opening ? smoothstep(0.3, 0.45, flightT) : 0
+      // Opening sequence, all from the parked craft (travel is done by
+      // 0.52): four anchor shots strike the corners the screen will hang
+      // from (0.50→0.65, the top pair first); a rod of light draws out
+      // between the top two (0.60→0.67); the curtain unrolls down from it
+      // (0.65→0.80) inside the projector's cone, which follows its lower
+      // edge down as if painting it on. Pure light until ~0.80, then the
+      // static and the picture, while the cone settles to a faint
+      // residual (by ~0.92). Closing rolls the curtain back up into the
+      // rod and retracts it before the craft leaves — no shots, no cone.
+      const laserAppear = opening ? smoothstep(0.64, 0.7, flightT) : 0
       // Once the image is up the beam doesn't vanish: the craft is still
       // the projector, so a faint residual beam holds, flaring now and then.
       const beamResidual = 0.05 + 0.13 * tyndallFlare(time + i * 1.7)
-      const laserFadeOut = opening ? 1 - smoothstep(0.64, 0.8, flightT) * (1 - beamResidual) : 1
+      const laserFadeOut = opening ? 1 - smoothstep(0.82, 0.92, flightT) * (1 - beamResidual) : 1
       const laserVisibility = laserAppear * laserFadeOut
 
       let scaleX: number
       let scaleY: number
       let glow: number
       if (opening) {
-        scaleX = smoothstep(0.45, 0.54, flightT)
-        scaleY = smoothstep(0.5, 0.6, flightT)
-        glow = 1 - smoothstep(0.56, 0.6, flightT)
+        scaleX = smoothstep(0.6, 0.67, flightT)
+        scaleY = smoothstep(0.65, 0.8, flightT)
+        // Pure light only while it's still the rod — the unrolling sheet
+        // already carries the static, then the picture.
+        glow = 1 - smoothstep(0.66, 0.69, flightT)
       } else {
-        scaleY = smoothstep(0, 0.62, flightT)
-        scaleX = smoothstep(0, 0.3, flightT)
+        scaleY = smoothstep(0.55, 0.85, flightT)
+        scaleX = smoothstep(0.5, 0.6, flightT)
         glow = 0
       }
+      // How far the curtain has unrolled down from its top edge (see the
+      // screen shader's uUnroll) — rolled up, it's a thin rod of light.
+      const rolledY = Math.max(scaleY, scaleX > 0.001 ? 0.015 : 0.0001)
+      const fullHalfW = SCREEN_HEIGHT * this.aspect * 0.5 * focusScaleAdjust * this.viewScale
+      const fullHalfH = SCREEN_HEIGHT * 0.5 * focusScaleAdjust * this.viewScale
 
       // The image reveal/flicker-out runs on its own fixed-duration timer
       // once the plane has formed (glow drops), rather than tracking
@@ -2221,7 +2362,7 @@ class PlanetInstance {
       } else {
         this.revealTimer[i] = Math.min(1, this.revealTimer[i] + REVEAL_TIMER_STEP)
       }
-      const reveal = opening ? this.revealTimer[i] : smoothstep(0.62, 0.82, flightT)
+      const reveal = opening ? this.revealTimer[i] : smoothstep(0.75, 0.92, flightT)
 
       // ONE flicker value drives both the screen's edge and the beam —
       // they're the same light, so they flicker together rather than
@@ -2239,17 +2380,18 @@ class PlanetInstance {
       screen.position.copy(focusWorld)
       screen.scale.set(
         Math.max(scaleX, 0.0001) * focusScaleAdjust * this.viewScale,
-        Math.max(scaleY, 0.0001) * focusScaleAdjust * this.viewScale,
+        (scaleX > 0.001 ? 1 : 0.0001) * focusScaleAdjust * this.viewScale,
         1
       )
       screenMat.uniforms.uGlow.value = glow
       screenMat.uniforms.uReveal.value = reveal
       screenMat.uniforms.uTime.value = time
       screenMat.uniforms.uFlicker.value = flicker
+      screenMat.uniforms.uUnroll.value = rolledY
 
       const screenHalo = this.screenHalos[i]
       screenHalo.visible = true
-      screenHalo.position.copy(focusWorld)
+      screenHalo.position.copy(screen.position)
       screenHalo.scale.copy(screen.scale)
       const haloMat = screenHalo.material as THREE.ShaderMaterial
       haloMat.uniforms.uTime.value = time
@@ -2267,32 +2409,62 @@ class PlanetInstance {
         .applyQuaternion(craft.quaternion)
         .add(this._localPos)
         .applyMatrix4(this.group.matrixWorld)
+      // The sheet as it stands this frame (it unrolls from the top), and
+      // the full screen's corners the anchor shots aim for.
+      const hw = fullHalfW * Math.max(scaleX, 0.0001)
+      const hh = fullHalfH * rolledY
+      const sheet = this._sheetCenter.copy(focusWorld)
+      sheet.y += fullHalfH - hh
       if (tyndall > 0.01 && !this.previewOpen) {
-        const hw = SCREEN_HEIGHT * this.aspect * 0.5 * focusScaleAdjust * this.viewScale * scaleX
-        const hh = SCREEN_HEIGHT * 0.5 * focusScaleAdjust * this.viewScale * scaleY
-        this.updateTyndall(this._craftWorldPos, focusWorld, hw, hh, time, tyndall)
+        this.updateTyndall(this._craftWorldPos, sheet, hw, hh, time, tyndall)
       } else {
         this.hideTyndall()
       }
 
+      const fullCorners = this._anchorCorners
+      fullCorners[0].set(focusWorld.x - fullHalfW, focusWorld.y - fullHalfH, focusWorld.z)
+      fullCorners[1].set(focusWorld.x + fullHalfW, focusWorld.y - fullHalfH, focusWorld.z)
+      fullCorners[2].set(focusWorld.x + fullHalfW, focusWorld.y + fullHalfH, focusWorld.z)
+      fullCorners[3].set(focusWorld.x - fullHalfW, focusWorld.y + fullHalfH, focusWorld.z)
+      if (opening && flightT > 0.49 && flightT < 0.86 && !this.previewOpen) {
+        // Top-left, top-right, then the bottom pair, each taking 0.06 of
+        // flightT to cross the gap, then fading as the curtain takes over.
+        const heads = [0, 0, 0, 0]
+        const fades = [0, 0, 0, 0]
+        let shotPulse = 0
+        ;[3, 2, 0, 1].forEach((k, order) => {
+          const start = 0.5 + 0.03 * order
+          const arrive = start + 0.06
+          heads[k] = clamp((flightT - start) / 0.06, 0, 1)
+          fades[k] = smoothstep(arrive + 0.02, arrive + 0.12, flightT)
+          shotPulse = Math.max(shotPulse, Math.exp(-Math.abs(flightT - start) / 0.015))
+          const spark = flightT >= arrive ? Math.exp(-(flightT - arrive) / 0.04) : 0
+          this.showGlint(this.anchorGlints[k], fullCorners[k], 0.95 * spark, 0.6 + 0.8 * spark)
+        })
+        this.updateAnchors(this._craftWorldPos, fullCorners, heads, fades, fullHalfH * 0.012, 0.95)
+        this.showGlint(this.lensGlint!, this._craftWorldPos, (0.55 + 0.4 * shotPulse) * smoothstep(0.47, 0.51, flightT), 1 + 0.7 * shotPulse)
+      } else {
+        this.hideAnchors()
+        // The lens keeps glowing for as long as it's projecting.
+        const lens = opening ? (flightT >= 0.86 ? 0.55 : 0) : smoothstep(0.55, 0.85, flightT) * 0.55
+        if (lens > 0 && !this.previewOpen) this.showGlint(this.lensGlint!, this._craftWorldPos, lens * flicker, 1)
+      }
+
       if (laserVisibility > 0.01) {
 
-        // The screen's own actual four world-space corners — its
-        // geometry is an unrotated plane always facing the camera, so
-        // these are just its half-width/half-height (the same formula as
-        // its own scale.x/y at scale 1, see getFocusedScreenRect) offset
-        // from its center. Written straight into the beam's geometry
-        // below (see createLaserGeometry) rather than reconstructed from
-        // a rotate+scale transform, which can't represent an oblique
-        // pyramid whose base must stay axis-aligned regardless of which
-        // direction the apex sits in.
-        const halfW = SCREEN_HEIGHT * this.aspect * 0.5 * focusScaleAdjust * this.viewScale
-        const halfH = SCREEN_HEIGHT * 0.5 * focusScaleAdjust * this.viewScale
+        // The sheet's own four world-space corners as it stands this
+        // frame — its geometry is an unrolling, unrotated plane always
+        // facing the camera, so these are just the unrolled part's half-
+        // width/half-height offset from that part's own centre. Written straight
+        // into the beam's geometry below (see createLaserGeometry) rather
+        // than reconstructed from a rotate+scale transform, which can't
+        // represent an oblique pyramid whose base must stay axis-aligned
+        // regardless of which direction the apex sits in.
         const [c0, c1, c2, c3] = this._laserCorners
-        c0.set(focusWorld.x - halfW, focusWorld.y - halfH, focusWorld.z)
-        c1.set(focusWorld.x + halfW, focusWorld.y - halfH, focusWorld.z)
-        c2.set(focusWorld.x + halfW, focusWorld.y + halfH, focusWorld.z)
-        c3.set(focusWorld.x - halfW, focusWorld.y + halfH, focusWorld.z)
+        c0.set(sheet.x - hw, sheet.y - hh, sheet.z)
+        c1.set(sheet.x + hw, sheet.y - hh, sheet.z)
+        c2.set(sheet.x + hw, sheet.y + hh, sheet.z)
+        c3.set(sheet.x - hw, sheet.y + hh, sheet.z)
 
         const posAttr = laser.geometry.getAttribute('position') as THREE.BufferAttribute
         const apex = this._craftWorldPos
@@ -2310,7 +2482,7 @@ class PlanetInstance {
 
         laser.visible = true
         const mat = laser.material as THREE.ShaderMaterial
-        mat.uniforms.uOpacity.value = 0.9 * laserVisibility * flicker
+        mat.uniforms.uOpacity.value = 0.45 * laserVisibility * flicker
         mat.uniforms.uTime.value = time
       } else {
         laser.visible = false
@@ -2337,6 +2509,7 @@ class PlanetInstance {
         screen.visible = false
         laser.visible = false
         this.hideTyndall()
+        this.hideAnchors()
         this.flightIndex = -1
         this.anySelected = false
       }
@@ -2422,11 +2595,16 @@ class PlanetInstance {
       l.geometry.dispose()
       ;(l.material as THREE.Material).dispose()
     })
-    for (const o of [this.shafts, this.motes]) {
+    for (const o of [this.shafts, this.motes, this.anchors]) {
       if (!o) continue
       this.scene.remove(o)
       o.geometry.dispose()
       ;(o.material as THREE.Material).dispose()
+    }
+    for (const g of [...this.anchorGlints, this.lensGlint]) {
+      if (!g) continue
+      this.scene.remove(g)
+      g.material.dispose()
     }
   }
 }
@@ -3757,18 +3935,19 @@ class App {
     const maxAllowed = visibleWidth * MAX_VIEWPORT_WIDTH_FRACTION
     this.focusScaleAdjust.value = Math.min(FOCUS_SCALE, (maxAllowed / screenWorldWidth) * FOCUS_SCALE)
 
-    // Same idea, for where the arrived craft sits: computed at ITS OWN
-    // focus distance (closer to the camera than the screen), so "bottom-
-    // left of frame" lands in the same relative spot at any aspect ratio
-    // instead of a fixed world offset that would drift toward the edge
-    // (or off it) on a narrower screen.
+    // Same idea, for where the arrived craft sits: just outside the
+    // screen's bottom-left corner as it lands on screen (NDC), so the
+    // projector never covers its own picture at any aspect ratio, then
+    // carried back to the craft's own (nearer) depth.
+    const screenNdcH = (SCREEN_HEIGHT * 0.5 * this.focusScaleAdjust.value) / (distance * Math.tan(vFov / 2))
+    const screenNdcW = (screenNdcH * this.aspect) / this.camera.aspect
     const craftDistance = BASE_CAMERA_OFFSET.z - BASE_CRAFT_FOCUS_OFFSET.z
-    const craftVisibleHeight = 2 * Math.tan(vFov / 2) * craftDistance
-    const craftVisibleWidth = craftVisibleHeight * this.camera.aspect
-    this.craftOffsetXY.value.set(
-      -CRAFT_OFFSET_FRACTION_X * (craftVisibleWidth / 2),
-      -CRAFT_OFFSET_FRACTION_Y * (craftVisibleHeight / 2)
-    )
+    const craftHalfHeight = Math.tan(vFov / 2) * craftDistance
+    const craftNdcH = (CRAFT_HALF_EXTENT * CRAFT_SCALE_NEAR) / craftHalfHeight
+    const craftNdcW = craftNdcH / this.camera.aspect
+    const craftNdcX = Math.max(-(screenNdcW + craftNdcW + PROJECTOR_NDC_GAP), -(1 - craftNdcW - PROJECTOR_NDC_GAP))
+    const craftNdcY = Math.max(-(screenNdcH + craftNdcH + PROJECTOR_NDC_GAP), -(1 - craftNdcH - PROJECTOR_NDC_GAP))
+    this.craftOffsetXY.value.set(craftNdcX * craftHalfHeight * this.camera.aspect, craftNdcY * craftHalfHeight)
 
     // Keeps the galaxy dust's own screen-space size calibration (see
     // buildGalaxyBackdrop) correct after a viewport/device-pixel-ratio
