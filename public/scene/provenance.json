@@ -2,22 +2,22 @@
   "generator": "image_gen built-in",
   "assets": [
     {
-      "asset": "/scene/valley-tiny-robot-day.webp",
+      "asset": "/scene/valley-companions-day.webp",
       "size": [
         1600,
         900
       ],
-      "reference": "/scene/valley-robot-day.webp",
-      "prompt": "Shrink only the seated robot to 45% of its previous linear size. Preserve the entire valley framing, skyline, sky, creek, falls and meadow; refill the vacated space with natural flowers."
+      "reference": "/scene/valley-tiny-robot-day.webp",
+      "prompt": "Preserve the tiny seated robot and exact valley composition; add a small ivory robot kitten seen from behind immediately to its right, with pointed ears, curved segmented tail and amber back/ear/tail components."
     },
     {
-      "asset": "/scene/valley-tiny-robot-mobile.webp",
+      "asset": "/scene/valley-companions-mobile.webp",
       "size": [
         900,
         1600
       ],
-      "reference": "/scene/valley-robot-mobile.webp",
-      "prompt": "Shrink only the robot to 45% of its previous linear size in the same complete portrait composition, restoring flowers around it without changing the valley."
+      "reference": "/scene/valley-tiny-robot-mobile.webp",
+      "prompt": "Add the same small back-facing ivory robot kitten beside the tiny robot in the original complete portrait valley; preserve camera and all landscape geometry."
     }
   ],
   "geometry": "lib/sceneSkyline.json",
@@ -28,8 +28,9 @@
     "Small JPEG robot plates provide matching fallback compositions; a cropped night-sky image handles unavailable video.",
     "Weather is a deterministic aesthetic cycle, not a forecast. Browser-local time controls the six phases.",
     "Wetness, stream runoff and waterfall flow retain separate response times. OS/user reduced motion and offscreen pause are respected.",
-    "Foliage receives intermittent travelling gusts with calm intervals, while robot, water and bare rock are excluded from the foliage mask.",
     "Night vegetation has a separate warm emission/bloom pass, applied after night exposure and before fog/rain, with a static fallback.",
-    "An approximately 20-second camera breath combines 1.4% vertical drift, 0.8% horizontal drift and 1% push/pull. Overscan prevents edge exposure."
+    "Only the nearest 14% of the photographic plate receives a softly feathered breeze displacement. Distant meadow and slope vegetation, robot and kitten remain still.",
+    "Companion amber components are identified by their native color inside tiny registered component footprints. No silhouette mask or dark oval is applied.",
+    "Camera travel amplitude is retained, but the former speed is multiplied by .45, giving approximately 45\u201360s cycles."
   ]
 }

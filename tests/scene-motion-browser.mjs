@@ -15,11 +15,11 @@ await page.addInitScript(() => {
   const draw = WebGL2RenderingContext.prototype.drawElements
   WebGL2RenderingContext.prototype.drawElements = function(...args) {
     const overrides = []
-    if (!this.canvas.isConnected && (window.__sceneNoGlow || window.__sceneFreezeTime)) {
+    if (!this.canvas.isConnected && (window.__sceneNoGlow || Number.isFinite(window.__sceneSurfaceTime))) {
       const program = this.getParameter(this.CURRENT_PROGRAM)
-      for (const name of [window.__sceneNoGlow ? 'night' : null, window.__sceneFreezeTime ? 'time' : null]) if (name) {
+      for (const [name, value] of [['night', window.__sceneNoGlow ? 0 : null], ['time', window.__sceneSurfaceTime]]) if (typeof value === 'number') {
         const location = this.getUniformLocation(program, name)
-        if (location) { overrides.push([location, this.getUniform(program, location)]); this.uniform1f(location, 0) }
+        if (location) { overrides.push([location, this.getUniform(program, location)]); this.uniform1f(location, value) }
       }
     }
     draw.apply(this, args)
@@ -34,8 +34,8 @@ async function snapshot() {
     const c = document.createElement('canvas'); c.width = rw; c.height = rh
     const ctx = c.getContext('2d'); ctx.setTransform(1 / a, 0, 0, 1 / a, -tx / a, -ty / a)
     ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, w, h)
-    const regions = mobile ? { sky: [240, 180, 240, 250], water: [590, 952, 50, 50], fall: [596, 834, 15, 42], ground: [140, 1000, 90, 50], rock: [120, 780, 35, 45], slope: [50, 800, 120, 90] }
-      : { sky: [430, 100, 320, 180], water: [1050, 550, 100, 60], fall: [949, 412, 20, 45], ground: [300, 600, 140, 60], rock: [150, 250, 55, 60], slope: [100, 410, 260, 70] }
+    const regions = mobile ? { sky: [240, 180, 240, 250], water: [590, 952, 50, 50], fall: [596, 834, 15, 42], ground: [140, 1000, 90, 50], foreground: [180, 1150, 130, 50], robotLight: [344, 1009, 12, 12], catLight: [389, 1019, 12, 12], rock: [120, 780, 35, 45], slope: [50, 800, 120, 90] }
+      : { sky: [430, 100, 320, 180], water: [1050, 550, 100, 60], fall: [949, 412, 20, 45], ground: [300, 550, 140, 50], foreground: [280, 635, 170, 45], robotLight: [548, 564, 14, 14], catLight: [604, 575, 12, 12], rock: [150, 250, 55, 60], slope: [100, 410, 260, 70] }
     return Object.fromEntries(Object.entries(regions).map(([name, rect]) => {
       const data = ctx.getImageData(...rect).data, averaged = []
       // Average 4px blocks to suppress camera resampling noise in fine grass/rock textures.
@@ -63,28 +63,30 @@ try {
   assert.equal(await page.locator('.hero-atmosphere-canvas').getAttribute('data-surface'), 'webgl')
   for (const [width, height] of [[1440,900],[390,844]]) {
     await page.setViewportSize({ width, height }); await page.waitForTimeout(700)
-    const center = () => page.locator('.hero-atmosphere-canvas').evaluate(c => +c.dataset.cameraY + (innerWidth < 700 ? 1280 : 720) * .5 * +c.dataset.cameraScale)
-    const cameraBefore = await center()
-    const before = await snapshot(); await page.waitForTimeout(5000); const after = await snapshot()
-    const cameraTravel = Math.abs(await center() - cameraBefore)
-    assert.ok(cameraTravel > 3, 'camera breathing must be visibly stronger than the previous subpixel drift')
-    console.log('Vertical camera travel over 5s:', cameraTravel.toFixed(2), 'CSS px')
+    const center = () => page.locator('.hero-atmosphere-canvas').evaluate(c => ({ y: +c.dataset.cameraY + (innerWidth < 700 ? 1280 : 720) * .5 * +c.dataset.cameraScale, t: +c.dataset.renderTime }))
+    const positions = [await center()], before = await snapshot()
+    for (let i = 0; i < 5; i++) { await page.waitForTimeout(1000); positions.push(await center()) }
+    const after = await snapshot(), travel = Math.max(...positions.map(p => p.y)) - Math.min(...positions.map(p => p.y))
+    const speed = Math.max(...positions.slice(1).map((p, i) => Math.abs(p.y - positions[i].y) / (p.t - positions[i].t)))
+    assert.ok(travel > .4, 'camera breath remains visible across the sampled interval')
+    assert.ok(speed < height * .014 * .16, 'camera moves more slowly than the previous .32 rad/s breath')
+    console.log('Camera travel over 5s:', travel.toFixed(2), 'CSS px; peak speed:', speed.toFixed(2), 'px/s')
     const delta = Object.fromEntries(Object.keys(before).map(key => [key, +difference(before[key], after[key]).toFixed(3)]))
     console.log(width < 700 ? 'Portrait' : 'Desktop', 'registered pixel change (camera removed):', delta)
     assert.ok(delta.sky > delta.rock * 1.3 && delta.sky > 1, 'clouds must drift independently of camera')
     assert.ok(delta.water > delta.rock * 1.3 && delta.water > 1, 'creek texture/reflections must flow')
     assert.ok(delta.fall > 1, 'waterfall must flow')
-    await page.waitForFunction(() => +document.querySelector('.hero-atmosphere-canvas').dataset.renderTime > 7)
+    await page.evaluate(() => { window.__sceneSurfaceTime = 8; dispatchEvent(new Event('resize')) })
     const windy = await snapshot()
-    await page.evaluate(() => { window.__sceneFreezeTime = true; dispatchEvent(new Event('resize')) })
-    await page.waitForTimeout(100)
-    const calm = await snapshot(), plantMovement = difference(windy.ground, calm.ground)
+    await page.evaluate(() => { window.__sceneSurfaceTime = 0; dispatchEvent(new Event('resize')) })
+    const calm = await snapshot(), plantMovement = difference(windy.foreground, calm.foreground)
+    const distantMovement = difference(windy.ground, calm.ground), slopeMovement = difference(windy.slope, calm.slope)
     const fallMovement = difference(windy.fall, calm.fall)
-    console.log('Foliage change with/without breeze:', plantMovement.toFixed(3), 'waterfall change:', fallMovement.toFixed(3))
-    // The immediate frozen-time comparison excludes the 5s camera resampling/breeze noise in the rock control.
+    console.log('Breeze contribution:', { foreground: plantMovement, distantMeadow: distantMovement, mountains: slopeMovement })
     assert.ok(fallMovement > .8, 'waterfall texture must change independently of the camera')
-    assert.ok(plantMovement > .8, 'breeze must visibly move the flower/grass texture')
-    await page.evaluate(() => { window.__sceneFreezeTime = false })
+    assert.ok(plantMovement > .6 && plantMovement > distantMovement * 2, 'only the closest flowers visibly sway')
+    assert.ok(distantMovement < 1.2 && slopeMovement < 1.2, 'distant vegetation remains still apart from subpixel camera resampling')
+    await page.evaluate(() => { delete window.__sceneSurfaceTime })
   }
   await page.locator('.scene-trigger').click()
   await page.getByRole('combobox', { name: 'Weather', exact: true }).selectOption('storm')
@@ -118,11 +120,13 @@ try {
     await page.evaluate(() => { window.__sceneNoGlow = true; dispatchEvent(new Event('resize')) })
     const unlit = await snapshot()
     const fieldGlow = difference(illuminated.ground, unlit.ground), slopeGlow = difference(illuminated.slope, unlit.slope)
-    console.log(width < 700 ? 'Portrait' : 'Desktop', 'night emission contribution:', { fieldGlow, slopeGlow })
+    const robotGlow = difference(illuminated.robotLight, unlit.robotLight), catGlow = difference(illuminated.catLight, unlit.catLight)
+    console.log(width < 700 ? 'Portrait' : 'Desktop', 'night emission contribution:', { fieldGlow, slopeGlow, robotGlow, catGlow })
+    assert.ok(robotGlow > 3 && catGlow > 3, 'robot amber rings and kitten components emit light at night')
     assert.ok(fieldGlow > 3 && slopeGlow > 1, 'flowers and mountain vegetation must visibly glow after night exposure')
     await page.evaluate(() => { window.__sceneNoGlow = false; dispatchEvent(new Event('resize')) })
     await page.screenshot({ path: width < 700 ? 'artifacts/meadow-night-phone.png' : 'artifacts/meadow-night-desktop.png' })
   }
   assert.deepEqual(errors, [])
-  console.log('PASS: visible camera breath, intermittent breeze, night flower/slope glow, moving water/clouds and seamless phone rain')
+  console.log('PASS: slower camera breath, foreground-only breeze, robot/kitten lights, night vegetation glow and seamless phone rain')
 } finally { await browser.close() }

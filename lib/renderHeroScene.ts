@@ -33,7 +33,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   let painted = false, videoWanted = false
   let drops: Drop[] = [], streaks: Rain[] = []
   desktop.src = layouts.desktop.reference; portrait.src = layouts.mobile.reference
-  desktopFallback.src = '/scene/valley-tiny-robot-fallback.jpg'; portraitFallback.src = '/scene/valley-tiny-robot-mobile-fallback.jpg'
+  desktopFallback.src = '/scene/valley-companions-fallback.jpg'; portraitFallback.src = '/scene/valley-companions-mobile-fallback.jpg'
   nightSky.src = '/scene/night-sky.webp'; wideNightSky.src = '/scene/night-sky-wide.webp'
   const world = (c: CanvasRenderingContext2D) => { c.transform(cameraScale, 0, 0, cameraScale, cameraX, cameraY) }
   function prepareSurface(source: HTMLImageElement) {
@@ -64,14 +64,20 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       return Math.max(clamp((g - b - 12) / 38) * clamp((r - b - 12) / 42),
         clamp((g - r + 12) / 28) * clamp((g - b - 12) / 35)) * clamp((g - 45) / 65)
     }
+    // Tiny registered optical footprints seed only the native amber pixels in each component.
+    const components = new Float32Array(mask.width * mask.height)
+    for (const [cx, cy, rx, ry] of layout.lights) {
+      for (let y = Math.max(0, Math.floor(cy - ry * 1.4)); y <= Math.min(mask.height - 1, Math.ceil(cy + ry * 1.4)); y++) {
+        for (let x = Math.max(0, Math.floor(cx - rx * 1.4)); x <= Math.min(mask.width - 1, Math.ceil(cx + rx * 1.4)); x++) {
+          const spot = clamp((1.4 - Math.hypot((x - cx) / rx, (y - cy) / ry)) * 2.5)
+          components[y * mask.width + x] = Math.max(components[y * mask.width + x], spot)
+        }
+      }
+    }
     for (let y = 0; y < mask.height; y++) for (let x = 0; x < mask.width; x++) {
       const i = (y * mask.width + x) * 4, v = vegetation.data
       v[i + 3] = 255
       if (pixels.data[i] > 80 || pixels.data[i + 1] > 30 || pixels.data[i + 2] > 30) continue
-      const rx = x / mask.width, ry = y / mask.height, mobile = layout === layouts.mobile, robotX = mobile ? .488 : .433
-      const head = Math.pow((rx - robotX) / (mobile ? .017 : .011), 2) + Math.pow((ry - (mobile ? .775 : .758)) / (mobile ? .011 : .018), 2)
-      const body = Math.pow((rx - robotX) / (mobile ? .037 : .023), 2) + Math.pow((ry - .8) / (mobile ? .017 : .027), 2)
-      if (head < 1 || body < 1) continue
       const neighbors = [Math.max(0, i - 12), Math.min(colors.length - 4, i + 12),
         Math.max(0, i - mask.width * 12), Math.min(colors.length - 4, i + mask.width * 12)]
       const leaf = leafAt(i), nearby = neighbors.reduce((sum, n) => sum + leafAt(n), 0) / 4
@@ -79,7 +85,15 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       const average = neighbors.reduce((sum, n) => sum + (colors[n] + colors[n + 1] + colors[n + 2]) / 3, 0) / 4
       const tip = clamp((Math.max(colors[i], colors[i + 1], colors[i + 2]) - 150) / 95) * clamp((luma - average + 8) / 55)
       v[i] = Math.max(leaf, nearby * .85) * 255
-      v[i + 1] = clamp(leaf * .09 + tip * Math.max(leaf, nearby) * .95) * 255
+      let emission = clamp(leaf * .09 + tip * Math.max(leaf, nearby) * .95)
+      const component = components[i / 4]
+      if (component > 0) {
+        const r = colors[i], g = colors[i + 1], b = colors[i + 2]
+        // No silhouette exclusion: the surrounding meadow keeps its continuous natural emission.
+        const amber = clamp((r - g - 10) / 40) * clamp((g - b - 25) / 60) * clamp((r - 140) / 80)
+        emission = Math.max(emission, amber * component * 2.2)
+      }
+      v[i + 1] = clamp(emission) * 255
     }
     pcx.putImageData(vegetation, 0, 0)
     const soft = document.createElement('canvas'); soft.width = mask.width; soft.height = mask.height
@@ -152,11 +166,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       wet = Math.max(wet, env.wetness); runoff = env.stream; fall = env.waterfall
     }
     const cameraTime = quiet ? 0 : elapsed
-    // ~20s breath: visible 1.4% vertical drift with a gentle 1% push/pull; HTML stays fixed.
-    const cameraZoom = 1 + Math.sin(cameraTime * .28) * .010
+    // ~45–60s breath retains the travel amplitude at 45% of the previous speed; HTML stays fixed.
+    const cameraZoom = 1 + Math.sin(cameraTime * .126) * .010
     cameraScale = scale * cameraZoom
-    cameraX = width * .5 + Math.sin(cameraTime * .23) * width * .008 + cameraZoom * (ox - width * .5)
-    cameraY = height * .5 + Math.sin(cameraTime * .32) * height * .014 + cameraZoom * (oy - height * .5)
+    cameraX = width * .5 + Math.sin(cameraTime * .1035) * width * .008 + cameraZoom * (ox - width * .5)
+    cameraY = height * .5 + Math.sin(cameraTime * .144) * height * .014 + cameraZoom * (oy - height * .5)
     const light = lightAt(hour), clouds = clamp(rain * .95 + fog * .14)
     const source = master.complete && master.naturalWidth ? master : fallback.complete && fallback.naturalWidth ? fallback : null
     scene!.fillStyle = '#090e18'; scene!.fillRect(0, 0, width, height)

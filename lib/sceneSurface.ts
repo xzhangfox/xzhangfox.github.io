@@ -31,17 +31,17 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
       void main() {
         vec2 p=uvScene;
         vec3 region=texture2D(regions,p).rgb;
-        // A travelling gust lasts ~10s, followed by a calm interval; foreground stems bend more.
+        // A travelling gust affects only the closest flower bed; all other vegetation stays still.
         float phase=fract(time/26.-p.x*.22+p.y*.08);
         float gust=smoothstep(.04,.16,phase)*(1.-smoothstep(.36,.58,phase));
         float leaf=texture2D(meadow,p).r;
-        float depth=.16+.84*pow(1.-p.y,2.);
-        vec2 sway=vec2(sin(time*1.65+p.x*17.+p.y*33.)*.0038,
-                       sin(time*1.31+p.x*12.+p.y*24.)*.00085)*gust*depth*leaf;
+        float foreground=1.-smoothstep(.065,.14,p.y);
+        vec2 sway=vec2(sin(time*1.65+p.x*17.+p.y*33.)*.0025,
+                       sin(time*1.31+p.x*12.+p.y*24.)*.00055)*gust*foreground*leaf;
         vec2 plantUV=clamp(p+sway,vec2(.001),vec2(.999));
         vec3 foliage=texture2D(meadow,plantUV).rgb;
         if(glowOnly>.5) {
-          float shimmer=.91+.09*sin(time*.55+p.x*143.+p.y*79.);
+          float shimmer=1.+foreground*(-.045+.045*sin(time*.55+p.x*143.+p.y*79.));
           float emission=(foliage.g*.85+foliage.b*.9)*shimmer*night;
           vec3 hue=mix(vec3(1.,.72,.28),vec3(.5,.88,1.),
                        smoothstep(.8,.98,sin(p.x*240.+p.y*113.)*.5+.5)*.28);
