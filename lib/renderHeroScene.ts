@@ -20,6 +20,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   let layout = layouts.desktop
   let SKY = new Path2D(layout.sky), GROUND = new Path2D(), WATER = new Path2D(layout.water), FALL = new Path2D(layout.fall)
   let surface: ReturnType<typeof createSceneSurface> = null, surfaceSource: HTMLImageElement | null = null
+  let emissionFallback: HTMLCanvasElement | null = null
+  let cameraScale = 1, cameraX = 0, cameraY = 0
   const backing = document.createElement('canvas'), frost = document.createElement('canvas'), skyLayer = document.createElement('canvas'), skyMask = document.createElement('canvas')
   const scene = backing.getContext('2d'), glass = frost.getContext('2d'), sky = skyLayer.getContext('2d'), maskContext = skyMask.getContext('2d')
   if (!scene || !glass || !sky || !maskContext) return null
@@ -31,16 +33,9 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   let painted = false, videoWanted = false
   let drops: Drop[] = [], streaks: Rain[] = []
   desktop.src = layouts.desktop.reference; portrait.src = layouts.mobile.reference
-  desktopFallback.src = '/scene/valley-robot-fallback.jpg'; portraitFallback.src = '/scene/valley-robot-mobile-fallback.jpg'
+  desktopFallback.src = '/scene/valley-tiny-robot-fallback.jpg'; portraitFallback.src = '/scene/valley-tiny-robot-mobile-fallback.jpg'
   nightSky.src = '/scene/night-sky.webp'; wideNightSky.src = '/scene/night-sky-wide.webp'
-  const world = (c: CanvasRenderingContext2D) => {
-    const t = quiet ? 0 : elapsed
-    // Overscan keeps every edge covered throughout this slow camera breath.
-    const zoom = 1 + Math.sin(t * .13) * .004
-    c.translate(width * .5 + Math.sin(t * .11) * width * .003, height * .5 + Math.sin(t * .16) * height * .002)
-    c.scale(zoom, zoom); c.translate(-width * .5, -height * .5)
-    c.translate(ox, oy); c.scale(scale, scale)
-  }
+  const world = (c: CanvasRenderingContext2D) => { c.transform(cameraScale, 0, 0, cameraScale, cameraX, cameraY) }
   function prepareSurface(source: HTMLImageElement) {
     if (surfaceSource === source) return
     surface?.destroy(); surface = null; surfaceSource = source
@@ -61,7 +56,44 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       pixels.data[i + 1] *= cool
     }
     m.putImageData(pixels, 0, 0)
-    surface = createSceneSurface(source, mask)
+    // RGB packs a soft foliage mask, sharp flower emissions, and their optical bloom.
+    const plants = document.createElement('canvas'); plants.width = mask.width; plants.height = mask.height
+    const pcx = plants.getContext('2d')!, vegetation = pcx.createImageData(mask.width, mask.height)
+    const leafAt = (i: number) => {
+      const r = colors[i], g = colors[i + 1], b = colors[i + 2]
+      return Math.max(clamp((g - b - 12) / 38) * clamp((r - b - 12) / 42),
+        clamp((g - r + 12) / 28) * clamp((g - b - 12) / 35)) * clamp((g - 45) / 65)
+    }
+    for (let y = 0; y < mask.height; y++) for (let x = 0; x < mask.width; x++) {
+      const i = (y * mask.width + x) * 4, v = vegetation.data
+      v[i + 3] = 255
+      if (pixels.data[i] > 80 || pixels.data[i + 1] > 30 || pixels.data[i + 2] > 30) continue
+      const rx = x / mask.width, ry = y / mask.height, mobile = layout === layouts.mobile, robotX = mobile ? .488 : .433
+      const head = Math.pow((rx - robotX) / (mobile ? .017 : .011), 2) + Math.pow((ry - (mobile ? .775 : .758)) / (mobile ? .011 : .018), 2)
+      const body = Math.pow((rx - robotX) / (mobile ? .037 : .023), 2) + Math.pow((ry - .8) / (mobile ? .017 : .027), 2)
+      if (head < 1 || body < 1) continue
+      const neighbors = [Math.max(0, i - 12), Math.min(colors.length - 4, i + 12),
+        Math.max(0, i - mask.width * 12), Math.min(colors.length - 4, i + mask.width * 12)]
+      const leaf = leafAt(i), nearby = neighbors.reduce((sum, n) => sum + leafAt(n), 0) / 4
+      const luma = (colors[i] + colors[i + 1] + colors[i + 2]) / 3
+      const average = neighbors.reduce((sum, n) => sum + (colors[n] + colors[n + 1] + colors[n + 2]) / 3, 0) / 4
+      const tip = clamp((Math.max(colors[i], colors[i + 1], colors[i + 2]) - 150) / 95) * clamp((luma - average + 8) / 55)
+      v[i] = Math.max(leaf, nearby * .85) * 255
+      v[i + 1] = clamp(leaf * .09 + tip * Math.max(leaf, nearby) * .95) * 255
+    }
+    pcx.putImageData(vegetation, 0, 0)
+    const soft = document.createElement('canvas'); soft.width = mask.width; soft.height = mask.height
+    const sc = soft.getContext('2d')!; sc.filter = 'blur(3px)'; sc.drawImage(plants, 0, 0)
+    const blurred = sc.getImageData(0, 0, mask.width, mask.height).data
+    emissionFallback = document.createElement('canvas'); emissionFallback.width = mask.width; emissionFallback.height = mask.height
+    const ec = emissionFallback.getContext('2d')!, emission = ec.createImageData(mask.width, mask.height)
+    for (let i = 0; i < vegetation.data.length; i += 4) {
+      vegetation.data[i] = blurred[i]; vegetation.data[i + 2] = blurred[i + 1]
+      const glow = clamp((vegetation.data[i + 1] * .85 + vegetation.data[i + 2] * .9) / 255) * 255
+      emission.data[i] = glow; emission.data[i + 1] = glow * .72; emission.data[i + 2] = glow * .28; emission.data[i + 3] = 255
+    }
+    pcx.putImageData(vegetation, 0, 0); ec.putImageData(emission, 0, 0)
+    surface = createSceneSurface(source, mask, plants)
     canvas.dataset.surface = surface ? 'webgl' : 'canvas'
   }
   const canAnimate = () => visible && pageVisible && !quiet && !disposed
@@ -86,7 +118,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     master = width < 700 ? portrait : desktop; fallback = width < 700 ? portraitFallback : desktopFallback
     SKY = new Path2D(layout.sky); WATER = new Path2D(layout.water); FALL = new Path2D(layout.fall)
     GROUND = new Path2D('M0 0H' + layout.width + 'V' + layout.height + 'H0Z'); GROUND.addPath(SKY)
-    scale = Math.max(width / layout.width, height / layout.height) * 1.035
+    scale = Math.max(width / layout.width, height / layout.height) * 1.085
     ox = (width - layout.width * scale) * .5; oy = (height - layout.height * scale) * .5
     skyLayer.width = skyMask.width = layout.width; skyLayer.height = skyMask.height = layout.height
     // Feather the horizon optically; weather and stars must never form a cut-out ridge.
@@ -119,6 +151,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       hour = env.hour; rain = env.rain; fog = env.fog
       wet = Math.max(wet, env.wetness); runoff = env.stream; fall = env.waterfall
     }
+    const cameraTime = quiet ? 0 : elapsed
+    // ~20s breath: visible 1.4% vertical drift with a gentle 1% push/pull; HTML stays fixed.
+    const cameraZoom = 1 + Math.sin(cameraTime * .28) * .010
+    cameraScale = scale * cameraZoom
+    cameraX = width * .5 + Math.sin(cameraTime * .23) * width * .008 + cameraZoom * (ox - width * .5)
+    cameraY = height * .5 + Math.sin(cameraTime * .32) * height * .014 + cameraZoom * (oy - height * .5)
     const light = lightAt(hour), clouds = clamp(rain * .95 + fog * .14)
     const source = master.complete && master.naturalWidth ? master : fallback.complete && fallback.naturalWidth ? fallback : null
     scene!.fillStyle = '#090e18'; scene!.fillRect(0, 0, width, height)
@@ -188,6 +226,15 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     const fallEnd = width < 700 ? [592, 880] : [946, 464]
     haze(fallEnd[0], fallEnd[1], 12 + fall * 15, 6 + fall * 8, (.05 + fall * .14) * (1 - light.night * .5))
     scene!.restore()
+    // Emission is added after night shading, then seen through the same mist/rain as the terrain.
+    if (light.night > .001) {
+      const glow = surface?.glow(quiet ? 0 : elapsed, light.night * (1 - rain * .45))
+      if (glow || emissionFallback) {
+        scene!.save(); world(scene!); scene!.globalCompositeOperation = 'screen'
+        if (!glow) scene!.globalAlpha = light.night * (1 - rain * .45)
+        scene!.drawImage(glow || emissionFallback!, 0, 0, layout.width, layout.height); scene!.restore()
+      }
+    }
     // Three depth bands of valley mist; foreground objects stay legible.
     if (fog > .02) for (let i = 0; i < 3; i++) {
       haze(ox + layout.width * (.30 + i * .18 + Math.sin(elapsed * .035 + i) * .018) * scale, oy + layout.height * (.69 + i * .029) * scale,
@@ -265,6 +312,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     canvas.dataset.phase = env.phase; canvas.dataset.weather = env.weather
     canvas.dataset.wetness = wet.toFixed(3); canvas.dataset.stream = runoff.toFixed(3); canvas.dataset.waterfall = fall.toFixed(3)
     canvas.dataset.renderTime = elapsed.toFixed(2)
+    canvas.dataset.cameraScale = cameraScale.toFixed(6); canvas.dataset.cameraX = cameraX.toFixed(3); canvas.dataset.cameraY = cameraY.toFixed(3)
+    canvas.dataset.nightGlow = light.night.toFixed(3)
     if (!painted && source) { canvas.dataset.ready = 'true'; painted = true }
     syncVideo()
   }

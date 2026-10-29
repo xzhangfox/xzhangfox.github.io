@@ -165,7 +165,7 @@ body {
 }
 
 /* The scene stays below all content. Only its compact control receives pointer events. */
-.hero-atmosphere{position:fixed;inset:0;z-index:1;pointer-events:none;background:#0a101c url('/scene/valley-robot-fallback.jpg') center/cover no-repeat}
+.hero-atmosphere{position:fixed;inset:0;z-index:1;pointer-events:none;background:#0a101c url('/scene/valley-tiny-robot-fallback.jpg') center/cover no-repeat}
 .hero-atmosphere-canvas{display:block;width:100%;height:100%}
 .scene-controls{position:fixed;right:max(22px,env(safe-area-inset-right));bottom:max(24px,env(safe-area-inset-bottom));z-index:45}
 .scene-controls[hidden]{display:none}
@@ -197,4 +197,4 @@ body {
 @media(max-width:640px){.scene-controls{right:14px;bottom:max(16px,env(safe-area-inset-bottom))}.scene-trigger{padding:9px 11px;font-size:9px;gap:6px}.scene-weather-summary{display:none}.scene-panel{width:294px;padding:18px}.scene-clock{font-size:9px}}
 @media(prefers-reduced-motion:reduce){.scene-trigger,.scene-panel *{transition:none!important}}
 
-@media(max-width:699px){.hero-atmosphere{background-image:url('/scene/valley-robot-mobile-fallback.jpg')}}
+@media(max-width:699px){.hero-atmosphere{background-image:url('/scene/valley-tiny-robot-mobile-fallback.jpg')}}

@@ -104,7 +104,7 @@ try {
   await quietContext.close()
 
   const fallbackContext = await browser.newContext({ reducedMotion: 'reduce' })
-  await fallbackContext.route('**/scene/valley-robot-day.webp', route => route.abort())
+  await fallbackContext.route('**/scene/valley-tiny-robot-day.webp', route => route.abort())
   const fallbackPage = await fallbackContext.newPage()
   await fallbackPage.goto(base)
   await fallbackPage.locator('.hero-atmosphere-canvas[data-asset-fallback=true][data-ready=true]').waitFor()
