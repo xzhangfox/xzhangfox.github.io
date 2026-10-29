@@ -52,8 +52,8 @@ export default function About() {
                       key={deg}
                       className="absolute w-1.5 h-1.5 rounded-full bg-gold/60"
                       style={{
-                        top: `calc(50% + ${Math.sin((deg * Math.PI) / 180) * 47}%)`,
-                        left: `calc(50% + ${Math.cos((deg * Math.PI) / 180) * 47}%)`,
+                        top: `${(50 + Math.sin((deg * Math.PI) / 180) * 47).toFixed(4)}%`,
+                        left: `${(50 + Math.cos((deg * Math.PI) / 180) * 47).toFixed(4)}%`,
                         transform: 'translate(-50%, -50%)',
                       }}
                       animate={{ opacity: [0.3, 1, 0.3] }}

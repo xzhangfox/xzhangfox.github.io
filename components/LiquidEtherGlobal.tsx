@@ -9,10 +9,13 @@ const FULL_OPACITY = 0.45
 const FINE_OPACITY = 0.08
 
 export default function LiquidEtherGlobal() {
+  const [enabled, setEnabled] = useState(false)
   const [opacity, setOpacity] = useState(FULL_OPACITY)
 
   useEffect(() => {
     const update = () => {
+      const hero = document.querySelector('[data-home-hero]')
+      setEnabled(!!hero && hero.getBoundingClientRect().bottom < 0)
       const projectsEl = document.getElementById('projects')
       if (!projectsEl) return
       const rect = projectsEl.getBoundingClientRect()
@@ -30,6 +33,8 @@ export default function LiquidEtherGlobal() {
       window.removeEventListener('resize', update)
     }
   }, [])
+
+  if (!enabled) return null
 
   return (
     <LiquidEther

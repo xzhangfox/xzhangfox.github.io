@@ -37,7 +37,7 @@ export default function Navigation() {
       className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
         scrolled
           ? 'bg-black/70 backdrop-blur-2xl border-b border-gold-border'
-          : 'bg-transparent'
+          : 'bg-black/30 backdrop-blur-lg'
       }`}
     >
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
@@ -60,7 +60,7 @@ export default function Navigation() {
             <button
               key={link.href}
               onClick={() => handleNav(link.href)}
-              className="px-4 py-2 text-sm text-white/50 hover:text-gold transition-colors duration-200 font-mono tracking-wider uppercase text-xs"
+              className="px-4 py-2 text-sm text-white/90 hover:text-gold transition-colors duration-200 font-mono tracking-wider uppercase text-xs"
             >
               {link.label}
             </button>

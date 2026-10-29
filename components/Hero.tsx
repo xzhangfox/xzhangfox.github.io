@@ -40,7 +40,7 @@ export default function Hero() {
   const nameChars = t.nav.name.split('')
 
   return (
-    <section className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
+    <section data-home-hero className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
 
       {/* Gradient overlay: darken edges, fade to bg-bg at bottom */}
       <div
@@ -49,10 +49,10 @@ export default function Hero() {
           zIndex: 1,
           background: [
             'linear-gradient(to bottom,',
-            '  rgba(10,10,10,0.55) 0%,',
+            '  rgba(10,10,10,0.35) 0%,',
             '  rgba(10,10,10,0.15) 28%,',
-            '  rgba(10,10,10,0.35) 58%,',
-            '  rgba(10,10,10,0.92) 90%,',
+            '  rgba(10,10,10,0.22) 58%,',
+            '  rgba(10,10,10,0.50) 90%,',
             '  rgba(10,10,10,1.00) 100%',
             ')',
           ].join(' '),
@@ -66,7 +66,7 @@ export default function Hero() {
           className="absolute pointer-events-none"
           style={{
             inset: '-60px -80px',
-            background: 'radial-gradient(ellipse 75% 80% at 50% 50%, rgba(10,10,10,0.55) 0%, transparent 100%)',
+            background: 'radial-gradient(ellipse 50% 50% at 50% 50%, rgba(10,10,10,0.62) 0%, rgba(10,10,10,0.22) 55%, transparent 100%)',
           }}
         />
         {/* Location label */}
@@ -117,7 +117,7 @@ export default function Hero() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 1.1, ease: [0.22, 1, 0.36, 1] }}
-          className="text-base md:text-lg text-white/75 max-w-xl mx-auto leading-relaxed mb-12"
+          className="text-base md:text-lg text-white/85 max-w-xl mx-auto leading-relaxed mb-12"
           style={{ textShadow: '0 2px 16px rgba(0,0,0,0.9)' }}
         >
           {t.hero.description}

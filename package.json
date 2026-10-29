@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test:scene": "node --test tests/sceneEnvironment.test.mjs"
   },
   "dependencies": {
     "@types/three": "^0.184.0",
