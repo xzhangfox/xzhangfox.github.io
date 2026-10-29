@@ -15,9 +15,9 @@ await page.addInitScript(() => {
   const draw = WebGL2RenderingContext.prototype.drawElements
   WebGL2RenderingContext.prototype.drawElements = function(...args) {
     const overrides = []
-    if (!this.canvas.isConnected && (window.__sceneNoGlow || window.__sceneFreezeWind)) {
+    if (!this.canvas.isConnected && (window.__sceneNoGlow || window.__sceneFreezeTime)) {
       const program = this.getParameter(this.CURRENT_PROGRAM)
-      for (const name of [window.__sceneNoGlow ? 'night' : null, window.__sceneFreezeWind ? 'time' : null]) if (name) {
+      for (const name of [window.__sceneNoGlow ? 'night' : null, window.__sceneFreezeTime ? 'time' : null]) if (name) {
         const location = this.getUniformLocation(program, name)
         if (location) { overrides.push([location, this.getUniform(program, location)]); this.uniform1f(location, 0) }
       }
@@ -73,15 +73,18 @@ try {
     console.log(width < 700 ? 'Portrait' : 'Desktop', 'registered pixel change (camera removed):', delta)
     assert.ok(delta.sky > delta.rock * 1.3 && delta.sky > 1, 'clouds must drift independently of camera')
     assert.ok(delta.water > delta.rock * 1.3 && delta.water > 1, 'creek texture/reflections must flow')
-    assert.ok(delta.fall > delta.rock * 1.3 && delta.fall > 1, 'waterfall must flow')
+    assert.ok(delta.fall > 1, 'waterfall must flow')
     await page.waitForFunction(() => +document.querySelector('.hero-atmosphere-canvas').dataset.renderTime > 7)
     const windy = await snapshot()
-    await page.evaluate(() => { window.__sceneFreezeWind = true; dispatchEvent(new Event('resize')) })
+    await page.evaluate(() => { window.__sceneFreezeTime = true; dispatchEvent(new Event('resize')) })
     await page.waitForTimeout(100)
     const calm = await snapshot(), plantMovement = difference(windy.ground, calm.ground)
-    console.log('Foliage change with/without breeze:', plantMovement.toFixed(3))
+    const fallMovement = difference(windy.fall, calm.fall)
+    console.log('Foliage change with/without breeze:', plantMovement.toFixed(3), 'waterfall change:', fallMovement.toFixed(3))
+    // The immediate frozen-time comparison excludes the 5s camera resampling/breeze noise in the rock control.
+    assert.ok(fallMovement > .8, 'waterfall texture must change independently of the camera')
     assert.ok(plantMovement > .8, 'breeze must visibly move the flower/grass texture')
-    await page.evaluate(() => { window.__sceneFreezeWind = false })
+    await page.evaluate(() => { window.__sceneFreezeTime = false })
   }
   await page.locator('.scene-trigger').click()
   await page.getByRole('combobox', { name: 'Weather', exact: true }).selectOption('storm')
