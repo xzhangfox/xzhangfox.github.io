@@ -57,12 +57,29 @@ const LIGHT: LightKey[] = [
   { h: 22, night: 1, brightness: .34, tint: [27, 41, 71], warmth: 0 },
   { h: 24, night: 1, brightness: .34, tint: [27, 41, 71], warmth: 0 },
 ]
+/** Warm cloud light peaks around sunset and fades before the late-night sky. */
+export function sunsetAt(hour: number) {
+  const h = ((hour % 24) + 24) % 24
+  return smooth((h - 16.25) / 1.25) * (1 - smooth((h - 19.25) / 1.25))
+}
+/** Two soft, staggered indicator blinks; no animation at the reduced-motion time of zero. */
+export function companionLightPulse(seconds: number, kitten = false) {
+  const age = ((Math.max(0, seconds) % (kitten ? 31 : 23)) - (kitten ? 13 : 7))
+  if (age < 0 || age > 2) return 1
+  return 1 - .58 * Math.exp(-2 * Math.pow((age - .55) / .18, 2)) - .4 * Math.exp(-2 * Math.pow((age - 1.1) / .22, 2))
+}
+/** A short, eased tail gesture between long resting intervals. */
+export function catTailAngle(seconds: number) {
+  const age = Math.max(0, seconds) % 29 - 6
+  if (age <= 0 || age >= 5) return 0
+  return Math.sin(age * 2.1) * .32 * smooth(age / .8) * smooth((5 - age) / 1.2)
+}
 export function lightAt(hour: number) {
   const h = ((hour % 24) + 24) % 24
   const end = LIGHT.findIndex((v, i) => i > 0 && h <= v.h)
   const b = LIGHT[Math.max(1, end)], a = LIGHT[Math.max(0, end - 1)], t = smooth((h - a.h) / (b.h - a.h))
   return {
-    night: mix(a.night, b.night, t), brightness: mix(a.brightness, b.brightness, t),
+    sunset: sunsetAt(h), night: mix(a.night, b.night, t), brightness: mix(a.brightness, b.brightness, t),
     warmth: mix(a.warmth, b.warmth, t), tint: a.tint.map((v, i) => mix(v, b.tint[i], t)) as [number, number, number],
   }
 }

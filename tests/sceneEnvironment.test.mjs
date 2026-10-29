@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import ts from 'typescript'
 const source = fs.readFileSync(new URL('../lib/sceneEnvironment.ts', import.meta.url), 'utf8')
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
-const { phaseAt, lightAt, rainfallAt, environmentAt, approach } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'))
+const { phaseAt, lightAt, rainfallAt, environmentAt, approach, sunsetAt, companionLightPulse, catTailAngle } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'))
 
 test('all six phases wrap correctly at midnight without a lighting jump', () => {
   for (const [hour, phase] of [[0,'deep'],[3.99,'deep'],[4,'predawn'],[6,'morning'],[9,'day'],[17,'dusk'],[20,'night'],[24,'deep'],[-1,'night']]) assert.equal(phaseAt(hour), phase)
@@ -65,4 +65,26 @@ test('hydrology response is independent of frame rate and does not instantly dry
   assert.ok(Math.abs(stepped-approach(0,1,75,60))<1e-10)
   assert.ok(approach(.8,0,420,1)>.79)
   assert.ok(approach(0,1,150,10)<approach(0,1,75,10))
+})
+
+test('sunset color has a smooth evening window and disappears by night', () => {
+  assert.equal(sunsetAt(12), 0); assert.equal(sunsetAt(0), 0)
+  assert.equal(sunsetAt(18.5), 1); assert.equal(sunsetAt(21), 0)
+  assert.ok(sunsetAt(17) > 0 && sunsetAt(17) < 1)
+  assert.ok(sunsetAt(20) > 0 && sunsetAt(20) < 1)
+  for (const h of [16.25,17.5,19.25,20.5]) assert.ok(Math.abs(sunsetAt(h+.001)-sunsetAt(h-.001)) < .005)
+})
+
+test('companion indicators blink softly at separate intervals and stay lit at reduced-motion time', () => {
+  assert.equal(companionLightPulse(0), 1); assert.equal(companionLightPulse(0,true), 1)
+  assert.ok(companionLightPulse(7.55) < .5); assert.equal(companionLightPulse(7.55,true), 1)
+  assert.ok(companionLightPulse(13.55,true) < .5); assert.equal(companionLightPulse(13.55), 1)
+  for(let t=0;t<120;t+=.05) for(const kitten of [false,true]) assert.ok(companionLightPulse(t,kitten) >= .4 && companionLightPulse(t,kitten) <= 1)
+})
+
+test('kitten tail has a brief, bounded gesture and returns smoothly to rest', () => {
+  for(const t of [0,5,11,20,29]) assert.equal(catTailAngle(t), 0)
+  assert.ok(Math.abs(catTailAngle(7)) > .15)
+  for(let t=0;t<60;t+=.05) assert.ok(Math.abs(catTailAngle(t)) <= .32)
+  assert.ok(Math.abs(catTailAngle(6.001)) < .001 && Math.abs(catTailAngle(10.999)) < .001)
 })

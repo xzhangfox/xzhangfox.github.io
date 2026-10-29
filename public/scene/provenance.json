@@ -2,22 +2,22 @@
   "generator": "image_gen built-in",
   "assets": [
     {
-      "asset": "/scene/valley-companions-day.webp",
+      "asset": "/scene/valley-companions-v2-day.webp",
       "size": [
         1600,
         900
       ],
-      "reference": "/scene/valley-tiny-robot-day.webp",
-      "prompt": "Preserve the tiny seated robot and exact valley composition; add a small ivory robot kitten seen from behind immediately to its right, with pointed ears, curved segmented tail and amber back/ear/tail components."
+      "reference": "/scene/valley-companions-day.webp",
+      "prompt": "Remove only the kitten tail, preserving the characters and entire landscape. Apply only a feathered local tail-footprint patch from this imagegen edit; all surrounding scenery comes from the existing plate."
     },
     {
-      "asset": "/scene/valley-companions-mobile.webp",
+      "asset": "/scene/valley-companions-v2-mobile.webp",
       "size": [
         900,
         1600
       ],
-      "reference": "/scene/valley-tiny-robot-mobile.webp",
-      "prompt": "Add the same small back-facing ivory robot kitten beside the tiny robot in the original complete portrait valley; preserve camera and all landscape geometry."
+      "reference": "/scene/valley-companions-mobile.webp",
+      "prompt": "Remove only the kitten tail, preserving the characters and entire landscape. Apply only a feathered local tail-footprint patch from this imagegen edit; all surrounding scenery comes from the existing plate."
     }
   ],
   "geometry": "lib/sceneSkyline.json",
@@ -31,6 +31,10 @@
     "Night vegetation has a separate warm emission/bloom pass, applied after night exposure and before fog/rain, with a static fallback.",
     "Only the nearest 14% of the photographic plate receives a softly feathered breeze displacement. Distant meadow and slope vegetation, robot and kitten remain still.",
     "Companion amber components are identified by their native color inside tiny registered component footprints. No silhouette mask or dark oval is applied.",
-    "Camera travel amplitude is retained, but the former speed is multiplied by .45, giving approximately 45\u201360s cycles."
+    "Camera travel amplitude is retained, but the former speed is multiplied by .45, giving approximately 45\u201360s cycles.",
+    "The kitten tail is a separately rendered segmented ivory appendage on a locally cleaned plate; a five-second eased gesture occurs between long resting intervals.",
+    "Sunset relights the existing cloud texture in violet, coral, orange and gold. The old night sky is suppressed during sunset and returns later.",
+    "Robot and kitten indicator lights have separate soft double-blink schedules. A dedicated role texture isolates these pulses from the luminous meadow.",
+    "Reduced motion fixes the tail at rest and the indicator lights at steady brightness."
   ]
 }

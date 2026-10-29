@@ -1,6 +1,6 @@
 import layouts from './sceneSkyline.json'
 import { createSceneSurface } from './sceneSurface'
-import { approach, clamp, lightAt, type SceneEnvironment } from './sceneEnvironment'
+import { approach, catTailAngle, companionLightPulse, clamp, lightAt, type SceneEnvironment } from './sceneEnvironment'
 
 type Drop = { x: number; y: number; r: number; age: number; wait: number; speed: number; seed: number; trail: { x: number; y: number }[] }
 type Rain = { x: number; y: number; speed: number; depth: number }
@@ -33,9 +33,30 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   let painted = false, videoWanted = false
   let drops: Drop[] = [], streaks: Rain[] = []
   desktop.src = layouts.desktop.reference; portrait.src = layouts.mobile.reference
-  desktopFallback.src = '/scene/valley-companions-fallback.jpg'; portraitFallback.src = '/scene/valley-companions-mobile-fallback.jpg'
+  desktopFallback.src = '/scene/valley-companions-v2-fallback.jpg'; portraitFallback.src = '/scene/valley-companions-v2-mobile-fallback.jpg'
   nightSky.src = '/scene/night-sky.webp'; wideNightSky.src = '/scene/night-sky-wide.webp'
   const world = (c: CanvasRenderingContext2D) => { c.transform(cameraScale, 0, 0, cameraScale, cameraX, cameraY) }
+  const tail = new Path2D('M0 0C7 3 12 -3 12 -14C12 -21 16 -25 20 -23')
+  function drawTail(time: number, glow: number | null = null) {
+    scene!.save(); world(scene!)
+    scene!.translate(layout.tail[0], layout.tail[1]); scene!.rotate(catTailAngle(time)); scene!.scale(layout.tail[2], layout.tail[2])
+    scene!.lineCap = 'round'
+    if (glow === null) {
+      scene!.filter = 'blur(.25px)'; scene!.strokeStyle = '#44484b'; scene!.lineWidth = 2.45; scene!.stroke(tail)
+      const metal = scene!.createLinearGradient(0, 0, 20, -23)
+      metal.addColorStop(0, '#8b8c83'); metal.addColorStop(.4, '#d6d1bf'); metal.addColorStop(.72, '#9e9f94'); metal.addColorStop(1, '#ded6bb')
+      scene!.strokeStyle = metal; scene!.lineWidth = 1.65; scene!.stroke(tail)
+      scene!.setLineDash([.6, 4.8]); scene!.strokeStyle = 'rgba(48,54,58,.5)'; scene!.lineWidth = 1.7; scene!.stroke(tail); scene!.setLineDash([])
+      scene!.strokeStyle = '#d8aa4a'; scene!.lineWidth = 1.4
+    } else {
+      scene!.globalCompositeOperation = 'screen'
+      const halo = scene!.createRadialGradient(19, -23.3, 0, 19, -23.3, 5.5)
+      halo.addColorStop(0, 'rgba(255,186,72,' + glow * .75 + ')'); halo.addColorStop(1, 'rgba(255,164,43,0)')
+      scene!.fillStyle = halo; scene!.fillRect(13, -29, 12, 12)
+      scene!.globalAlpha = glow; scene!.strokeStyle = '#ffe19b'; scene!.lineWidth = 1.9
+    }
+    scene!.beginPath(); scene!.moveTo(17.5, -24); scene!.lineTo(20, -23); scene!.stroke(); scene!.restore()
+  }
   function prepareSurface(source: HTMLImageElement) {
     if (surfaceSource === source) return
     surface?.destroy(); surface = null; surfaceSource = source
@@ -99,17 +120,24 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     }
     // Tiny registered optical footprints seed only the native amber pixels in each component.
     const components = new Float32Array(mask.width * mask.height)
-    for (const [cx, cy, rx, ry] of layout.lights) {
+    // Red/green identify the two devices; blue carries static sunset sky coverage.
+    const details = document.createElement('canvas'); details.width = mask.width; details.height = mask.height
+    const detailContext = details.getContext('2d')!, detailPixels = detailContext.createImageData(mask.width, mask.height)
+    for (const [lightIndex, [cx, cy, rx, ry]] of layout.lights.entries()) {
       for (let y = Math.max(0, Math.floor(cy - ry * 1.4)); y <= Math.min(mask.height - 1, Math.ceil(cy + ry * 1.4)); y++) {
         for (let x = Math.max(0, Math.floor(cx - rx * 1.4)); x <= Math.min(mask.width - 1, Math.ceil(cx + rx * 1.4)); x++) {
           const spot = clamp((1.4 - Math.hypot((x - cx) / rx, (y - cy) / ry)) * 2.5)
           components[y * mask.width + x] = Math.max(components[y * mask.width + x], spot)
+          const channel = (y * mask.width + x) * 4 + (lightIndex < 2 ? 0 : 1)
+          detailPixels.data[channel] = Math.max(detailPixels.data[channel], Math.round(spot * 255))
         }
       }
     }
     for (let y = 0; y < mask.height; y++) for (let x = 0; x < mask.width; x++) {
       const i = (y * mask.width + x) * 4, v = vegetation.data
-      v[i + 3] = 255
+      v[i + 3] = 255; detailPixels.data[i + 3] = 255
+      const skyEdge = clamp(distance[i / 4] / 12)
+      detailPixels.data[i + 2] = Math.round(255 * skyEdge * skyEdge * (3 - 2 * skyEdge))
       if (pixels.data[i] > 80 || pixels.data[i + 1] > 30 || pixels.data[i + 2] > 30) continue
       const neighbors = [Math.max(0, i - 12), Math.min(colors.length - 4, i + 12),
         Math.max(0, i - mask.width * 12), Math.min(colors.length - 4, i + mask.width * 12)]
@@ -140,12 +168,15 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       emission.data[i] = glow; emission.data[i + 1] = glow * .72; emission.data[i + 2] = glow * .28; emission.data[i + 3] = 255
     }
     pcx.putImageData(vegetation, 0, 0); ec.putImageData(emission, 0, 0)
-    surface = createSceneSurface(source, mask, plants)
+    detailContext.putImageData(detailPixels, 0, 0)
+    detailContext.filter = 'blur(2px)'; detailContext.drawImage(details, 0, 0); detailContext.filter = 'none'
+    surface = createSceneSurface(source, mask, plants, details)
     canvas.dataset.surface = surface ? 'webgl' : 'canvas'
   }
   const canAnimate = () => visible && pageVisible && !quiet && !disposed
   function syncVideo() {
-    const want = canAnimate() && lightAt(hour).night > .02
+    const light = lightAt(hour)
+    const want = canAnimate() && light.night * (1 - light.sunset * .98) > .02
     if (want === videoWanted) return
     videoWanted = want
     if (want) void video.play().catch(() => { canvas.dataset.videoFallback = 'true' })
@@ -209,10 +240,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     scene!.fillStyle = '#090e18'; scene!.fillRect(0, 0, width, height)
     if (source) {
       prepareSurface(source)
-      const animated = surface?.render(quiet ? 0 : elapsed, rain, runoff, fall)
+      const animated = surface?.render(quiet ? 0 : elapsed, rain, runoff, fall, light.sunset)
       scene!.save(); world(scene!)
       scene!.drawImage(animated || source, 0, 0, layout.width, layout.height)
       scene!.restore()
+      drawTail(quiet ? 0 : elapsed)
       scene!.save(); scene!.globalCompositeOperation = 'multiply'
       const tint = light.tint.map(v => Math.round(v)).join(',')
       scene!.fillStyle = 'rgba(' + tint + ',' + (.08 + light.night * .28) + ')'; scene!.fillRect(0, 0, width, height)
@@ -222,7 +254,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     // The existing night movie is used only above the registered skyline.
     sky!.clearRect(0, 0, layout.width, layout.height)
     if (light.night > .001 && (video.readyState >= 2 || (width < 700 ? nightSky : wideNightSky).naturalWidth)) {
-      sky!.globalAlpha = light.night * (1 - clouds * .98)
+      sky!.globalAlpha = light.night * (1 - light.sunset * .98) * (1 - clouds * .98)
       // Only upper crops are sampled from the old movie; its observer/equipment cannot enter the scene.
       const skyBottom = layout.height * .73
       const zoom = Math.max(layout.width / 560, skyBottom / 300)
@@ -239,7 +271,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       } else sky!.drawImage(nightSky, dx, 0, 560 * zoom, 300 * zoom)
       sky!.globalAlpha = 1
     }
-    if (light.warmth > .01) haze(layout.width * .67, layout.height * .63, layout.width * .53, layout.height * .43, light.warmth * .45, '255,184,111', sky!)
+    if (light.warmth > .01) haze(layout.width * .67, layout.height * .63, layout.width * .53, layout.height * .43, light.warmth * (light.sunset > .1 ? .22 : .45), light.sunset > .1 ? '255,117,57' : '255,184,111', sky!)
     for (let i = 0; i < 5; i++) {
       const x = ((i * layout.width * .26 + elapsed * (2.3 + i * .3)) % (layout.width * 1.4)) - layout.width * .2
       haze(x, layout.height * (.13 + i * .045), layout.width * .22, layout.height * .06, (.015 + clouds * .10) * (1 - light.night * .4), '201,215,222', sky!)
@@ -282,6 +314,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
         scene!.drawImage(glow || emissionFallback!, 0, 0, layout.width, layout.height); scene!.restore()
       }
     }
+    if (light.night > .001) drawTail(quiet ? 0 : elapsed, light.night * (1 - rain * .45) * companionLightPulse(quiet ? 0 : elapsed, true))
     // Three depth bands of valley mist; foreground objects stay legible.
     if (fog > .02) for (let i = 0; i < 3; i++) {
       haze(ox + layout.width * (.30 + i * .18 + Math.sin(elapsed * .035 + i) * .018) * scale, oy + layout.height * (.69 + i * .029) * scale,
@@ -360,7 +393,9 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     canvas.dataset.wetness = wet.toFixed(3); canvas.dataset.stream = runoff.toFixed(3); canvas.dataset.waterfall = fall.toFixed(3)
     canvas.dataset.renderTime = elapsed.toFixed(2)
     canvas.dataset.cameraScale = cameraScale.toFixed(6); canvas.dataset.cameraX = cameraX.toFixed(3); canvas.dataset.cameraY = cameraY.toFixed(3)
-    canvas.dataset.nightGlow = light.night.toFixed(3)
+    canvas.dataset.nightGlow = light.night.toFixed(3); canvas.dataset.sunset = light.sunset.toFixed(3)
+    canvas.dataset.tailAngle = catTailAngle(quiet ? 0 : elapsed).toFixed(4)
+    canvas.dataset.robotPulse = companionLightPulse(quiet ? 0 : elapsed).toFixed(4); canvas.dataset.catPulse = companionLightPulse(quiet ? 0 : elapsed, true).toFixed(4)
     if (!painted && source) { canvas.dataset.ready = 'true'; painted = true }
     syncVideo()
   }

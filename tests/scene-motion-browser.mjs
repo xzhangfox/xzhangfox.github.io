@@ -26,8 +26,7 @@ await page.addInitScript(() => {
     for (const [location, value] of overrides) this.uniform1f(location, value)
   }
 })
-async function snapshot() {
-  return page.locator('.hero-atmosphere-canvas').evaluate(canvas => {
+function sampleRegisteredFrame(canvas) {
     const w = innerWidth, h = innerHeight, mobile = w < 700
     const rw = mobile ? 720 : 1280, rh = mobile ? 1280 : 720
     const a = +canvas.dataset.cameraScale, tx = +canvas.dataset.cameraX, ty = +canvas.dataset.cameraY
@@ -49,8 +48,10 @@ async function snapshot() {
       }
       return [name, averaged]
     }))
-  })
 }
+async function snapshot() { return page.locator('.hero-atmosphere-canvas').evaluate(sampleRegisteredFrame) }
+// Inject the same sampler so controlled pairs render synchronously, without a camera frame between them.
+await page.addInitScript({content: 'window.__sceneSample = ' + sampleRegisteredFrame.toString()})
 function difference(a, b) { let sum = 0, n = 0; for (let i = 0; i < a.length; i++) if (i % 4 !== 3) { sum += Math.abs(a[i] - b[i]); n++ } return sum / n }
 try {
   await page.goto(base)
@@ -76,17 +77,21 @@ try {
     assert.ok(delta.sky > delta.rock * 1.3 && delta.sky > 1, 'clouds must drift independently of camera')
     assert.ok(delta.water > delta.rock * 1.3 && delta.water > 1, 'creek texture/reflections must flow')
     assert.ok(delta.fall > 1, 'waterfall must flow')
-    await page.evaluate(() => { window.__sceneSurfaceTime = 8; dispatchEvent(new Event('resize')) })
-    const windy = await snapshot()
-    await page.evaluate(() => { window.__sceneSurfaceTime = 0; dispatchEvent(new Event('resize')) })
-    const calm = await snapshot(), plantMovement = difference(windy.foreground, calm.foreground)
+    const { windy, calm } = await page.locator('.hero-atmosphere-canvas').evaluate(canvas => {
+      window.__sceneSurfaceTime = 8; dispatchEvent(new Event('resize'))
+      const windy = window.__sceneSample(canvas)
+      window.__sceneSurfaceTime = 0; dispatchEvent(new Event('resize'))
+      const calm = window.__sceneSample(canvas)
+      delete window.__sceneSurfaceTime; dispatchEvent(new Event('resize'))
+      return { windy, calm }
+    })
+    const plantMovement = difference(windy.foreground, calm.foreground)
     const distantMovement = difference(windy.ground, calm.ground), slopeMovement = difference(windy.slope, calm.slope)
     const fallMovement = difference(windy.fall, calm.fall)
     console.log('Breeze contribution:', { foreground: plantMovement, distantMeadow: distantMovement, mountains: slopeMovement })
     assert.ok(fallMovement > .8, 'waterfall texture must change independently of the camera')
     assert.ok(plantMovement > .6 && plantMovement > distantMovement * 2, 'only the closest flowers visibly sway')
     assert.ok(distantMovement < 1.2 && slopeMovement < 1.2, 'distant vegetation remains still apart from subpixel camera resampling')
-    await page.evaluate(() => { delete window.__sceneSurfaceTime })
   }
   await page.locator('.scene-trigger').click()
   await page.getByRole('combobox', { name: 'Weather', exact: true }).selectOption('storm')

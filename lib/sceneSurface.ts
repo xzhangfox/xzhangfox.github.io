@@ -1,19 +1,21 @@
 import * as THREE from 'three'
+import { companionLightPulse } from './sceneEnvironment'
 
 // One texture pass moves the photographed clouds and water, with separate foliage motion and nocturnal emission.
-export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElement, plants: HTMLCanvasElement) {
+export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElement, plants: HTMLCanvasElement, details: HTMLCanvasElement) {
   let renderer: THREE.WebGLRenderer
   try {
     renderer = new THREE.WebGLRenderer({ alpha: false, antialias: false, depth: false, stencil: false })
   } catch { return null }
   renderer.setPixelRatio(1)
   renderer.setSize(mask.width, mask.height, false)
-  const plate = new THREE.Texture(image), regions = new THREE.CanvasTexture(mask), meadow = new THREE.CanvasTexture(plants)
+  const plate = new THREE.Texture(image), regions = new THREE.CanvasTexture(mask), meadow = new THREE.CanvasTexture(plants), accents = new THREE.CanvasTexture(details)
   plate.needsUpdate = true
-  plate.minFilter = regions.minFilter = meadow.minFilter = THREE.LinearFilter
-  plate.generateMipmaps = regions.generateMipmaps = meadow.generateMipmaps = false
+  plate.minFilter = regions.minFilter = meadow.minFilter = accents.minFilter = THREE.LinearFilter
+  plate.generateMipmaps = regions.generateMipmaps = meadow.generateMipmaps = accents.generateMipmaps = false
   const uniforms = {
-    plate: { value: plate }, regions: { value: regions }, meadow: { value: meadow },
+    plate: { value: plate }, regions: { value: regions }, meadow: { value: meadow }, details: { value: accents },
+    componentPulse: { value: new THREE.Vector2(1, 1) }, sunset: { value: 0 },
     glowOnly: { value: 0 }, night: { value: 0 },
     time: { value: 0 }, rain: { value: 0 }, runoff: { value: 0 }, fall: { value: 0 },
   }
@@ -23,8 +25,9 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
     fragmentShader: `
       precision highp float;
       varying vec2 uvScene;
-      uniform sampler2D plate, regions, meadow;
-      uniform float time, rain, runoff, fall, glowOnly, night;
+      uniform sampler2D plate, regions, meadow, details;
+      uniform vec2 componentPulse;
+      uniform float time, rain, runoff, fall, glowOnly, night, sunset;
       vec4 photo(vec2 p) { return texture2D(plate, clamp(p,vec2(.001),vec2(.999))); }
       void main() {
         vec2 p=uvScene;
@@ -40,7 +43,9 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
         vec3 foliage=texture2D(meadow,plantUV).rgb;
         if(glowOnly>.5) {
           float shimmer=1.+foreground*(-.045+.045*sin(time*.55+p.x*143.+p.y*79.));
-          float emission=(foliage.g*.85+foliage.b*.9)*shimmer*night;
+          vec2 devices=texture2D(details,plantUV).rg;
+          float blink=1.+devices.r*(componentPulse.x-1.)+devices.g*(componentPulse.y-1.);
+          float emission=(foliage.g*.85+foliage.b*.9)*shimmer*night*blink;
           vec3 hue=mix(vec3(1.,.72,.28),vec3(.5,.88,1.),
                        smoothstep(.8,.98,sin(p.x*240.+p.y*113.)*.5+.5)*.28);
           gl_FragColor=vec4(hue*emission,1.);
@@ -51,7 +56,18 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
         vec2 wind=vec2(sin(time*.025)*.045 + sin(p.y*9.+time*.065)*.006,
                         sin(time*.037)*.009);
         float sky=region.r;
-        color=mix(color,photo(p+wind*sky).rgb,sky);
+        vec3 clouds=photo(p+wind*sky).rgb;
+        color=mix(color,clouds,sky);
+        // Continuous photographic grading also warms pale air at the ridge, without a colored cutout.
+        float horizon=smoothstep(.12,.76,1.-p.y);
+        float cloud=smoothstep(.38,.87,min(color.r,min(color.g,color.b)));
+        float air=smoothstep(-.02,.16,color.b-color.r*.85);
+        float sunsetSky=sunset*(1.-rain*.7)*mix(.35,1.,max(texture2D(details,p).b,air));
+        vec3 violet=vec3(color.r*.95+color.b*.2,color.g*.60+color.r*.08,color.b*.85+color.r*.1);
+        vec3 ember=vec3(color.r*1.18+color.b*.2,color.g*.64+color.r*.12,color.b*.32+color.r*.12);
+        vec3 gold=vec3(color.r*1.13+color.g*.15,color.g*.80+color.r*.10,color.b*.38+color.r*.13);
+        vec3 fireSky=mix(violet,mix(ember,gold,cloud),horizon);
+        color=mix(color,fireSky,sunsetSky);
         // Downstream travelling waves displace the actual creek texture and its reflections.
         float downstream=-p.y*130.+time*(2.8+runoff*2.);
         vec2 ripple=vec2(sin(downstream+p.x*75.),cos(downstream*.83-p.x*90.));
@@ -61,6 +77,7 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
         float glint=pow(max(0.,sin(downstream*2.2+sin(p.x*250.))*sin(p.x*390.-time*1.7)),12.);
         movingWater+=vec3(.75,.85,.9)*glint*(.22+rain*.07);
         movingWater*=1.+sin(downstream*.7+p.x*37.)*.075;
+        movingWater=mix(movingWater,vec3(1.,.53,.26)*dot(movingWater,vec3(.3,.5,.2)),sunset*.28);
         color=mix(color,movingWater,water);
         // Fine descending highlights and turbulence follow the registered waterfall channel.
         float foam=.5+.5*sin(p.y*520.+time*(12.+fall*9.)+sin(p.x*970.+time*2.));
@@ -75,28 +92,29 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
   scene.add(new THREE.Mesh(geometry, material))
   let lost = false
   const onLoss = (event: Event) => { event.preventDefault(); lost = true }
-  const onRestore = () => { lost = false; plate.needsUpdate = regions.needsUpdate = meadow.needsUpdate = true }
+  const onRestore = () => { lost = false; plate.needsUpdate = regions.needsUpdate = meadow.needsUpdate = accents.needsUpdate = true }
   renderer.domElement.addEventListener('webglcontextlost', onLoss)
   renderer.domElement.addEventListener('webglcontextrestored', onRestore)
   return {
-    render(time: number, rain: number, runoff: number, fall: number) {
+    render(time: number, rain: number, runoff: number, fall: number, sunset: number) {
       if (lost) return null
       uniforms.glowOnly.value = 0
       uniforms.time.value = time; uniforms.rain.value = rain
-      uniforms.runoff.value = runoff; uniforms.fall.value = fall
+      uniforms.runoff.value = runoff; uniforms.fall.value = fall; uniforms.sunset.value = sunset
       renderer.render(scene, camera)
       return renderer.domElement
     },
     glow(time: number, night: number) {
       if (lost) return null
       uniforms.time.value = time; uniforms.night.value = night; uniforms.glowOnly.value = 1
+      uniforms.componentPulse.value.set(companionLightPulse(time), companionLightPulse(time, true))
       renderer.render(scene, camera)
       return renderer.domElement
     },
     destroy() {
       renderer.domElement.removeEventListener('webglcontextlost', onLoss)
       renderer.domElement.removeEventListener('webglcontextrestored', onRestore)
-      plate.dispose(); regions.dispose(); meadow.dispose(); geometry.dispose(); material.dispose(); renderer.dispose(); renderer.forceContextLoss()
+      plate.dispose(); regions.dispose(); meadow.dispose(); accents.dispose(); geometry.dispose(); material.dispose(); renderer.dispose(); renderer.forceContextLoss()
     },
   }
 }
