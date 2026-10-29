@@ -10,7 +10,7 @@ function change(a,b){let sum=0,n=0;for(let i=0;i<a.length;i++)if(i%4!==3){sum+=M
 async function sample(page){return page.locator('.hero-atmosphere-canvas').evaluate(canvas=>{
  const mobile=innerWidth<700,rw=mobile?720:1280,rh=mobile?1280:720,a=+canvas.dataset.cameraScale,tx=+canvas.dataset.cameraX,ty=+canvas.dataset.cameraY
  const c=document.createElement('canvas');c.width=rw;c.height=rh;const ctx=c.getContext('2d');ctx.setTransform(1/a,0,0,1/a,-tx/a,-ty/a);ctx.drawImage(canvas,0,0,canvas.width,canvas.height,0,0,innerWidth,innerHeight)
- const areas=mobile?{sky:[240,180,240,250],robot:[344,1009,12,12],cat:[389,1019,12,12],tail:[405,1008,34,42],field:[140,1000,90,50]}:{sky:[430,100,320,180],robot:[548,564,14,14],cat:[604,575,12,12],tail:[620,558,34,40],field:[300,550,140,50]}
+ const areas=mobile?{sky:[240,180,240,250],fall:[596,834,15,42],robot:[344,1009,12,12],cat:[389,1019,12,12],tail:[405,1008,34,42],field:[140,1000,90,50]}:{sky:[430,100,320,180],fall:[949,412,20,45],robot:[548,564,14,14],cat:[604,575,12,12],tail:[620,558,34,40],field:[300,550,140,50]}
  return Object.fromEntries(Object.entries(areas).map(([name,rect])=>{const data=ctx.getImageData(...rect).data,sums=[0,0,0];let count=0;for(let i=0;i<data.length;i+=4){sums[0]+=data[i];sums[1]+=data[i+1];sums[2]+=data[i+2];count++}return[name,{mean:sums.map(v=>v/count),pixels:name==='sky'?[]:Array.from(data)}]}))
 })}
 try{
@@ -32,6 +32,13 @@ for(const [width,height] of [[1440,900],[390,844]]){
  const warming=(dusk.sky.mean[0]-dusk.sky.mean[2])-(day.sky.mean[0]-day.sky.mean[2])
  console.log(width,'sunset cloud warming:',warming.toFixed(2),dusk.sky.mean)
  assert.ok(warming>25,'dusk must visibly warm the existing cloud texture')
+ let waterPixels=0,waterWarmth=0
+ for(let i=0;i<day.fall.pixels.length;i+=4){
+  const r=day.fall.pixels[i],g=day.fall.pixels[i+1],b=day.fall.pixels[i+2]
+  if(Math.min(r,g,b)>120&&b>=r&&g>=r*.98){waterPixels++;waterWarmth+=dusk.fall.pixels[i]-dusk.fall.pixels[i+2]}
+ }
+ console.log(width,'dusk waterfall warmth:',waterWarmth/Math.max(1,waterPixels),'water pixels:',waterPixels)
+ assert.ok(waterPixels>8&&waterWarmth/waterPixels>12,'photographed waterfall foam must inherit warm dusk light, without a blue-white overlay')
  assert.equal(await page.locator('.hero-atmosphere-canvas').getAttribute('data-sunset'),'1.000')
  await page.getByRole('button',{name:'Close scene settings',exact:true}).click();await page.screenshot({path:'artifacts/sunset-verified-'+width+'.png'})
  await page.locator('.scene-trigger').click();await page.getByRole('button',{name:'Deep night',exact:true}).click();await page.getByRole('button',{name:'Close scene settings',exact:true}).click()

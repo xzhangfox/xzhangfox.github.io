@@ -25,7 +25,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   const backing = document.createElement('canvas'), frost = document.createElement('canvas'), skyLayer = document.createElement('canvas'), skyMask = document.createElement('canvas')
   const scene = backing.getContext('2d'), glass = frost.getContext('2d'), sky = skyLayer.getContext('2d'), maskContext = skyMask.getContext('2d')
   if (!scene || !glass || !sky || !maskContext) return null
-  const desktop = new Image(), portrait = new Image(), desktopFallback = new Image(), portraitFallback = new Image(), nightSky = new Image(), wideNightSky = new Image()
+  const desktop = new Image(), portrait = new Image(), desktopFallback = new Image(), portraitFallback = new Image(), nightSky = new Image(), wideNightSky = new Image(), tailImage = new Image()
   let master = desktop, fallback = desktopFallback
   let env = initial, quiet = reduced, disposed = false, visible = true, pageVisible = !document.hidden
   let width = 1, height = 1, dpr = 1, scale = 1, ox = 0, oy = 0, frame = 0, previous = 0, elapsed = 0
@@ -34,28 +34,26 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   let drops: Drop[] = [], streaks: Rain[] = []
   desktop.src = layouts.desktop.reference; portrait.src = layouts.mobile.reference
   desktopFallback.src = '/scene/valley-companions-v2-fallback.jpg'; portraitFallback.src = '/scene/valley-companions-v2-mobile-fallback.jpg'
-  nightSky.src = '/scene/night-sky.webp'; wideNightSky.src = '/scene/night-sky-wide.webp'
+  nightSky.src = '/scene/night-sky.webp'; wideNightSky.src = '/scene/night-sky-wide.webp'; tailImage.src = '/scene/robot-cat-tail.webp'
   const world = (c: CanvasRenderingContext2D) => { c.transform(cameraScale, 0, 0, cameraScale, cameraX, cameraY) }
-  const tail = new Path2D('M0 0C7 3 12 -3 12 -14C12 -21 16 -25 20 -23')
-  function drawTail(time: number, glow: number | null = null) {
+  function drawTail(time: number, glow: number | null = null, sunset = 0) {
     scene!.save(); world(scene!)
     scene!.translate(layout.tail[0], layout.tail[1]); scene!.rotate(catTailAngle(time)); scene!.scale(layout.tail[2], layout.tail[2])
-    scene!.lineCap = 'round'
     if (glow === null) {
-      scene!.filter = 'blur(.25px)'; scene!.strokeStyle = '#44484b'; scene!.lineWidth = 2.45; scene!.stroke(tail)
-      const metal = scene!.createLinearGradient(0, 0, 20, -23)
-      metal.addColorStop(0, '#8b8c83'); metal.addColorStop(.4, '#d6d1bf'); metal.addColorStop(.72, '#9e9f94'); metal.addColorStop(1, '#ded6bb')
-      scene!.strokeStyle = metal; scene!.lineWidth = 1.65; scene!.stroke(tail)
-      scene!.setLineDash([.6, 4.8]); scene!.strokeStyle = 'rgba(48,54,58,.5)'; scene!.lineWidth = 1.7; scene!.stroke(tail); scene!.setLineDash([])
-      scene!.strokeStyle = '#d8aa4a'; scene!.lineWidth = 1.4
+      if (tailImage.complete && tailImage.naturalWidth) {
+        scene!.imageSmoothingEnabled = true; scene!.imageSmoothingQuality = 'high'
+        if (sunset > .001) scene!.filter = 'sepia(' + sunset * .6 + ') saturate(' + (1 + sunset * .3) + ') brightness(' + (1 - sunset * .2) + ')'
+        scene!.beginPath(); scene!.rect(0, -28, 28, 33); scene!.clip()
+        scene!.drawImage(tailImage, -2, -21, 22, 23)
+      }
     } else {
       scene!.globalCompositeOperation = 'screen'
-      const halo = scene!.createRadialGradient(19, -23.3, 0, 19, -23.3, 5.5)
-      halo.addColorStop(0, 'rgba(255,186,72,' + glow * .75 + ')'); halo.addColorStop(1, 'rgba(255,164,43,0)')
-      scene!.fillStyle = halo; scene!.fillRect(13, -29, 12, 12)
-      scene!.globalAlpha = glow; scene!.strokeStyle = '#ffe19b'; scene!.lineWidth = 1.9
+      const halo = scene!.createRadialGradient(19, -20, 0, 19, -20, 4.2)
+      halo.addColorStop(0, 'rgba(255,186,72,' + glow * .7 + ')'); halo.addColorStop(1, 'rgba(255,164,43,0)')
+      scene!.fillStyle = halo; scene!.fillRect(14, -25, 10, 10)
+      scene!.fillStyle = 'rgba(255,225,159,' + glow * .7 + ')'; scene!.beginPath(); scene!.arc(19, -20, .8, 0, Math.PI * 2); scene!.fill()
     }
-    scene!.beginPath(); scene!.moveTo(17.5, -24); scene!.lineTo(20, -23); scene!.stroke(); scene!.restore()
+    scene!.restore()
   }
   function prepareSurface(source: HTMLImageElement) {
     if (surfaceSource === source) return
@@ -75,6 +73,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       const r = colors[i], g = colors[i + 1], b = colors[i + 2]
       const cool = clamp((b / Math.max(1, r) - .76) / .22) * clamp((Math.min(r, g, b) - 55) / 85)
       pixels.data[i + 1] *= cool
+    }
+    for (let i = 0; i < pixels.data.length; i += 4) if (pixels.data[i + 2]) {
+      const r = colors[i], g = colors[i + 1], b = colors[i + 2]
+      pixels.data[i + 2] *= clamp((Math.min(r, g, b) - 90) / 95) * clamp((b / Math.max(1, r) - .76) / .22)
     }
     // Keep the hard geometry for foliage classification, but give cloud advection a distance field.
     // The 128px smooth buffer exceeds the maximum 66px cloud travel, so samples cannot cross terrain.
@@ -229,12 +231,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       hour = env.hour; rain = env.rain; fog = env.fog
       wet = Math.max(wet, env.wetness); runoff = env.stream; fall = env.waterfall
     }
-    const cameraTime = quiet ? 0 : elapsed
-    // ~45–60s breath retains the travel amplitude at 45% of the previous speed; HTML stays fixed.
-    const cameraZoom = 1 + Math.sin(cameraTime * .126) * .010
-    cameraScale = scale * cameraZoom
-    cameraX = width * .5 + Math.sin(cameraTime * .1035) * width * .008 + cameraZoom * (ox - width * .5)
-    cameraY = height * .5 + Math.sin(cameraTime * .144) * height * .014 + cameraZoom * (oy - height * .5)
+    // The viewpoint is locked; only clouds, water and the small scene details animate.
+    cameraScale = scale; cameraX = ox; cameraY = oy
     const light = lightAt(hour), clouds = clamp(rain * .95 + fog * .14)
     const source = master.complete && master.naturalWidth ? master : fallback.complete && fallback.naturalWidth ? fallback : null
     scene!.fillStyle = '#090e18'; scene!.fillRect(0, 0, width, height)
@@ -244,7 +242,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       scene!.save(); world(scene!)
       scene!.drawImage(animated || source, 0, 0, layout.width, layout.height)
       scene!.restore()
-      drawTail(quiet ? 0 : elapsed)
+      drawTail(quiet ? 0 : elapsed, null, light.sunset)
       scene!.save(); scene!.globalCompositeOperation = 'multiply'
       const tint = light.tint.map(v => Math.round(v)).join(',')
       scene!.fillStyle = 'rgba(' + tint + ',' + (.08 + light.night * .28) + ')'; scene!.fillRect(0, 0, width, height)
@@ -303,7 +301,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     scene!.restore()
     scene!.save(); world(scene!)
     const fallEnd = width < 700 ? [592, 880] : [946, 464]
-    haze(fallEnd[0], fallEnd[1], 12 + fall * 15, 6 + fall * 8, (.05 + fall * .14) * (1 - light.night * .5))
+    haze(fallEnd[0], fallEnd[1], 12 + fall * 15, 6 + fall * 8, (.035 + fall * .1) * (1 - light.night * .5), light.sunset > .1 ? '244,192,147' : '201,215,222')
     scene!.restore()
     // Emission is added after night shading, then seen through the same mist/rain as the terrain.
     if (light.night > .001) {
@@ -394,6 +392,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     canvas.dataset.renderTime = elapsed.toFixed(2)
     canvas.dataset.cameraScale = cameraScale.toFixed(6); canvas.dataset.cameraX = cameraX.toFixed(3); canvas.dataset.cameraY = cameraY.toFixed(3)
     canvas.dataset.nightGlow = light.night.toFixed(3); canvas.dataset.sunset = light.sunset.toFixed(3)
+    canvas.dataset.tailReady = String(tailImage.complete && !!tailImage.naturalWidth)
     canvas.dataset.tailAngle = catTailAngle(quiet ? 0 : elapsed).toFixed(4)
     canvas.dataset.robotPulse = companionLightPulse(quiet ? 0 : elapsed).toFixed(4); canvas.dataset.catPulse = companionLightPulse(quiet ? 0 : elapsed, true).toFixed(4)
     if (!painted && source) { canvas.dataset.ready = 'true'; painted = true }
@@ -417,7 +416,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   }
   function pause() { cancelAnimationFrame(frame); frame = 0; video.pause(); videoWanted = false }
   function visibility() { pageVisible = !document.hidden; if (pageVisible) start(); else pause() }
-  const images = [desktop, portrait, desktopFallback, portraitFallback, nightSky, wideNightSky]
+  const images = [desktop, portrait, desktopFallback, portraitFallback, nightSky, wideNightSky, tailImage]
   images.forEach(image => { image.onload = () => { if (!disposed) { render(0); start() } } })
   desktop.onerror = portrait.onerror = () => { if (!disposed) { canvas.dataset.assetFallback = 'true'; render(0); start() } }
   video.addEventListener('loadeddata', start)

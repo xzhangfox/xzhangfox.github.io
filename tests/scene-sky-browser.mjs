@@ -46,7 +46,7 @@ try {
   await page.getByRole('button',{name:'Close scene settings',exact:true}).click()
   for(const [width,height] of [[1440,900],[390,844]]){
     await page.setViewportSize({width,height})
-    for(const time of [0,63,126,189,252]){
+    for(const time of [0,26,52,79,105]){
       const result=await page.evaluate(t=>{window.__cloudTime=t;dispatchEvent(new Event('resize'));return window.__cloudDiagnostics},time)
       console.log(width<700?'Portrait':'Desktop','cloud time',time,result)
       assert.ok(result.maxWeightStep<=6,'cloud blend must be smooth, without a second mountain-shaped edge')

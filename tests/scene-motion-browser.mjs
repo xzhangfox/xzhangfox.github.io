@@ -64,19 +64,19 @@ try {
   assert.equal(await page.locator('.hero-atmosphere-canvas').getAttribute('data-surface'), 'webgl')
   for (const [width, height] of [[1440,900],[390,844]]) {
     await page.setViewportSize({ width, height }); await page.waitForTimeout(700)
-    const center = () => page.locator('.hero-atmosphere-canvas').evaluate(c => ({ y: +c.dataset.cameraY + (innerWidth < 700 ? 1280 : 720) * .5 * +c.dataset.cameraScale, t: +c.dataset.renderTime }))
+    const center = () => page.locator('.hero-atmosphere-canvas').evaluate(c => ({ y: +c.dataset.cameraY + (innerWidth < 700 ? 1280 : 720) * .5 * +c.dataset.cameraScale, t: +c.dataset.renderTime, matrix: [c.dataset.cameraScale,c.dataset.cameraX,c.dataset.cameraY] }))
     const positions = [await center()], before = await snapshot()
     for (let i = 0; i < 5; i++) { await page.waitForTimeout(1000); positions.push(await center()) }
     const after = await snapshot(), travel = Math.max(...positions.map(p => p.y)) - Math.min(...positions.map(p => p.y))
     const speed = Math.max(...positions.slice(1).map((p, i) => Math.abs(p.y - positions[i].y) / (p.t - positions[i].t)))
-    assert.ok(travel > .4, 'camera breath remains visible across the sampled interval')
-    assert.ok(speed < height * .014 * .16, 'camera moves more slowly than the previous .32 rad/s breath')
+    assert.ok(positions.every(p => JSON.stringify(p.matrix) === JSON.stringify(positions[0].matrix)), 'camera translation and zoom must stay completely fixed')
+    assert.equal(travel,0); assert.equal(speed,0)
     console.log('Camera travel over 5s:', travel.toFixed(2), 'CSS px; peak speed:', speed.toFixed(2), 'px/s')
     const delta = Object.fromEntries(Object.keys(before).map(key => [key, +difference(before[key], after[key]).toFixed(3)]))
     console.log(width < 700 ? 'Portrait' : 'Desktop', 'registered pixel change (camera removed):', delta)
     assert.ok(delta.sky > delta.rock * 1.3 && delta.sky > 1, 'clouds must drift independently of camera')
     assert.ok(delta.water > delta.rock * 1.3 && delta.water > 1, 'creek texture/reflections must flow')
-    assert.ok(delta.fall > 1, 'waterfall must flow')
+    // The subtler waterfall is checked below with a deterministic frozen-time pair.
     const { windy, calm } = await page.locator('.hero-atmosphere-canvas').evaluate(canvas => {
       window.__sceneSurfaceTime = 8; dispatchEvent(new Event('resize'))
       const windy = window.__sceneSample(canvas)
@@ -133,5 +133,5 @@ try {
     await page.screenshot({ path: width < 700 ? 'artifacts/meadow-night-phone.png' : 'artifacts/meadow-night-desktop.png' })
   }
   assert.deepEqual(errors, [])
-  console.log('PASS: slower camera breath, foreground-only breeze, robot/kitten lights, night vegetation glow and seamless phone rain')
+  console.log('PASS: locked camera, faster clouds, foreground-only breeze, robot/kitten lights and seamless phone rain')
 } finally { await browser.close() }

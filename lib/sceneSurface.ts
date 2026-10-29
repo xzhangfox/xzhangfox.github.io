@@ -29,6 +29,17 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
       uniform vec2 componentPulse;
       uniform float time, rain, runoff, fall, glowOnly, night, sunset;
       vec4 photo(vec2 p) { return texture2D(plate, clamp(p,vec2(.001),vec2(.999))); }
+      vec3 evening(vec3 c, vec2 p) {
+        float horizon=smoothstep(.12,.76,1.-p.y);
+        float cloud=smoothstep(.38,.87,min(c.r,min(c.g,c.b)));
+        float air=smoothstep(-.02,.16,c.b-c.r*.85);
+        float sunsetSky=sunset*(1.-rain*.7)*mix(.35,1.,max(texture2D(details,p).b,air));
+        vec3 violet=vec3(c.r*.95+c.b*.2,c.g*.60+c.r*.08,c.b*.85+c.r*.1);
+        vec3 ember=vec3(c.r*1.18+c.b*.2,c.g*.64+c.r*.12,c.b*.32+c.r*.12);
+        vec3 gold=vec3(c.r*1.13+c.g*.15,c.g*.80+c.r*.10,c.b*.38+c.r*.13);
+        vec3 fireSky=mix(violet,mix(ember,gold,cloud),horizon);
+        return mix(c,fireSky,sunsetSky);
+      }
       void main() {
         vec2 p=uvScene;
         vec3 region=texture2D(regions,p).rgb;
@@ -53,21 +64,12 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
         }
         vec3 color=photo(plantUV).rgb;
         // A smooth distance field attenuates cloud drift before the skyline; no displaced binary edge.
-        vec2 wind=vec2(sin(time*.025)*.045 + sin(p.y*9.+time*.065)*.006,
-                        sin(time*.037)*.009);
+        vec2 wind=vec2(sin(time*.060)*.045 + sin(p.y*9.+time*.13)*.006,
+                        sin(time*.085)*.009);
         float sky=region.r;
         vec3 clouds=photo(p+wind*sky).rgb;
         color=mix(color,clouds,sky);
-        // Continuous photographic grading also warms pale air at the ridge, without a colored cutout.
-        float horizon=smoothstep(.12,.76,1.-p.y);
-        float cloud=smoothstep(.38,.87,min(color.r,min(color.g,color.b)));
-        float air=smoothstep(-.02,.16,color.b-color.r*.85);
-        float sunsetSky=sunset*(1.-rain*.7)*mix(.35,1.,max(texture2D(details,p).b,air));
-        vec3 violet=vec3(color.r*.95+color.b*.2,color.g*.60+color.r*.08,color.b*.85+color.r*.1);
-        vec3 ember=vec3(color.r*1.18+color.b*.2,color.g*.64+color.r*.12,color.b*.32+color.r*.12);
-        vec3 gold=vec3(color.r*1.13+color.g*.15,color.g*.80+color.r*.10,color.b*.38+color.r*.13);
-        vec3 fireSky=mix(violet,mix(ember,gold,cloud),horizon);
-        color=mix(color,fireSky,sunsetSky);
+        color=evening(color,p);
         // Downstream travelling waves displace the actual creek texture and its reflections.
         float downstream=-p.y*130.+time*(2.8+runoff*2.);
         vec2 ripple=vec2(sin(downstream+p.x*75.),cos(downstream*.83-p.x*90.));
@@ -77,12 +79,14 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
         float glint=pow(max(0.,sin(downstream*2.2+sin(p.x*250.))*sin(p.x*390.-time*1.7)),12.);
         movingWater+=vec3(.75,.85,.9)*glint*(.22+rain*.07);
         movingWater*=1.+sin(downstream*.7+p.x*37.)*.075;
-        movingWater=mix(movingWater,vec3(1.,.53,.26)*dot(movingWater,vec3(.3,.5,.2)),sunset*.28);
+        movingWater=evening(movingWater,p);
         color=mix(color,movingWater,water);
         // Fine descending highlights and turbulence follow the registered waterfall channel.
         float foam=.5+.5*sin(p.y*520.+time*(12.+fall*9.)+sin(p.x*970.+time*2.));
         vec3 falling=photo(p+vec2(sin(p.y*270.+time*2.)*.001, sin(time*4.+p.y*100.)*.003)*region.b).rgb;
-        falling=mix(falling,vec3(.86,.94,.98),(.12+foam*.22)*(1.+fall*.4));
+        // Modulate existing photographed foam; do not paint an opaque blue-white ribbon.
+        falling*=1.+(foam-.5)*(.16+fall*.08);
+        falling=evening(falling,p);
         color=mix(color,falling,region.b);
         gl_FragColor=vec4(color,1.);
       }
