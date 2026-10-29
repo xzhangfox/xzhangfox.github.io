@@ -11,6 +11,12 @@ const base = process.env.PORTFOLIO_TEST_URL || 'http://127.0.0.1:4177'
 fs.mkdirSync('artifacts', { recursive: true })
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
 await context.addInitScript(() => {
+  // A known dry starting point makes runoff checks independent of the test's real date/weather history.
+  const OriginalDate = Date, epoch = Date.parse('2026-01-01T19:00:00Z')
+  window.Date = class extends OriginalDate {
+    constructor(...args) { super(...(args.length ? args : [epoch + performance.now()])) }
+    static now() { return epoch + performance.now() }
+  }
   localStorage.setItem('portfolio-language', 'en')
   localStorage.setItem('portfolio-scene-motion', 'reduced')
 })
@@ -98,14 +104,31 @@ try {
   await quietContext.close()
 
   const fallbackContext = await browser.newContext({ reducedMotion: 'reduce' })
-  await fallbackContext.route('**/scene/valley-day.webp', route => route.abort())
+  await fallbackContext.route('**/scene/valley-robot-day.webp', route => route.abort())
   const fallbackPage = await fallbackContext.newPage()
   await fallbackPage.goto(base)
   await fallbackPage.locator('.hero-atmosphere-canvas[data-asset-fallback=true][data-ready=true]').waitFor()
   assert.ok(await fallbackPage.locator('h1').isVisible())
   await fallbackContext.close()
   assert.deepEqual(hydration, [])
-  console.log('PASS: OS motion preference, cross-timezone hydration and failed-landscape fallback')
+  const noGpuContext = await browser.newContext({ reducedMotion: 'reduce' })
+  await noGpuContext.addInitScript(() => {
+    const original = HTMLCanvasElement.prototype.getContext
+    HTMLCanvasElement.prototype.getContext = function(kind, ...args) {
+      if (kind === 'webgl' || kind === 'webgl2' || kind === 'experimental-webgl') return null
+      return original.call(this, kind, ...args)
+    }
+  })
+  const noGpuPage = await noGpuContext.newPage()
+  noGpuPage.on('pageerror', error => errors.push(error.message))
+  await noGpuPage.goto(base)
+  await noGpuPage.locator('.hero-atmosphere-canvas[data-surface=canvas][data-ready=true]').waitFor()
+  assert.ok(await noGpuPage.locator('h1').isVisible())
+  await noGpuPage.locator('#about').scrollIntoViewIfNeeded()
+  await noGpuPage.waitForTimeout(600)
+  await noGpuContext.close()
+  assert.deepEqual(errors, [])
+  console.log('PASS: OS motion preference, cross-timezone hydration, failed-landscape and unavailable-GPU fallbacks')
 } finally {
   await browser.close()
 }

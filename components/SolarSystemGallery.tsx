@@ -3896,16 +3896,23 @@ const SolarSystemGallery = forwardRef<SolarSystemGalleryHandle, SolarSystemGalle
 
   useEffect(() => {
     if (!containerRef.current) return
-    const app = new App(
-      containerRef.current,
-      planets,
-      aspect,
-      borderRadius,
-      (i, rect) => onItemClickRef.current?.(i, rect),
-      (i) => onActiveIndexChangeRef.current?.(i),
-      (id) => onActivePlanetChangeRef.current?.(id),
-      (info) => onHoverChangeRef.current?.(info)
-    )
+    let app: App
+    try {
+      app = new App(
+        containerRef.current,
+        planets,
+        aspect,
+        borderRadius,
+        (i, rect) => onItemClickRef.current?.(i, rect),
+        (i) => onActiveIndexChangeRef.current?.(i),
+        (id) => onActivePlanetChangeRef.current?.(id),
+        (info) => onHoverChangeRef.current?.(info)
+      )
+    } catch (error) {
+      // Optional 3D must not unmount the page when graphics acceleration is unavailable.
+      if (error instanceof Error && /webgl/i.test(error.message)) return
+      throw error
+    }
     appRef.current = app
     return () => {
       app.destroy()

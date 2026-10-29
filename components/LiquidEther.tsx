@@ -567,7 +567,13 @@ export default function LiquidEther({
     container.style.position = container.style.position || 'fixed'
     container.style.overflow = container.style.overflow || 'hidden'
 
-    const webgl = new WebGLManager({ $wrapper: container, autoDemo, autoSpeed, autoIntensity, takeoverDuration, autoResumeDelay, autoRampDuration })
+    let webgl: WebGLManager
+    try {
+      webgl = new WebGLManager({ $wrapper: container, autoDemo, autoSpeed, autoIntensity, takeoverDuration, autoResumeDelay, autoRampDuration })
+    } catch (error) {
+      if (error instanceof Error && /webgl/i.test(error.message)) return
+      throw error
+    }
     webglRef.current = webgl
     webgl.start()
 

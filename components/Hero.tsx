@@ -60,7 +60,7 @@ export default function Hero() {
       />
 
       {/* Content */}
-      <div className="relative text-center px-6 max-w-5xl mx-auto" style={{ zIndex: 2 }}>
+      <div className="relative text-center px-6 max-w-5xl mx-auto -translate-y-6 md:-translate-y-10" style={{ zIndex: 2 }}>
         {/* Subtle dark vignette behind text for readability */}
         <div
           className="absolute pointer-events-none"

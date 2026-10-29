@@ -1,18 +1,32 @@
 {
-  "asset": "/scene/valley-day.webp",
   "generator": "image_gen built-in",
-  "reference": "/videos/hero-poster.jpg",
-  "prompt": "Edit this portfolio background into its daylight master plate. Preserve EXACTLY the same locked camera, 16:9 landscape framing, valley silhouette, steep left and right dark rocky mountain slopes, distant central horizon near 70% down the image, and the exact position/scale of the single seated backpacked observer near center-bottom and all telescope/antenna/equipment to their left. This must read as the SAME PLACE and scene viewed by daylight. Replace ONLY the star-filled sky with a natural soft blue daytime sky and thin, elegant high clouds. Relight the existing rocks, yellow-white wildflower meadow, person and equipment with realistic diffuse daylight; flowers are natural flowers rather than luminous stars. Keep rich cinematic mineral rock texture, golden-green grass, and warm restrained highlights. Add a modest narrow natural creek flowing through the RIGHT HALF of the valley, from the distant right hillside toward the lower right corner, clearly behind/right of the observer and never across their equipment. It should meander naturally between rocks and flowers, reflect blue sky, broaden into a SMALL shallow pool at the far lower-right edge, and remain a secondary quiet detail. Integrate ONE tiny waterfall into the distant right rocky slope at approximately x=0.73,y=0.55, dropping a short distance toward the valley, connected plausibly to the creek. The waterfall is a small distant silver-white ribbon, not a giant waterfall. IMPORTANT: retain exact overall geometry and viewpoint. No new people, no buildings, no text, no labels, no UI. Photorealistic cinematic landscape with the reference's subtle dreamlike quality, detailed and calm. Entire image opaque, no transparency. This is an environmental background asset to later receive programmatic day-night/weather lighting.",
-  "size": [
-    1600,
-    900
+  "assets": [
+    {
+      "asset": "/scene/valley-robot-day.webp",
+      "size": [
+        1600,
+        900
+      ],
+      "reference": "/scene/valley-day.webp",
+      "prompt": "Preserve the alpine valley, sky, creek and waterfall. Remove astronaut and every equipment item. One small ivory robot, back to camera, sits cross-legged contemplating the sky in the meadow."
+    },
+    {
+      "asset": "/scene/valley-robot-mobile.webp",
+      "size": [
+        900,
+        1600
+      ],
+      "reference": "/scene/valley-robot-day.webp",
+      "prompt": "Recompose the same valley and robot as a contiguous 9:16 portrait with expansive sky, valley in lower third, waterfall on right slope and creek at lower right. No split, duplicated horizon or equipment."
+    }
   ],
-  "skyline": "lib/sceneSkyline.json",
+  "geometry": "lib/sceneSkyline.json",
   "notes": [
-    "Locked composition preserves the observer, equipment and valley; adds a right-hand creek and a distant small waterfall.",
-    "Original hero-bg.mp4 supplies the moving night sky. Ground geometry is shared across every phase.",
-    "Weather is an aesthetic deterministic cycle. No location, forecast API, camera or microphone is requested.",
-    "Browser-local time controls six phases; a manual preview is ephemeral.",
-    "Wetness, stream runoff and waterfall flow have distinct response and drying times."
+    "Desktop and phone each use one complete plate and projection. There is no split sky extension.",
+    "Clouds, creek reflections and waterfall highlights animate through registered GPU texture displacement, under one gently moving camera.",
+    "Original hero-bg.mp4 supplies only upper crops (desktop y=0..400, phone x=360..920/y=0..300), masked to the sky. Its observer and equipment are never sampled.",
+    "Small JPEG robot plates provide matching fallback compositions; a cropped night-sky image handles unavailable video.",
+    "Weather is a deterministic aesthetic cycle, not a forecast. Browser-local time controls the six phases.",
+    "Wetness, stream runoff and waterfall flow retain separate response times. OS/user reduced motion and offscreen pause are respected."
   ]
 }
