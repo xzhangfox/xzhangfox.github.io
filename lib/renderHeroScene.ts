@@ -55,7 +55,40 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       const cool = clamp((b / Math.max(1, r) - .76) / .22) * clamp((Math.min(r, g, b) - 55) / 85)
       pixels.data[i + 1] *= cool
     }
-    m.putImageData(pixels, 0, 0)
+    // Keep the hard geometry for foliage classification, but give cloud advection a distance field.
+    // The 128px smooth buffer exceeds the maximum 66px cloud travel, so samples cannot cross terrain.
+    const cloudPixels = new Uint8ClampedArray(pixels.data), distance = new Float32Array(mask.width * mask.height)
+    const w = mask.width, h = mask.height, diagonal = Math.SQRT2
+    for (let n = 0; n < distance.length; n++) {
+      const i = n * 4, r = colors[i], g = colors[i + 1], b = colors[i + 2]
+      const skyColor = (b > r + 12 && b > g * 1.015 && b > 110) || (Math.min(r, g, b) > 170 && b > r * .72 && g > r * .8)
+      distance[n] = pixels.data[i] > 200 && skyColor ? 20000 : 0
+    }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const n = y * w + x
+      let d = distance[n]
+      if (x) d = Math.min(d, distance[n - 1] + 1)
+      if (y) {
+        d = Math.min(d, distance[n - w] + 1)
+        if (x) d = Math.min(d, distance[n - w - 1] + diagonal)
+        if (x + 1 < w) d = Math.min(d, distance[n - w + 1] + diagonal)
+      }
+      distance[n] = d
+    }
+    for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
+      const n = y * w + x
+      let d = distance[n]
+      if (x + 1 < w) d = Math.min(d, distance[n + 1] + 1)
+      if (y + 1 < h) {
+        d = Math.min(d, distance[n + w] + 1)
+        if (x) d = Math.min(d, distance[n + w - 1] + diagonal)
+        if (x + 1 < w) d = Math.min(d, distance[n + w + 1] + diagonal)
+      }
+      distance[n] = d
+      const t = clamp(d / 128)
+      cloudPixels[n * 4] = Math.round(255 * t * t * (3 - 2 * t))
+    }
+    m.putImageData(new ImageData(cloudPixels, w, h), 0, 0)
     // RGB packs a soft foliage mask, sharp flower emissions, and their optical bloom.
     const plants = document.createElement('canvas'); plants.width = mask.width; plants.height = mask.height
     const pcx = plants.getContext('2d')!, vegetation = pcx.createImageData(mask.width, mask.height)

@@ -16,7 +16,6 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
     plate: { value: plate }, regions: { value: regions }, meadow: { value: meadow },
     glowOnly: { value: 0 }, night: { value: 0 },
     time: { value: 0 }, rain: { value: 0 }, runoff: { value: 0 }, fall: { value: 0 },
-    texel: { value: new THREE.Vector2(1 / mask.width, 1 / mask.height) },
   }
   const material = new THREE.ShaderMaterial({
     uniforms, depthTest: false, depthWrite: false,
@@ -26,7 +25,6 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
       varying vec2 uvScene;
       uniform sampler2D plate, regions, meadow;
       uniform float time, rain, runoff, fall, glowOnly, night;
-      uniform vec2 texel;
       vec4 photo(vec2 p) { return texture2D(plate, clamp(p,vec2(.001),vec2(.999))); }
       void main() {
         vec2 p=uvScene;
@@ -49,14 +47,10 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
           return;
         }
         vec3 color=photo(plantUV).rgb;
-        // Fade displacement at the skyline so rocks never bleed into the moving clouds.
+        // A smooth distance field attenuates cloud drift before the skyline; no displaced binary edge.
         vec2 wind=vec2(sin(time*.025)*.045 + sin(p.y*9.+time*.065)*.006,
                         sin(time*.037)*.009);
         float sky=region.r;
-        sky*=texture2D(regions,p+vec2(texel.x*16.,0.)).r;
-        sky*=texture2D(regions,p-vec2(texel.x*16.,0.)).r;
-        sky*=texture2D(regions,p-vec2(0.,texel.y*20.)).r;
-        sky*=texture2D(regions,clamp(p+wind,vec2(0.),vec2(1.))).r;
         color=mix(color,photo(p+wind*sky).rgb,sky);
         // Downstream travelling waves displace the actual creek texture and its reflections.
         float downstream=-p.y*130.+time*(2.8+runoff*2.);
