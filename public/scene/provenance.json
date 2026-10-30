@@ -42,6 +42,9 @@
     "Reduced motion fixes the tail at rest and the indicator lights at steady brightness.",
     "The camera projection is now fixed at all times. Cloud drift frequency is increased about 2.4 times, with the same bounded displacement and terrain-safe distance field.",
     "The independent transparent tail sprite replaces the outlined procedural tail; its occasional gesture and tip light follow the existing attachment point.",
-    "Terrain, stream and waterfall use the same sunset grading. Waterfall animation modulates photographed foam and excludes dark border rocks instead of adding a blue-white ribbon."
+    "Terrain, stream and waterfall use the same sunset grading. Waterfall animation modulates photographed foam and excludes dark border rocks instead of adding a blue-white ribbon.",
+    "Dreamcore rendering resolves fine terrain texture once in a registered Canvas plate; sky, waterfall, stream and companions are preserved. No new scene geometry or camera motion.",
+    "Nocturnal meadow emission uses multi-scale continuous light pools in lilac and mint, instead of sharp flower-tip points. Device amber cores retain separate blink channels.",
+    "Broad low-contrast valley air and diffuse creek glints reduce hard microcontrast; this styling also has a static Canvas fallback."
   ]
 }
