@@ -64,8 +64,8 @@ body {
 
 .glass-card {
   background: rgba(26, 26, 26, 0.85);
-  backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   border: 1px solid rgba(201, 168, 76, 0.15);
 }
 
@@ -169,13 +169,13 @@ body {
 .hero-atmosphere-canvas{display:block;width:100%;height:100%}
 .scene-controls{position:fixed;right:max(22px,env(safe-area-inset-right));bottom:max(24px,env(safe-area-inset-bottom));z-index:45}
 .scene-controls[hidden]{display:none}
-.scene-trigger{display:flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid rgba(201,168,76,.24);border-radius:999px;background:rgba(9,14,21,.66);backdrop-filter:blur(16px);color:#d6c49b;font-size:10px;letter-spacing:.025em;box-shadow:0 6px 30px #0002;transition:background .2s,transform .15s}
-.scene-trigger:hover{background:rgba(18,24,33,.92)}
+.scene-trigger{display:flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid rgba(201,168,76,.24);border-radius:999px;background:linear-gradient(135deg,#ffffff0d,transparent 65%),rgba(9,14,21,.56);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);color:#d6c49b;font-size:10px;letter-spacing:.025em;box-shadow:inset 0 1px 0 #ffffff12,0 6px 30px #0002;transition:background .2s,transform .15s}
+.scene-trigger:hover{background:rgba(18,24,33,.76)}
 .scene-trigger:active,.scene-phase-grid button:active,.scene-close:active,.scene-restore:active{transform:scale(.97)}
 .scene-clock{font-variant-numeric:tabular-nums;color:#9cabbc}
 .scene-dot{width:3px;height:3px;border-radius:50%;background:#c9a84c88}
 .scene-weather-summary{color:#9eabbc}
-.scene-panel{position:absolute;right:0;bottom:calc(100% + 12px);width:310px;max-width:calc(100vw - 32px);max-height:calc(100svh - 120px);overflow-y:auto;border:1px solid #ffffff20;border-radius:20px;background:linear-gradient(135deg,rgba(22,29,39,.97),rgba(9,14,23,.98));backdrop-filter:blur(22px);box-shadow:0 20px 65px #0007;padding:20px}
+.scene-panel{position:absolute;right:0;bottom:calc(100% + 12px);width:310px;max-width:calc(100vw - 32px);max-height:calc(100svh - 120px);overflow-y:auto;border:1px solid #ffffff20;border-radius:20px;background:linear-gradient(135deg,rgba(35,43,55,.78),rgba(9,14,23,.82));-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);box-shadow:inset 0 1px 0 #ffffff14,0 20px 65px #0006;padding:20px}
 .scene-panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:22px}
 .scene-panel-head h2{font-size:14px;font-weight:500;color:#ecdbb6;letter-spacing:.025em;margin-bottom:5px}
 .scene-panel-head p{font-size:10px;color:#95a3b4;line-height:1.5}
@@ -198,3 +198,31 @@ body {
 @media(prefers-reduced-motion:reduce){.scene-trigger,.scene-panel *{transition:none!important}}
 
 @media(max-width:699px){.hero-atmosphere{background-image:url('/scene/valley-companions-v2-mobile-fallback.jpg')}}
+
+/* Flux glass is local to the controls; the landscape remains sharp. */
+.portfolio-glass-header {
+  background: linear-gradient(120deg, rgba(255,255,255,.045), transparent 65%), rgba(9,14,21,.34);
+  border-bottom: 1px solid rgba(231,213,168,.12);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+.portfolio-glass-header-scrolled { background-color: rgba(9,14,21,.76); }
+.portfolio-glass-menu { background-color: rgba(9,14,21,.88); }
+.portfolio-glass-action {
+  background: linear-gradient(135deg, rgba(255,255,255,.07), transparent 65%), rgba(9,14,21,.48);
+  border: 1px solid rgba(201,168,76,.38);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 8px 24px rgba(0,0,0,.16);
+}
+.portfolio-glass-action:hover { background-color: rgba(25,31,39,.72); border-color: rgba(201,168,76,.7); }
+.portfolio-glass-action:focus-visible { outline: 2px solid #e8c15a; outline-offset: 4px; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .portfolio-glass-header, .portfolio-glass-action, .scene-trigger, .scene-panel { background-color: #111923; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .portfolio-glass-header, .portfolio-glass-menu, .portfolio-glass-action, .scene-trigger, .scene-panel {
+    background: #111923; -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+}

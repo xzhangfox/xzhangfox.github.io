@@ -138,7 +138,7 @@ export default function Hero() {
           </button>
           <button
             onClick={() => document.querySelector('#contact')?.scrollIntoView({ behavior: 'smooth' })}
-            className="px-7 py-3 border border-gold/40 text-gold font-semibold text-sm rounded-xl hover:bg-gold/10 hover:border-gold/70 transition-all duration-200 backdrop-blur-sm"
+            className="portfolio-glass-action px-7 py-3 text-gold font-semibold text-sm rounded-xl transition-colors duration-200"
           >
             {t.hero.getInTouch}
           </button>
