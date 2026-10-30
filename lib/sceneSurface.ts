@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { companionLightPulse } from './sceneEnvironment'
 
 // One texture pass moves the photographed clouds and water, with separate foliage motion and nocturnal emission.
-export function createSceneSurface(image: HTMLCanvasElement, mask: HTMLCanvasElement, plants: HTMLCanvasElement, details: HTMLCanvasElement) {
+export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElement, plants: HTMLCanvasElement, details: HTMLCanvasElement) {
   let renderer: THREE.WebGLRenderer
   try {
     renderer = new THREE.WebGLRenderer({ alpha: false, antialias: false, depth: false, stencil: false })
@@ -53,15 +53,12 @@ export function createSceneSurface(image: HTMLCanvasElement, mask: HTMLCanvasEle
         vec2 plantUV=clamp(p+sway,vec2(.001),vec2(.999));
         vec3 foliage=texture2D(meadow,plantUV).rgb;
         if(glowOnly>.5) {
-          float shimmer=1.+foreground*(-.015+.015*sin(time*.24+p.x*8.+p.y*5.));
+          float shimmer=1.+foreground*(-.045+.045*sin(time*.55+p.x*143.+p.y*79.));
           vec2 devices=texture2D(details,plantUV).rg;
           float blink=1.+devices.r*(componentPulse.x-1.)+devices.g*(componentPulse.y-1.);
-          float pool=sin(p.x*28.+sin(p.y*17.)*1.4)*sin(p.y*24.+sin(p.x*15.));
-          float grouping=mix(.22+.78*smoothstep(-.5,.7,pool),1.,max(devices.r,devices.g));
-          float emission=(foliage.g*.6+foliage.b*.9)*grouping*shimmer*night*blink;
-          vec3 hue=mix(vec3(.72,.69,1.),vec3(.55,.95,.86),
-                       smoothstep(.2,.85,sin(p.x*8.+p.y*5.)*.5+.5));
-          hue=mix(hue,vec3(1.,.72,.28),max(devices.r,devices.g));
+          float emission=(foliage.g*.85+foliage.b*.9)*shimmer*night*blink;
+          vec3 hue=mix(vec3(1.,.72,.28),vec3(.5,.88,1.),
+                       smoothstep(.8,.98,sin(p.x*240.+p.y*113.)*.5+.5)*.28);
           gl_FragColor=vec4(hue*emission,1.);
           return;
         }
@@ -79,8 +76,8 @@ export function createSceneSurface(image: HTMLCanvasElement, mask: HTMLCanvasEle
         ripple*=vec2(.0028,.0035)*(1.+runoff*.8);
         float water=region.g;
         vec3 movingWater=photo(p+ripple*water).rgb;
-        float glint=pow(max(0.,sin(downstream*2.2+sin(p.x*250.))*sin(p.x*390.-time*1.7)),6.);
-        movingWater+=vec3(.75,.85,.9)*glint*(.10+rain*.04);
+        float glint=pow(max(0.,sin(downstream*2.2+sin(p.x*250.))*sin(p.x*390.-time*1.7)),12.);
+        movingWater+=vec3(.75,.85,.9)*glint*(.22+rain*.07);
         movingWater*=1.+sin(downstream*.7+p.x*37.)*.075;
         movingWater=evening(movingWater,p);
         color=mix(color,movingWater,water);

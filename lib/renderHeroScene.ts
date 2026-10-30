@@ -20,7 +20,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   let layout = layouts.desktop
   let SKY = new Path2D(layout.sky), GROUND = new Path2D(), WATER = new Path2D(layout.water), FALL = new Path2D(layout.fall)
   let surface: ReturnType<typeof createSceneSurface> = null, surfaceSource: HTMLImageElement | null = null
-  let emissionFallback: HTMLCanvasElement | null = null, paintedPlate: HTMLCanvasElement | null = null
+  let emissionFallback: HTMLCanvasElement | null = null
   let cameraScale = 1, cameraX = 0, cameraY = 0
   const backing = document.createElement('canvas'), frost = document.createElement('canvas'), skyLayer = document.createElement('canvas'), skyMask = document.createElement('canvas')
   const scene = backing.getContext('2d'), glass = frost.getContext('2d'), sky = skyLayer.getContext('2d'), maskContext = skyMask.getContext('2d')
@@ -112,7 +112,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       cloudPixels[n * 4] = Math.round(255 * t * t * (3 - 2 * t))
     }
     m.putImageData(new ImageData(cloudPixels, w, h), 0, 0)
-    // RGB packs foliage motion, cohesive meadow light, and broad optical bloom.
+    // RGB packs a soft foliage mask, sharp flower emissions, and their optical bloom.
     const plants = document.createElement('canvas'); plants.width = mask.width; plants.height = mask.height
     const pcx = plants.getContext('2d')!, vegetation = pcx.createImageData(mask.width, mask.height)
     const leafAt = (i: number) => {
@@ -144,8 +144,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       const neighbors = [Math.max(0, i - 12), Math.min(colors.length - 4, i + 12),
         Math.max(0, i - mask.width * 12), Math.min(colors.length - 4, i + mask.width * 12)]
       const leaf = leafAt(i), nearby = neighbors.reduce((sum, n) => sum + leafAt(n), 0) / 4
+      const luma = (colors[i] + colors[i + 1] + colors[i + 2]) / 3
+      const average = neighbors.reduce((sum, n) => sum + (colors[n] + colors[n + 1] + colors[n + 2]) / 3, 0) / 4
+      const tip = clamp((Math.max(colors[i], colors[i + 1], colors[i + 2]) - 150) / 95) * clamp((luma - average + 8) / 55)
       v[i] = Math.max(leaf, nearby * .85) * 255
-      let emission = clamp((leaf * .45 + nearby * .55) * .22)
+      let emission = clamp(leaf * .09 + tip * Math.max(leaf, nearby) * .95)
       const component = components[i / 4]
       if (component > 0) {
         const r = colors[i], g = colors[i + 1], b = colors[i + 2]
@@ -159,44 +162,17 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     const soft = document.createElement('canvas'); soft.width = mask.width; soft.height = mask.height
     const sc = soft.getContext('2d')!; sc.filter = 'blur(3px)'; sc.drawImage(plants, 0, 0)
     const blurred = sc.getImageData(0, 0, mask.width, mask.height).data
-    sc.clearRect(0, 0, mask.width, mask.height); sc.filter = 'blur(12px)'; sc.drawImage(plants, 0, 0)
-    const bloom = sc.getImageData(0, 0, mask.width, mask.height).data
     emissionFallback = document.createElement('canvas'); emissionFallback.width = mask.width; emissionFallback.height = mask.height
     const ec = emissionFallback.getContext('2d')!, emission = ec.createImageData(mask.width, mask.height)
     for (let i = 0; i < vegetation.data.length; i += 4) {
-      // Plant light forms broad pools; native device pixels keep their own small crisp cores.
-      vegetation.data[i] = blurred[i]
-      const device = components[i / 4] > 0 ? vegetation.data[i + 1] : 0
-      vegetation.data[i + 1] = Math.max(device, blurred[i + 1] * .22 + bloom[i + 1] * .78)
-      vegetation.data[i + 2] = bloom[i + 1] * 1.15
-      const glow = clamp((vegetation.data[i + 1] * .6 + vegetation.data[i + 2] * .9) / 255) * 255
-      const amber = components[i / 4] > 0
-      emission.data[i] = glow * (amber ? 1 : .7); emission.data[i + 1] = glow * (amber ? .72 : .83); emission.data[i + 2] = glow * (amber ? .28 : 1); emission.data[i + 3] = 255
+      vegetation.data[i] = blurred[i]; vegetation.data[i + 2] = blurred[i + 1]
+      const glow = clamp((vegetation.data[i + 1] * .85 + vegetation.data[i + 2] * .9) / 255) * 255
+      emission.data[i] = glow; emission.data[i + 1] = glow * .72; emission.data[i + 2] = glow * .28; emission.data[i + 3] = 255
     }
     pcx.putImageData(vegetation, 0, 0); ec.putImageData(emission, 0, 0)
     detailContext.putImageData(detailPixels, 0, 0)
     detailContext.filter = 'blur(2px)'; detailContext.drawImage(details, 0, 0); detailContext.filter = 'none'
-    // Resolve fine photographic grit once, rather than blurring the entire moving scene.
-    // The registered sky, water and companions retain their geometry and detail.
-    paintedPlate = document.createElement('canvas'); paintedPlate.width = w; paintedPlate.height = h
-    const paint = paintedPlate.getContext('2d')!
-    paint.filter = 'blur(2.2px)'; paint.drawImage(photo, 0, 0); paint.filter = 'none'
-    const softened = paint.getImageData(0, 0, w, h)
-    const xs = layout.lights.map(l => l[0]), ys = layout.lights.map(l => l[1])
-    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2 + 4
-    const rx = (Math.max(...xs) - Math.min(...xs)) / 2 + 28, ry = (Math.max(...ys) - Math.min(...ys)) / 2 + 28
-    const pastelLift = [12, 14, 22]
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4
-      const companion = 1 - clamp((Math.hypot((x - cx) / rx, (y - cy) / ry) - .8) * 3)
-      const terrain = (1 - pixels.data[i] / 255) * (1 - Math.max(pixels.data[i + 1], pixels.data[i + 2]) / 255) * (1 - companion)
-      for (let c = 0; c < 3; c++) {
-        const softColor = softened.data[i + c] * .88 + pastelLift[c]
-        softened.data[i + c] = colors[i + c] * (1 - terrain * .86) + softColor * terrain * .86
-      }
-    }
-    paint.putImageData(softened, 0, 0)
-    surface = createSceneSurface(paintedPlate, mask, plants, details)
+    surface = createSceneSurface(source, mask, plants, details)
     canvas.dataset.surface = surface ? 'webgl' : 'canvas'
   }
   const canAnimate = () => visible && pageVisible && !quiet && !disposed
@@ -264,7 +240,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       prepareSurface(source)
       const animated = surface?.render(quiet ? 0 : elapsed, rain, runoff, fall, light.sunset)
       scene!.save(); world(scene!)
-      scene!.drawImage(animated || paintedPlate || source, 0, 0, layout.width, layout.height)
+      scene!.drawImage(animated || source, 0, 0, layout.width, layout.height)
       scene!.restore()
       drawTail(quiet ? 0 : elapsed, null, light.sunset)
       scene!.save(); scene!.globalCompositeOperation = 'multiply'
@@ -337,10 +313,6 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       }
     }
     if (light.night > .001) drawTail(quiet ? 0 : elapsed, light.night * (1 - rain * .45) * companionLightPulse(quiet ? 0 : elapsed, true))
-    // Still, low-contrast lilac air separates the valley depth without adding sparkling particles.
-    scene!.save(); world(scene!)
-    haze(layout.width * .53, layout.height * .69, layout.width * .34, layout.height * .075, .035 + light.night * .07, light.night > .5 ? '141,153,211' : '214,211,232')
-    scene!.restore()
     // Three depth bands of valley mist; foreground objects stay legible.
     if (fog > .02) for (let i = 0; i < 3; i++) {
       haze(ox + layout.width * (.30 + i * .18 + Math.sin(elapsed * .035 + i) * .018) * scale, oy + layout.height * (.69 + i * .029) * scale,
