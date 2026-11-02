@@ -1,6 +1,5 @@
-import layouts from './sceneSkyline.json'
 import { createSceneSurface } from './sceneSurface'
-import { approach, catTailAngle, companionLightPulse, clamp, lightAt, type SceneEnvironment } from './sceneEnvironment'
+import { approach, clamp, lightAt, mix, type SceneEnvironment, type RGB } from './sceneEnvironment'
 
 type Drop = { x: number; y: number; r: number; age: number; wait: number; speed: number; seed: number; trail: { x: number; y: number }[] }
 type Rain = { x: number; y: number; speed: number; depth: number }
@@ -9,327 +8,227 @@ export interface SceneController {
   setVisible: (visible: boolean) => void
   destroy: () => void
 }
-// Geometry is registered separately for the complete desktop and portrait compositions.
-const NOISE = (n: number) => { const r = Math.sin(n * 97.13 + 113.79) * 43758.54; return r - Math.floor(r) }
+const noise = (n: number) => { const v = Math.sin(n * 97.13 + 113.79) * 43758.54; return v - Math.floor(v) }
+const blend = (a: RGB, b: RGB, t: number) => a.map((v, i) => Math.round(mix(v, b[i], t))) as [number, number, number]
+const rgb = (a: RGB) => 'rgb(' + a.join(',') + ')'
 
-// ponytail: Texture displacement animates this fixed viewpoint; walking through the valley
-// would require authored depth/3D geometry instead of a single photographic plate.
 export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoElement, initial: SceneEnvironment, reduced: boolean): SceneController | null {
   const ctx = canvas.getContext('2d', { alpha: false })
   if (!ctx) return null
-  let layout = layouts.desktop
-  let SKY = new Path2D(layout.sky), GROUND = new Path2D(), WATER = new Path2D(layout.water), FALL = new Path2D(layout.fall)
-  let surface: ReturnType<typeof createSceneSurface> = null, surfaceSource: HTMLImageElement | null = null
-  let emissionFallback: HTMLCanvasElement | null = null
-  let cameraScale = 1, cameraX = 0, cameraY = 0
-  const backing = document.createElement('canvas'), frost = document.createElement('canvas'), skyLayer = document.createElement('canvas'), skyMask = document.createElement('canvas')
-  const scene = backing.getContext('2d'), glass = frost.getContext('2d'), sky = skyLayer.getContext('2d'), maskContext = skyMask.getContext('2d')
-  if (!scene || !glass || !sky || !maskContext) return null
-  const desktop = new Image(), portrait = new Image(), desktopFallback = new Image(), portraitFallback = new Image(), nightSky = new Image(), wideNightSky = new Image(), tailImage = new Image()
-  let master = desktop, fallback = desktopFallback
+  const backing = document.createElement('canvas'), frost = document.createElement('canvas'), skyLayer = document.createElement('canvas')
+  const scene = backing.getContext('2d'), glass = frost.getContext('2d'), sky = skyLayer.getContext('2d')
+  if (!scene || !glass || !sky) return null
+  const bed = new Image(), cloud = new Image(), meadow = new Image(), nightSky = new Image()
+  const litBed = document.createElement('canvas'), litCloud = document.createElement('canvas')
+  let lightingKey = '', surface: ReturnType<typeof createSceneSurface> = null, surfaceTried = false
   let env = initial, quiet = reduced, disposed = false, visible = true, pageVisible = !document.hidden
-  let width = 1, height = 1, dpr = 1, scale = 1, ox = 0, oy = 0, frame = 0, previous = 0, elapsed = 0
-  let hour = env.hour, rain = env.rain, fog = env.fog, wet = env.wetness, runoff = env.stream, fall = env.waterfall
-  let painted = false, videoWanted = false
+  let width = 1, height = 1, dpr = 1, frame = 0, previous = 0, elapsed = 0, videoWanted = false
+  let hour = env.hour, rain = env.rain, fog = env.fog, wet = env.wetness
   let drops: Drop[] = [], streaks: Rain[] = []
-  desktop.src = layouts.desktop.reference; portrait.src = layouts.mobile.reference
-  desktopFallback.src = '/scene/valley-companions-v2-fallback.jpg'; portraitFallback.src = '/scene/valley-companions-v2-mobile-fallback.jpg'
-  nightSky.src = '/scene/night-sky.webp'; wideNightSky.src = '/scene/night-sky-wide.webp'; tailImage.src = '/scene/robot-cat-tail.webp'
-  const world = (c: CanvasRenderingContext2D) => { c.transform(cameraScale, 0, 0, cameraScale, cameraX, cameraY) }
-  function drawTail(time: number, glow: number | null = null, sunset = 0) {
-    scene!.save(); world(scene!)
-    scene!.translate(layout.tail[0], layout.tail[1]); scene!.rotate(catTailAngle(time)); scene!.scale(layout.tail[2], layout.tail[2])
-    if (glow === null) {
-      if (tailImage.complete && tailImage.naturalWidth) {
-        scene!.imageSmoothingEnabled = true; scene!.imageSmoothingQuality = 'high'
-        if (sunset > .001) scene!.filter = 'sepia(' + sunset * .6 + ') saturate(' + (1 + sunset * .3) + ') brightness(' + (1 - sunset * .2) + ')'
-        scene!.beginPath(); scene!.rect(0, -28, 28, 33); scene!.clip()
-        scene!.drawImage(tailImage, -2, -21, 22, 23)
-      }
-    } else {
-      scene!.globalCompositeOperation = 'screen'
-      const halo = scene!.createRadialGradient(19, -20, 0, 19, -20, 4.2)
-      halo.addColorStop(0, 'rgba(255,186,72,' + glow * .7 + ')'); halo.addColorStop(1, 'rgba(255,164,43,0)')
-      scene!.fillStyle = halo; scene!.fillRect(14, -25, 10, 10)
-      scene!.fillStyle = 'rgba(255,225,159,' + glow * .7 + ')'; scene!.beginPath(); scene!.arc(19, -20, .8, 0, Math.PI * 2); scene!.fill()
-    }
-    scene!.restore()
-  }
-  function prepareSurface(source: HTMLImageElement) {
-    if (surfaceSource === source) return
-    surface?.destroy(); surface = null; surfaceSource = source
-    const mask = document.createElement('canvas'); mask.width = layout.width; mask.height = layout.height
-    const m = mask.getContext('2d')!
-    m.fillStyle = '#000'; m.fillRect(0, 0, mask.width, mask.height)
-    m.fillStyle = '#f00'; m.fill(SKY)
-    m.fillStyle = '#0f0'; m.fill(WATER)
-    m.strokeStyle = '#00f'; m.lineWidth = layout.fallWidth; m.lineCap = 'round'; m.stroke(FALL)
-    // Keep moving reflections on cool/white water, excluding warm grass and dark boulders.
-    const pixels = m.getImageData(0, 0, mask.width, mask.height)
-    const photo = document.createElement('canvas'); photo.width = mask.width; photo.height = mask.height
-    const pc = photo.getContext('2d')!; pc.drawImage(source, 0, 0, mask.width, mask.height)
-    const colors = pc.getImageData(0, 0, mask.width, mask.height).data
-    for (let i = 0; i < pixels.data.length; i += 4) if (pixels.data[i + 1]) {
-      const r = colors[i], g = colors[i + 1], b = colors[i + 2]
-      const cool = clamp((b / Math.max(1, r) - .76) / .22) * clamp((Math.min(r, g, b) - 55) / 85)
-      pixels.data[i + 1] *= cool
-    }
-    for (let i = 0; i < pixels.data.length; i += 4) if (pixels.data[i + 2]) {
-      const r = colors[i], g = colors[i + 1], b = colors[i + 2]
-      pixels.data[i + 2] *= clamp((Math.min(r, g, b) - 90) / 95) * clamp((b / Math.max(1, r) - .76) / .22)
-    }
-    // Keep the hard geometry for foliage classification, but give cloud advection a distance field.
-    // The 128px smooth buffer exceeds the maximum 66px cloud travel, so samples cannot cross terrain.
-    const cloudPixels = new Uint8ClampedArray(pixels.data), distance = new Float32Array(mask.width * mask.height)
-    const w = mask.width, h = mask.height, diagonal = Math.SQRT2
-    for (let n = 0; n < distance.length; n++) {
-      const i = n * 4, r = colors[i], g = colors[i + 1], b = colors[i + 2]
-      const skyColor = (b > r + 12 && b > g * 1.015 && b > 110) || (Math.min(r, g, b) > 170 && b > r * .72 && g > r * .8)
-      distance[n] = pixels.data[i] > 200 && skyColor ? 20000 : 0
-    }
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const n = y * w + x
-      let d = distance[n]
-      if (x) d = Math.min(d, distance[n - 1] + 1)
-      if (y) {
-        d = Math.min(d, distance[n - w] + 1)
-        if (x) d = Math.min(d, distance[n - w - 1] + diagonal)
-        if (x + 1 < w) d = Math.min(d, distance[n - w + 1] + diagonal)
-      }
-      distance[n] = d
-    }
-    for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
-      const n = y * w + x
-      let d = distance[n]
-      if (x + 1 < w) d = Math.min(d, distance[n + 1] + 1)
-      if (y + 1 < h) {
-        d = Math.min(d, distance[n + w] + 1)
-        if (x) d = Math.min(d, distance[n + w - 1] + diagonal)
-        if (x + 1 < w) d = Math.min(d, distance[n + w + 1] + diagonal)
-      }
-      distance[n] = d
-      const t = clamp(d / 128)
-      cloudPixels[n * 4] = Math.round(255 * t * t * (3 - 2 * t))
-    }
-    m.putImageData(new ImageData(cloudPixels, w, h), 0, 0)
-    // RGB packs a soft foliage mask, sharp flower emissions, and their optical bloom.
-    const plants = document.createElement('canvas'); plants.width = mask.width; plants.height = mask.height
-    const pcx = plants.getContext('2d')!, vegetation = pcx.createImageData(mask.width, mask.height)
-    const leafAt = (i: number) => {
-      const r = colors[i], g = colors[i + 1], b = colors[i + 2]
-      return Math.max(clamp((g - b - 12) / 38) * clamp((r - b - 12) / 42),
-        clamp((g - r + 12) / 28) * clamp((g - b - 12) / 35)) * clamp((g - 45) / 65)
-    }
-    // Tiny registered optical footprints seed only the native amber pixels in each component.
-    const components = new Float32Array(mask.width * mask.height)
-    // Red/green identify the two devices; blue carries static sunset sky coverage.
-    const details = document.createElement('canvas'); details.width = mask.width; details.height = mask.height
-    const detailContext = details.getContext('2d')!, detailPixels = detailContext.createImageData(mask.width, mask.height)
-    for (const [lightIndex, [cx, cy, rx, ry]] of layout.lights.entries()) {
-      for (let y = Math.max(0, Math.floor(cy - ry * 1.4)); y <= Math.min(mask.height - 1, Math.ceil(cy + ry * 1.4)); y++) {
-        for (let x = Math.max(0, Math.floor(cx - rx * 1.4)); x <= Math.min(mask.width - 1, Math.ceil(cx + rx * 1.4)); x++) {
-          const spot = clamp((1.4 - Math.hypot((x - cx) / rx, (y - cy) / ry)) * 2.5)
-          components[y * mask.width + x] = Math.max(components[y * mask.width + x], spot)
-          const channel = (y * mask.width + x) * 4 + (lightIndex < 2 ? 0 : 1)
-          detailPixels.data[channel] = Math.max(detailPixels.data[channel], Math.round(spot * 255))
-        }
-      }
-    }
-    for (let y = 0; y < mask.height; y++) for (let x = 0; x < mask.width; x++) {
-      const i = (y * mask.width + x) * 4, v = vegetation.data
-      v[i + 3] = 255; detailPixels.data[i + 3] = 255
-      const skyEdge = clamp(distance[i / 4] / 12)
-      detailPixels.data[i + 2] = Math.round(255 * skyEdge * skyEdge * (3 - 2 * skyEdge))
-      if (pixels.data[i] > 80 || pixels.data[i + 1] > 30 || pixels.data[i + 2] > 30) continue
-      const neighbors = [Math.max(0, i - 12), Math.min(colors.length - 4, i + 12),
-        Math.max(0, i - mask.width * 12), Math.min(colors.length - 4, i + mask.width * 12)]
-      const leaf = leafAt(i), nearby = neighbors.reduce((sum, n) => sum + leafAt(n), 0) / 4
-      const luma = (colors[i] + colors[i + 1] + colors[i + 2]) / 3
-      const average = neighbors.reduce((sum, n) => sum + (colors[n] + colors[n + 1] + colors[n + 2]) / 3, 0) / 4
-      const tip = clamp((Math.max(colors[i], colors[i + 1], colors[i + 2]) - 150) / 95) * clamp((luma - average + 8) / 55)
-      v[i] = Math.max(leaf, nearby * .85) * 255
-      let emission = clamp(leaf * .09 + tip * Math.max(leaf, nearby) * .95)
-      const component = components[i / 4]
-      if (component > 0) {
-        const r = colors[i], g = colors[i + 1], b = colors[i + 2]
-        // No silhouette exclusion: the surrounding meadow keeps its continuous natural emission.
-        const amber = clamp((r - g - 10) / 40) * clamp((g - b - 25) / 60) * clamp((r - 140) / 80)
-        emission = Math.max(emission, amber * component * 2.2)
-      }
-      v[i + 1] = clamp(emission) * 255
-    }
-    pcx.putImageData(vegetation, 0, 0)
-    const soft = document.createElement('canvas'); soft.width = mask.width; soft.height = mask.height
-    const sc = soft.getContext('2d')!; sc.filter = 'blur(3px)'; sc.drawImage(plants, 0, 0)
-    const blurred = sc.getImageData(0, 0, mask.width, mask.height).data
-    emissionFallback = document.createElement('canvas'); emissionFallback.width = mask.width; emissionFallback.height = mask.height
-    const ec = emissionFallback.getContext('2d')!, emission = ec.createImageData(mask.width, mask.height)
-    for (let i = 0; i < vegetation.data.length; i += 4) {
-      vegetation.data[i] = blurred[i]; vegetation.data[i + 2] = blurred[i + 1]
-      const glow = clamp((vegetation.data[i + 1] * .85 + vegetation.data[i + 2] * .9) / 255) * 255
-      emission.data[i] = glow; emission.data[i + 1] = glow * .72; emission.data[i + 2] = glow * .28; emission.data[i + 3] = 255
-    }
-    pcx.putImageData(vegetation, 0, 0); ec.putImageData(emission, 0, 0)
-    detailContext.putImageData(detailPixels, 0, 0)
-    detailContext.filter = 'blur(2px)'; detailContext.drawImage(details, 0, 0); detailContext.filter = 'none'
-    surface = createSceneSurface(source, mask, plants, details)
-    canvas.dataset.surface = surface ? 'webgl' : 'canvas'
-  }
+  let cx = 0, cy = 0, size = 1
+  const stage = document.querySelector<HTMLElement>('[data-cloud-bed-stage]')
   const canAnimate = () => visible && pageVisible && !quiet && !disposed
+  bed.src = '/scene/cloud-bed-v1.webp'; cloud.src = '/scene/cloud-canopy-v1.webp'
+  meadow.src = '/scene/meadow-v1.webp'; nightSky.src = '/scene/night-sky.webp'
+
   function syncVideo() {
-    const light = lightAt(hour)
-    const want = canAnimate() && light.night * (1 - light.sunset * .98) > .02
+    const want = canAnimate() && lightAt(hour).night > .05 && rain < .85
     if (want === videoWanted) return
     videoWanted = want
     if (want) void video.play().catch(() => { canvas.dataset.videoFallback = 'true' })
     else video.pause()
   }
-  function resize() {
-    width = window.innerWidth; height = window.innerHeight
-    // Cap both device ratio and total backing pixels; avoids enormous buffers on 4K phones.
-    dpr = Math.min(window.devicePixelRatio || 1, width < 700 ? 1.25 : 1.5, Math.sqrt(2_200_000 / (width * height)))
-    backing.width = canvas.width = Math.round(width * dpr); backing.height = canvas.height = Math.round(height * dpr)
-    frost.width = Math.max(1, Math.round(width * dpr * .35)); frost.height = Math.max(1, Math.round(height * dpr * .35))
-    ctx!.setTransform(dpr, 0, 0, dpr, 0, 0); scene!.setTransform(dpr, 0, 0, dpr, 0, 0)
-    glass!.setTransform(dpr * .35, 0, 0, dpr * .35, 0, 0)
-    const nextLayout = width < 700 ? layouts.mobile : layouts.desktop
-    if (layout !== nextLayout) { surface?.destroy(); surface = null; surfaceSource = null }
-    layout = nextLayout
-    master = width < 700 ? portrait : desktop; fallback = width < 700 ? portraitFallback : desktopFallback
-    SKY = new Path2D(layout.sky); WATER = new Path2D(layout.water); FALL = new Path2D(layout.fall)
-    GROUND = new Path2D('M0 0H' + layout.width + 'V' + layout.height + 'H0Z'); GROUND.addPath(SKY)
-    scale = Math.max(width / layout.width, height / layout.height) * 1.085
-    ox = (width - layout.width * scale) * .5; oy = (height - layout.height * scale) * .5
-    skyLayer.width = skyMask.width = layout.width; skyLayer.height = skyMask.height = layout.height
-    // Feather the horizon optically; weather and stars must never form a cut-out ridge.
-    maskContext!.filter = 'blur(7px)'; maskContext!.fillStyle = '#fff'; maskContext!.fill(SKY); maskContext!.filter = 'none'
-    canvas.dataset.layout = width < 700 ? 'portrait' : 'landscape'
-    drops = []
-    streaks = Array.from({ length: width < 700 ? 100 : 220 }, () => ({ x: Math.random() * width, y: Math.random() * height, speed: .5 + Math.random(), depth: Math.random() }))
-    render(0)
+  function measure() {
+    const box = stage?.getBoundingClientRect()
+    size = box ? Math.max(160, Math.min(box.width * .82, box.height * .98, width < 700 ? 335 : 420)) : Math.min(width * .75, height * .38, 400)
+    cx = box ? box.left + box.width / 2 : width / 2
+    cy = box ? box.top + box.height / 2 : height * .77
   }
-  function haze(x: number, y: number, rx: number, ry: number, opacity: number, color = '201,215,222', target = scene!) {
+  function resize() {
+    width = innerWidth; height = innerHeight
+    dpr = Math.min(devicePixelRatio || 1, width < 700 ? 1.25 : 1.5, Math.sqrt(2_200_000 / (width * height)))
+    backing.width = canvas.width = skyLayer.width = Math.round(width * dpr)
+    backing.height = canvas.height = skyLayer.height = Math.round(height * dpr)
+    frost.width = Math.max(1, Math.round(width * dpr * .35)); frost.height = Math.max(1, Math.round(height * dpr * .35))
+    ctx!.setTransform(dpr, 0, 0, dpr, 0, 0); scene!.setTransform(dpr, 0, 0, dpr, 0, 0); sky!.setTransform(dpr, 0, 0, dpr, 0, 0)
+    glass!.setTransform(dpr * .35, 0, 0, dpr * .35, 0, 0)
+    measure()
+    streaks = Array.from({ length: width < 700 ? 110 : 240 }, (_, i) => ({ x: noise(i) * width, y: noise(i + 500) * height, speed: .5 + noise(i + 90), depth: noise(i + 48) }))
+    drops = []; render(0)
+  }
+  function haze(x: number, y: number, rx: number, ry: number, opacity: number, color = '201,215,222') {
     if (opacity < .001) return
-    target.save(); target.translate(x, y); target.scale(rx, ry)
-    const g = target.createRadialGradient(0, 0, 0, 0, 0, 1)
-    g.addColorStop(0, 'rgba(' + color + ',' + opacity + ')'); g.addColorStop(1, 'rgba(' + color + ',0)')
-    target.fillStyle = g; target.fillRect(-1, -1, 2, 2); target.restore()
+    scene!.save(); scene!.translate(x, y); scene!.scale(rx, ry)
+    const gradient = scene!.createRadialGradient(0, 0, 0, 0, 0, 1)
+    gradient.addColorStop(0, 'rgba(' + color + ',' + opacity + ')'); gradient.addColorStop(1, 'rgba(' + color + ',0)')
+    scene!.fillStyle = gradient; scene!.fillRect(-1, -1, 2, 2); scene!.restore()
+  }
+  function prepareLighting(night: number, sunset: number) {
+    const key = [night, sunset, rain].map(v => Math.round(v * 30)).join(':')
+    if (key === lightingKey && litBed.width > 1) return
+    lightingKey = key
+    for (const [image, target] of [[bed, litBed], [cloud, litCloud]] as const) {
+      if (!image.complete || !image.naturalWidth) continue
+      target.width = image.naturalWidth; target.height = image.naturalHeight
+      const paint = target.getContext('2d')!
+      paint.filter = 'brightness(' + (1 - night * .22 - rain * .13) + ')'
+      paint.drawImage(image, 0, 0); paint.filter = 'none'
+      paint.globalCompositeOperation = 'source-atop'
+      const tint = blend([143, 179, 228], [255, 175, 139], sunset)
+      paint.fillStyle = 'rgba(' + tint.join(',') + ',' + Math.max(night * .24, sunset * .26, rain * .08) + ')'
+      paint.fillRect(0, 0, target.width, target.height)
+    }
+  }
+  function shelter(x: number, y: number, s: number) {
+    const path = new Path2D()
+    path.moveTo(x - s * .39, y - s * .06)
+    path.quadraticCurveTo(x - s * .47, y + s * .2, x - s * .44, y + s * .42)
+    path.quadraticCurveTo(x, y + s * .53, x + s * .44, y + s * .42)
+    path.quadraticCurveTo(x + s * .47, y + s * .2, x + s * .39, y - s * .06)
+    path.closePath(); return path
+  }
+  function rainbow(x: number, y: number, s: number) {
+    if (rain < .015) return
+    scene!.save(); scene!.globalCompositeOperation = 'screen'; scene!.clip(shelter(x, y, s))
+    const spectrum = ['255,108,132', '255,167,91', '255,226,110', '130,233,164', '107,210,245', '157,153,255', '220,153,247']
+    for (let i = 0; i < 7; i++) {
+      const a = (i - 3) / 3, color = spectrum[i]
+      const gradient = scene!.createLinearGradient(x, y - s * .08, x, y + s * .44)
+      gradient.addColorStop(0, 'rgba(' + color + ',' + (.08 + rain * .25) + ')')
+      gradient.addColorStop(.65, 'rgba(' + color + ',' + (.045 + rain * .12) + ')')
+      gradient.addColorStop(1, 'rgba(' + color + ',0)')
+      scene!.fillStyle = gradient
+      scene!.beginPath(); scene!.moveTo(x + a * s * .27 - s * .035, y - s * .07)
+      scene!.lineTo(x + a * s * .43 - s * .065, y + s * .44)
+      scene!.quadraticCurveTo(x + a * s * .43, y + s * .48, x + a * s * .43 + s * .065, y + s * .44)
+      scene!.lineTo(x + a * s * .27 + s * .035, y - s * .07); scene!.closePath(); scene!.fill()
+    }
+    // A fine spectral dome makes the shelter readable while its projected light stays translucent.
+    for (let i = 0; i < 7; i++) {
+      scene!.strokeStyle = 'rgba(' + spectrum[i] + ',' + (.18 + rain * .44) + ')'
+      scene!.lineWidth = Math.max(1.2, s * .006)
+      scene!.shadowColor = 'rgba(' + spectrum[i] + ',.25)'; scene!.shadowBlur = 4
+      scene!.beginPath(); scene!.ellipse(x, y + s * .35, s * (.43 - i * .009), s * (.40 - i * .008), 0, Math.PI, Math.PI * 2); scene!.stroke()
+    }
+    scene!.shadowBlur = 0
+    const edge = scene!.createLinearGradient(x - s * .46, y, x + s * .46, y)
+    spectrum.forEach((color, i) => edge.addColorStop(i / 6, 'rgba(' + color + ',' + (.15 + rain * .3) + ')'))
+    scene!.strokeStyle = edge; scene!.lineWidth = 2
+    scene!.beginPath(); scene!.ellipse(x, y + s * .41, s * .44, s * .065, 0, 0, Math.PI); scene!.stroke()
+    scene!.restore()
+  }
+  function star(x: number, y: number, radius: number, alpha: number) {
+    scene!.shadowColor = 'rgba(255,226,151,' + alpha + ')'; scene!.shadowBlur = radius * 4
+    scene!.fillStyle = 'rgba(255,235,182,' + alpha + ')'; scene!.beginPath()
+    for (let p = 0; p < 10; p++) {
+      const angle = p * Math.PI / 5 - Math.PI / 2, r = radius * (p % 2 ? .43 : 1)
+      const px = x + Math.cos(angle) * r, py = y + Math.sin(angle) * r
+      if (p) scene!.lineTo(px, py); else scene!.moveTo(px, py)
+    }
+    scene!.closePath(); scene!.fill(); scene!.shadowBlur = 0
+  }
+  function hangingStars(x: number, y: number, s: number, night: number, time: number) {
+    if (night < .02) return
+    scene!.save()
+    const count = width < 700 ? 13 : 19
+    for (let i = 0; i < count; i++) {
+      const anchorX = x + (i / (count - 1) - .5) * s * .68
+      const anchorY = y - s * (.043 + Math.sin(i * 1.7) * .012)
+      const length = s * (.065 + noise(i + 75) * .15)
+      const swing = quiet ? 0 : Math.sin(time * .45 + i * 1.2) * s * .008
+      const alpha = night * (quiet ? 1 : .73 + .27 * Math.sin(time * .65 + i * 2.1) ** 2)
+      scene!.strokeStyle = 'rgba(240,220,176,' + night * .34 + ')'; scene!.lineWidth = .65
+      scene!.beginPath(); scene!.moveTo(anchorX, anchorY); scene!.quadraticCurveTo(anchorX + swing * .3, anchorY + length * .55, anchorX + swing, anchorY + length); scene!.stroke()
+      star(anchorX + swing, anchorY + length, Math.max(2, s * (.0055 + noise(i + 113) * .005)), alpha)
+    }
+    scene!.restore()
+  }
+  function drawMeadow(time: number, night: number, sunset: number) {
+    if (meadow.complete && meadow.naturalWidth && !surfaceTried) { surfaceTried = true; surface = createSceneSurface(meadow) }
+    const grass = surface?.render(backing.width, backing.height, time, night, sunset, rain, wet)
+    canvas.dataset.surface = grass ? 'webgl' : 'canvas'
+    if (grass) scene!.drawImage(grass, 0, 0, grass.width, grass.height, 0, 0, width, height)
+    else {
+      scene!.save(); scene!.beginPath(); scene!.moveTo(0, height * .545)
+      for (let i = 1; i <= 30; i++) { const x = i / 30; scene!.lineTo(width * x, height * (.53 + .085 * x + .015 * Math.cos(x * Math.PI))) }
+      scene!.lineTo(width, height); scene!.lineTo(0, height); scene!.closePath(); scene!.clip()
+      if (meadow.complete && meadow.naturalWidth) {
+        const pattern = scene!.createPattern(meadow, 'repeat')!
+        pattern.setTransform(new DOMMatrix().translate(0, time * 2).scale(width / meadow.naturalWidth))
+        scene!.fillStyle = pattern
+      } else scene!.fillStyle = '#739553'
+      scene!.fillRect(0, height * .54, width, height * .46)
+      scene!.fillStyle = 'rgba(7,19,42,' + (night * .65 + rain * .13) + ')'; scene!.fillRect(0, height * .54, width, height * .46)
+      scene!.restore()
+    }
   }
   function render(dt: number) {
     if (disposed || !width) return
-    const moving = canAnimate()
+    const moving = canAnimate(), time = quiet ? 0 : elapsed
     if (moving) {
       const delta = (env.hour - hour + 36) % 24 - 12
       hour = (hour + delta * (1 - Math.exp(-dt / 2)) + 24) % 24
-      rain = approach(rain, env.rain, 4, dt); fog = approach(fog, env.fog, 7, dt)
-      // Lens responds first, ground next, stream later, distant waterfall last.
-      wet = clamp(wet + rain * dt / 35 - (1 - rain) * dt / 480)
-      wet = Math.max(wet, env.wetness)
-      runoff = approach(runoff, Math.max(env.stream, rain * .8), rain > runoff ? 75 : 240, dt)
-      fall = approach(fall, Math.max(env.waterfall, runoff * .85), runoff > fall ? 150 : 420, dt)
-    } else if (quiet) {
-      hour = env.hour; rain = env.rain; fog = env.fog
-      wet = Math.max(wet, env.wetness); runoff = env.stream; fall = env.waterfall
+      rain = approach(rain, env.rain, 3, dt); fog = approach(fog, env.fog, 6, dt)
+      wet = Math.max(env.wetness, clamp(wet + rain * dt / 35 - (1 - rain) * dt / 480))
+    } else if (quiet) { hour = env.hour; rain = env.rain; fog = env.fog; wet = Math.max(wet, env.wetness) }
+    const light = lightAt(hour), night = light.night, sunset = light.sunset
+    const top = blend(blend([65, 156, 199], [11, 18, 41], night), [85, 99, 151], sunset)
+    const horizon = blend(blend([186, 219, 223], [49, 55, 86], night), [244, 177, 149], sunset)
+    const overcast = rain * .65
+    const wash = scene!.createLinearGradient(0, 0, 0, height * .64)
+    wash.addColorStop(0, rgb(blend(top, [72, 88, 107], overcast))); wash.addColorStop(1, rgb(blend(horizon, [132, 146, 155], overcast)))
+    scene!.fillStyle = wash; scene!.fillRect(0, 0, width, height)
+    if (night > .015 && (video.readyState >= 2 || nightSky.naturalWidth)) {
+      sky!.clearRect(0, 0, width, height)
+      // Use only the central upper sky; the old movie's side mountains never enter this meadow.
+      const movie = video.readyState >= 2
+      const source = movie ? video : nightSky
+      const sw = movie ? video.videoWidth * .4375 : nightSky.naturalWidth
+      const sh = movie ? video.videoHeight * .4167 : nightSky.naturalHeight
+      const aspect = width / (height * .67), cropW = Math.min(sw, sh * aspect), cropH = Math.min(sh, sw / aspect)
+      const sx = (movie ? video.videoWidth * .28125 : 0) + (sw - cropW) / 2
+      sky!.drawImage(source, sx, 0, cropW, cropH, 0, 0, width, height * .67)
+      sky!.globalCompositeOperation = 'destination-in'
+      const edge = sky!.createLinearGradient(0, height * .35, 0, height * .64)
+      edge.addColorStop(0, 'rgba(255,255,255,.85)'); edge.addColorStop(1, 'rgba(255,255,255,0)')
+      sky!.fillStyle = edge; sky!.fillRect(0, 0, width, height); sky!.globalCompositeOperation = 'source-over'
+      scene!.save(); scene!.globalAlpha = night * (1 - rain * .95) * (1 - sunset * .85)
+      scene!.drawImage(skyLayer, 0, 0, skyLayer.width, skyLayer.height, 0, 0, width, height); scene!.restore()
     }
-    // The viewpoint is locked; only clouds, water and the small scene details animate.
-    cameraScale = scale; cameraX = ox; cameraY = oy
-    const light = lightAt(hour), clouds = clamp(rain * .95 + fog * .14)
-    const source = master.complete && master.naturalWidth ? master : fallback.complete && fallback.naturalWidth ? fallback : null
-    scene!.fillStyle = '#090e18'; scene!.fillRect(0, 0, width, height)
-    if (source) {
-      prepareSurface(source)
-      const animated = surface?.render(quiet ? 0 : elapsed, rain, runoff, fall, light.sunset)
-      scene!.save(); world(scene!)
-      scene!.drawImage(animated || source, 0, 0, layout.width, layout.height)
-      scene!.restore()
-      drawTail(quiet ? 0 : elapsed, null, light.sunset)
-      scene!.save(); scene!.globalCompositeOperation = 'multiply'
-      const tint = light.tint.map(v => Math.round(v)).join(',')
-      scene!.fillStyle = 'rgba(' + tint + ',' + (.08 + light.night * .28) + ')'; scene!.fillRect(0, 0, width, height)
-      scene!.restore()
-      scene!.fillStyle = 'rgba(4,9,20,' + clamp(1 - light.brightness + clouds * .18) + ')'; scene!.fillRect(0, 0, width, height)
+    prepareLighting(night, sunset)
+    if (litCloud.width > 1 && cloud.naturalWidth) for (let i = 0; i < 6; i++) {
+      const z = noise(i + 2), travel = ((noise(i + 42) + time * (.0012 + z * .0005)) % 1.5) - .25
+      const cloudWidth = Math.min(width * (.11 + z * .10), height * .21), cloudHeight = cloudWidth * litCloud.height / litCloud.width
+      scene!.save(); scene!.globalAlpha = (.48 + z * .24) * (1 - night * .22)
+      scene!.drawImage(litCloud, travel * width, height * (.045 + noise(i + 12) * .18), cloudWidth, cloudHeight); scene!.restore()
     }
-    // The existing night movie is used only above the registered skyline.
-    sky!.clearRect(0, 0, layout.width, layout.height)
-    if (light.night > .001 && (video.readyState >= 2 || (width < 700 ? nightSky : wideNightSky).naturalWidth)) {
-      sky!.globalAlpha = light.night * (1 - light.sunset * .98) * (1 - clouds * .98)
-      // Only upper crops are sampled from the old movie; its observer/equipment cannot enter the scene.
-      const skyBottom = layout.height * .73
-      const zoom = Math.max(layout.width / 560, skyBottom / 300)
-      const dx = (layout.width - 560 * zoom) * .5
-      if (width >= 700) {
-        // A wide upper crop preserves the original star scale and excludes all equipment below y=400.
-        if (video.readyState >= 2) {
-          const ratio = video.videoWidth / 1280
-          sky!.drawImage(video, 0, 0, video.videoWidth, 400 * ratio, 0, 0, layout.width, layout.height * .75)
-        } else sky!.drawImage(wideNightSky, 0, 0, layout.width, layout.height * .75)
-      } else if (video.readyState >= 2) {
-        const ratio = video.videoWidth / 1280
-        sky!.drawImage(video, 360 * ratio, 0, 560 * ratio, 300 * ratio, dx, 0, 560 * zoom, 300 * zoom)
-      } else sky!.drawImage(nightSky, dx, 0, 560 * zoom, 300 * zoom)
-      sky!.globalAlpha = 1
-    }
-    if (light.warmth > .01) haze(layout.width * .67, layout.height * .63, layout.width * .53, layout.height * .43, light.warmth * (light.sunset > .1 ? .22 : .45), light.sunset > .1 ? '255,117,57' : '255,184,111', sky!)
-    for (let i = 0; i < 5; i++) {
-      const x = ((i * layout.width * .26 + elapsed * (2.3 + i * .3)) % (layout.width * 1.4)) - layout.width * .2
-      haze(x, layout.height * (.13 + i * .045), layout.width * .22, layout.height * .06, (.015 + clouds * .10) * (1 - light.night * .4), '201,215,222', sky!)
-    }
-    sky!.globalCompositeOperation = 'destination-in'; sky!.drawImage(skyMask, 0, 0); sky!.globalCompositeOperation = 'source-over'
-    scene!.save(); world(scene!); scene!.drawImage(skyLayer, 0, 0); scene!.restore()
-    // Cloud cover affects the whole air column with a continuous gradient, not a clipped sky tile.
-    const overcast = scene!.createLinearGradient(0, 0, 0, height)
-    overcast.addColorStop(0, 'rgba(21,35,57,' + clouds * .78 + ')')
-    overcast.addColorStop(.6, 'rgba(60,77,94,' + clouds * .44 + ')')
-    overcast.addColorStop(1, 'rgba(70,85,97,' + clouds * .08 + ')')
-    scene!.fillStyle = overcast; scene!.fillRect(0, 0, width, height)
-    // Wet rock/grass retains darker diffuse color with low grazing reflections.
-    scene!.save(); world(scene!); scene!.clip(GROUND, 'evenodd')
-    scene!.fillStyle = 'rgba(10,24,35,' + wet * .15 + ')'; scene!.fillRect(0, 0, layout.width, layout.height)
-    for (let i = 0; i < 27; i++) {
-      const x = layout.width * (.08 + NOISE(i) * .87), y = layout.height * (.73 + NOISE(i + 90) * .27)
-      scene!.strokeStyle = 'rgba(192,207,212,' + wet * (.015 + NOISE(i + 30) * .045) + ')'
-      scene!.lineWidth = .5; scene!.beginPath(); scene!.moveTo(x, y); scene!.lineTo(x + 3 + NOISE(i + 2) * 7, y - 1); scene!.stroke()
-    }
-    scene!.restore()
-    // Rain rings share the same registered channel and camera as the flowing texture.
-    scene!.save(); world(scene!); scene!.clip(WATER)
-    if (rain > .01) for (let i = 0; i < (width < 700 ? 22 : 40); i++) {
-      const age = (elapsed * .7 + NOISE(i + 29)) % 1, r = age * (3 + NOISE(i + 44) * 8)
-      scene!.strokeStyle = 'rgba(219,235,242,' + (1 - age) * rain * .32 + ')'; scene!.lineWidth = .65
-      scene!.beginPath(); scene!.ellipse(layout.width * (.73 + NOISE(i + 4) * .27), layout.height * (.67 + NOISE(i + 5) * .33), r, r * .22, 0, 0, Math.PI * 2); scene!.stroke()
-    }
-    scene!.restore()
-    scene!.save(); world(scene!)
-    const fallEnd = width < 700 ? [592, 880] : [946, 464]
-    haze(fallEnd[0], fallEnd[1], 12 + fall * 15, 6 + fall * 8, (.035 + fall * .1) * (1 - light.night * .5), light.sunset > .1 ? '244,192,147' : '201,215,222')
-    scene!.restore()
-    // Emission is added after night shading, then seen through the same mist/rain as the terrain.
-    if (light.night > .001) {
-      const glow = surface?.glow(quiet ? 0 : elapsed, light.night * (1 - rain * .45))
-      if (glow || emissionFallback) {
-        scene!.save(); world(scene!); scene!.globalCompositeOperation = 'screen'
-        if (!glow) scene!.globalAlpha = light.night * (1 - rain * .45)
-        scene!.drawImage(glow || emissionFallback!, 0, 0, layout.width, layout.height); scene!.restore()
-      }
-    }
-    if (light.night > .001) drawTail(quiet ? 0 : elapsed, light.night * (1 - rain * .45) * companionLightPulse(quiet ? 0 : elapsed, true))
-    // Three depth bands of valley mist; foreground objects stay legible.
+    drawMeadow(time, night, sunset)
     if (fog > .02) for (let i = 0; i < 3; i++) {
-      haze(ox + layout.width * (.30 + i * .18 + Math.sin(elapsed * .035 + i) * .018) * scale, oy + layout.height * (.69 + i * .029) * scale,
-        layout.width * .24 * scale, layout.height * (.028 + i * .014) * scale, fog * (.16 - i * .02) * (1 - light.night * .65))
+      haze(width * (.2 + i * .3 + Math.sin(time * .025 + i) * .02), height * (.58 + i * .045), width * .4, height * .045, fog * (.22 - i * .035) * (1 - night * .4))
     }
+    const bob = quiet ? 0 : Math.sin(time * .42) * Math.min(3.5, size * .01)
+    const tilt = quiet ? 0 : Math.sin(time * .27) * .008
+    const bedX = cx, bedY = cy + bob
+    haze(bedX + size * .025, cy + size * .46, size * .31, size * .035, .20 - night * .08, '14,29,26')
+    scene!.save(); scene!.translate(bedX, bedY); scene!.rotate(tilt)
+    rainbow(0, 0, size)
+    hangingStars(0, 0, size, night, time)
+    if (bed.complete && bed.naturalWidth && litBed.width > 1) scene!.drawImage(litBed, -size / 2, -size / 2, size, size)
+    scene!.restore()
     if (rain > .005) {
+      scene!.save()
+      const outside = new Path2D(); outside.rect(0, 0, width, height); outside.addPath(shelter(bedX, bedY, size))
+      scene!.clip(outside, 'evenodd')
       for (const r of streaks) {
         if (moving) {
           r.y += dt * (190 + rain * 500) * r.speed; r.x -= dt * (8 + rain * 45) * r.speed
-          if (r.y > height + 30) { r.y = -30; r.x = Math.random() * width }
+          if (r.y > height + 30) { r.y = -30; r.x = noise(r.x + time) * width }
           if (r.x < -20) r.x = width + 20
         }
-        scene!.strokeStyle = 'rgba(192,212,228,' + rain * (.045 + r.depth * .12) + ')'
-        scene!.lineWidth = r.depth > .75 ? .85 : .45; scene!.beginPath(); scene!.moveTo(r.x, r.y)
-        scene!.lineTo(r.x + rain * (2 + r.depth * 5), r.y - (6 + rain * 19) * r.speed); scene!.stroke()
+        scene!.strokeStyle = 'rgba(202,224,239,' + rain * (.07 + r.depth * .17) + ')'; scene!.lineWidth = r.depth > .75 ? .9 : .5
+        scene!.beginPath(); scene!.moveTo(r.x, r.y); scene!.lineTo(r.x + rain * (2 + r.depth * 5), r.y - (6 + rain * 19) * r.speed); scene!.stroke()
       }
-      haze(width * .8, height * .55, width * .45, height * .35, rain * .065, '119,140,162')
+      scene!.restore()
     }
     ctx!.drawImage(backing, 0, 0, backing.width, backing.height, 0, 0, width, height)
     const dew = fog > .35 && rain < .05, lensTarget = rain > .03 || dew
@@ -386,26 +285,22 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       ctx!.beginPath(); ctx!.ellipse(d.x - r * .18, d.y - r * .45, r * .2, r * .07, -.5, 0, Math.PI * 2)
       ctx!.fillStyle = 'rgba(245,250,255,.35)'; ctx!.fill()
     }
-    // Diagnostic attributes are also useful to verify pauses/reduced-motion without screenshots.
-    canvas.dataset.phase = env.phase; canvas.dataset.weather = env.weather
-    canvas.dataset.wetness = wet.toFixed(3); canvas.dataset.stream = runoff.toFixed(3); canvas.dataset.waterfall = fall.toFixed(3)
-    canvas.dataset.renderTime = elapsed.toFixed(2)
-    canvas.dataset.cameraScale = cameraScale.toFixed(6); canvas.dataset.cameraX = cameraX.toFixed(3); canvas.dataset.cameraY = cameraY.toFixed(3)
-    canvas.dataset.nightGlow = light.night.toFixed(3); canvas.dataset.sunset = light.sunset.toFixed(3)
-    canvas.dataset.tailReady = String(tailImage.complete && !!tailImage.naturalWidth)
-    canvas.dataset.tailAngle = catTailAngle(quiet ? 0 : elapsed).toFixed(4)
-    canvas.dataset.robotPulse = companionLightPulse(quiet ? 0 : elapsed).toFixed(4); canvas.dataset.catPulse = companionLightPulse(quiet ? 0 : elapsed, true).toFixed(4)
-    if (!painted && source) { canvas.dataset.ready = 'true'; painted = true }
+    canvas.dataset.scene = 'cloud-bed'; canvas.dataset.phase = env.phase; canvas.dataset.weather = env.weather
+    canvas.dataset.renderTime = elapsed.toFixed(2); canvas.dataset.wetness = wet.toFixed(3)
+    canvas.dataset.nightGlow = night.toFixed(3); canvas.dataset.sunset = sunset.toFixed(3)
+    canvas.dataset.cameraScale = '1'; canvas.dataset.cameraX = '0'; canvas.dataset.cameraY = '0'
+    canvas.dataset.bedX = bedX.toFixed(2); canvas.dataset.bedY = bedY.toFixed(2); canvas.dataset.bedSize = size.toFixed(2)
+    canvas.dataset.bedTilt = tilt.toFixed(4); canvas.dataset.groundTravel = (time * .008).toFixed(4)
+    canvas.dataset.rainbow = rain.toFixed(3); canvas.dataset.hangingStars = night > .02 ? String(width < 700 ? 13 : 19) : '0'
+    canvas.dataset.drops = String(drops.length); canvas.dataset.dew = String(dew)
+    if (bed.complete && bed.naturalWidth) { canvas.dataset.ready = 'true'; document.documentElement.dataset.heroSceneReady = 'true' }
     syncVideo()
   }
   function tick(now: number) {
     frame = 0
     if (!canAnimate()) return
-    const limit = width < 700 ? 1000 / 20 : 1000 / 30
-    if (now - previous >= limit) {
-      const dt = Math.min(.12, (now - previous) / 1000); previous = now; elapsed += dt
-      render(dt)
-      // Static daytime clear skies also have moving clouds and water; cap, never run at display Hz.
+    if (now - previous >= (width < 700 ? 1000 / 20 : 1000 / 30)) {
+      const dt = Math.min(.12, (now - previous) / 1000); previous = now; elapsed += dt; render(dt)
     }
     frame = requestAnimationFrame(tick)
   }
@@ -416,11 +311,18 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
   }
   function pause() { cancelAnimationFrame(frame); frame = 0; video.pause(); videoWanted = false }
   function visibility() { pageVisible = !document.hidden; if (pageVisible) start(); else pause() }
-  const images = [desktop, portrait, desktopFallback, portraitFallback, nightSky, wideNightSky, tailImage]
-  images.forEach(image => { image.onload = () => { if (!disposed) { render(0); start() } } })
-  desktop.onerror = portrait.onerror = () => { if (!disposed) { canvas.dataset.assetFallback = 'true'; render(0); start() } }
+  function reposition() { measure(); if (visible && pageVisible) render(0) }
+  const observer = new ResizeObserver(reposition)
+  if (stage) observer.observe(stage)
+  const copy = document.querySelector('[data-home-hero] .hero-copy')
+  if (copy) observer.observe(copy)
+  const images = [bed, cloud, meadow, nightSky]
+  images.forEach(image => { image.onload = () => { if (!disposed) { lightingKey = ''; render(0); start() } } })
+  bed.onerror = () => {
+    if (!bed.src.endsWith('.png') && !disposed) { canvas.dataset.assetFallback = 'true'; bed.src = '/scene/cloud-bed-v1.png' }
+  }
   video.addEventListener('loadeddata', start)
-  window.addEventListener('resize', resize)
+  window.addEventListener('resize', resize); window.addEventListener('scroll', reposition, { passive: true })
   document.addEventListener('visibilitychange', visibility)
   resize(); start()
   return {
@@ -428,15 +330,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       env = next; quiet = reduce; drops = quiet ? [] : drops
       if (quiet) { pause(); if (visible && pageVisible) render(0) } else start()
     },
-    setVisible(value) {
-      visible = value; canvas.dataset.paused = String(!value)
-      if (value) start(); else pause()
-    },
+    setVisible(value) { visible = value; canvas.dataset.paused = String(!value); if (value) { measure(); start() } else pause() },
     destroy() {
-      disposed = true; pause(); surface?.destroy(); images.forEach(image => { image.onload = image.onerror = null })
-      video.removeEventListener('loadeddata', start); window.removeEventListener('resize', resize)
-      document.removeEventListener('visibilitychange', visibility)
-      backing.width = backing.height = frost.width = frost.height = skyLayer.width = skyLayer.height = skyMask.width = skyMask.height = 1
+      disposed = true; pause(); observer.disconnect(); surface?.destroy(); images.forEach(image => { image.onload = image.onerror = null })
+      video.removeEventListener('loadeddata', start); window.removeEventListener('resize', resize); window.removeEventListener('scroll', reposition)
+      document.removeEventListener('visibilitychange', visibility); delete document.documentElement.dataset.heroSceneReady
+      backing.width = backing.height = frost.width = frost.height = skyLayer.width = skyLayer.height = litBed.width = litCloud.width = 1
     },
   }
 }

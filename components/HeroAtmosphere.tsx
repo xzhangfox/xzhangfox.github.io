@@ -90,7 +90,7 @@ export default function HeroAtmosphere() {
         {open && (
           <section className="scene-panel" id="scene-options" role="dialog" aria-label={zh ? '光影与天气' : 'Light & weather'}>
             <div className="scene-panel-head">
-              <div><h2>{zh ? '同一片天空' : 'Under the same sky'}</h2><p>{zh ? '山谷有自己的时间与天气。' : 'One valley. Its own time and weather.'}</p></div>
+              <div><h2>{zh ? '同一片天空' : 'Under the same sky'}</h2><p>{zh ? '一朵云，一张床，随时间与天气漂流。' : 'A cloud, a bed. Drifting through time and weather.'}</p></div>
               <button type="button" className="scene-close" aria-label={zh ? '关闭场景设置' : 'Close scene settings'} onClick={() => { setOpen(false); triggerRef.current?.focus() }}><X size={16} aria-hidden="true" /></button>
             </div>
             <fieldset>
@@ -111,7 +111,7 @@ export default function HeroAtmosphere() {
             </label>
             <label className="scene-motion"><input type="checkbox" checked={reduced} onChange={event => toggleReduced(event.target.checked)} /><span>{zh ? '减少动效' : 'Reduce motion'}</span></label>
             <button type="button" className="scene-restore" onClick={restore} disabled={!environment.preview}>{zh ? '恢复当地时间与自然天气' : 'Use local time & natural weather'}</button>
-            <p className="scene-note">{zh ? '天气为氛围模拟，不读取定位。雨停后溪流、瀑布与湿润反光会缓慢回落。' : 'Atmospheric weather, without location access. Water and wet surfaces linger after the rain.'}</p>
+            <p className="scene-note">{zh ? '天气为氛围模拟，不读取定位。雨天的彩虹守护云床，夜晚的星灯静静垂落。' : 'Atmospheric weather, without location access. A rainbow shelter in rain. Hanging starlight after dark.'}</p>
           </section>
         )}
         <button ref={triggerRef} type="button" className="scene-trigger" aria-expanded={open} aria-controls="scene-options" onClick={() => setOpen(value => !value)}>
