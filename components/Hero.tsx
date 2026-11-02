@@ -40,7 +40,7 @@ export default function Hero() {
   const nameChars = t.nav.name.split('')
 
   return (
-    <section data-home-hero className="hero-home relative min-h-screen flex flex-col items-center overflow-hidden">
+    <section data-home-hero className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
 
       {/* Gradient overlay: darken edges, fade to bg-bg at bottom */}
       <div
@@ -49,10 +49,10 @@ export default function Hero() {
           zIndex: 1,
           background: [
             'linear-gradient(to bottom,',
-            '  rgba(8,18,31,0.10) 0%,',
-            '  rgba(8,18,31,0.04) 28%,',
-            '  rgba(8,18,31,0.00) 68%,',
-            '  rgba(10,10,10,0.20) 94%,',
+            '  rgba(10,10,10,0.35) 0%,',
+            '  rgba(10,10,10,0.15) 28%,',
+            '  rgba(10,10,10,0.22) 58%,',
+            '  rgba(10,10,10,0.50) 90%,',
             '  rgba(10,10,10,1.00) 100%',
             ')',
           ].join(' '),
@@ -60,13 +60,13 @@ export default function Hero() {
       />
 
       {/* Content */}
-      <div className="hero-copy relative text-center px-6 max-w-5xl mx-auto" style={{ zIndex: 2 }}>
+      <div className="relative text-center px-6 max-w-5xl mx-auto -translate-y-6 md:-translate-y-10" style={{ zIndex: 2 }}>
         {/* Subtle dark vignette behind text for readability */}
         <div
           className="absolute pointer-events-none"
           style={{
-            inset: '-24px -40px',
-            background: 'radial-gradient(ellipse 50% 50% at 50% 50%, rgba(13,30,49,0.28) 0%, rgba(13,30,49,0.10) 55%, transparent 100%)',
+            inset: '-60px -80px',
+            background: 'radial-gradient(ellipse 50% 50% at 50% 50%, rgba(10,10,10,0.62) 0%, rgba(10,10,10,0.22) 55%, transparent 100%)',
           }}
         />
         {/* Location label */}
@@ -74,7 +74,7 @@ export default function Hero() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.2 }}
-          className="flex items-center justify-center gap-3 mb-5"
+          className="flex items-center justify-center gap-3 mb-8"
         >
           <span className="w-8 h-px bg-gold/60" />
           <span className="section-label text-gold/80">{t.hero.badge}</span>
@@ -83,7 +83,7 @@ export default function Hero() {
 
         {/* Name */}
         <h1
-          className="text-[clamp(3rem,8.5vw,6.5rem)] font-bold leading-none tracking-[0.08em] mb-4 select-none uppercase"
+          className="text-[clamp(3.5rem,11vw,8.5rem)] font-bold leading-none tracking-[0.08em] mb-6 select-none uppercase"
           style={{ filter: 'drop-shadow(0 2px 24px rgba(0,0,0,0.8)) drop-shadow(0 0 48px rgba(0,0,0,0.6))' }}
         >
           {nameChars.map((char, i) => (
@@ -104,7 +104,7 @@ export default function Hero() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4, delay: 1.0 }}
-          className="h-8 flex items-center justify-center mb-4"
+          className="h-8 flex items-center justify-center mb-8"
         >
           <span className="text-lg md:text-xl text-white/90 font-mono tracking-wide" style={{ textShadow: '0 2px 20px rgba(0,0,0,0.9), 0 0 40px rgba(0,0,0,0.7)' }}>
             {displayText}
@@ -117,7 +117,7 @@ export default function Hero() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 1.1, ease: [0.22, 1, 0.36, 1] }}
-          className="text-sm md:text-base text-white/90 max-w-xl mx-auto leading-relaxed mb-6"
+          className="text-base md:text-lg text-white/85 max-w-xl mx-auto leading-relaxed mb-12"
           style={{ textShadow: '0 2px 16px rgba(0,0,0,0.9)' }}
         >
           {t.hero.description}
@@ -128,7 +128,7 @@ export default function Hero() {
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 1.3, ease: [0.22, 1, 0.36, 1] }}
-          data-hero-actions className="flex items-center justify-center gap-3 flex-wrap"
+          className="flex items-center justify-center gap-4 flex-wrap"
         >
           <button
             onClick={() => scrollToSection('#projects')}
@@ -145,18 +145,16 @@ export default function Hero() {
         </motion.div>
       </div>
 
-      <div data-cloud-bed-stage className="hero-bed-stage" aria-hidden="true"><img className="hero-bed-fallback" src="/scene/cloud-bed-v1.webp" alt="" width="900" height="900" /></div>
-
       {/* Scroll indicator */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.6, delay: 2.0 }}
-        className="absolute bottom-5 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
+        className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
         style={{ zIndex: 2 }}
       >
         <span className="section-label text-white/30">{t.hero.scroll}</span>
-        <div className="w-px h-6 bg-gradient-to-b from-gold/50 to-transparent" />
+        <div className="w-px h-12 bg-gradient-to-b from-gold/50 to-transparent" />
       </motion.div>
     </section>
   )

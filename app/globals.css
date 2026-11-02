@@ -165,7 +165,7 @@ body {
 }
 
 /* The scene stays below all content. Only its compact control receives pointer events. */
-.hero-atmosphere{position:fixed;inset:0;z-index:1;pointer-events:none;background:linear-gradient(#4b9fc5 0%,#b8d8dc 55%,#7ba55f 56%,#41623b 100%)}
+.hero-atmosphere{position:fixed;inset:0;z-index:1;pointer-events:none;background:#0a101c url('/scene/valley-companions-v2-fallback.jpg') center/cover no-repeat}
 .hero-atmosphere-canvas{display:block;width:100%;height:100%}
 .scene-controls{position:fixed;right:max(22px,env(safe-area-inset-right));bottom:max(24px,env(safe-area-inset-bottom));z-index:45}
 .scene-controls[hidden]{display:none}
@@ -197,13 +197,7 @@ body {
 @media(max-width:640px){.scene-controls{right:14px;bottom:max(16px,env(safe-area-inset-bottom))}.scene-trigger{padding:9px 11px;font-size:9px;gap:6px}.scene-weather-summary{display:none}.scene-panel{width:294px;padding:18px}.scene-clock{font-size:9px}}
 @media(prefers-reduced-motion:reduce){.scene-trigger,.scene-panel *{transition:none!important}}
 
-/* Reserve real layout space for the art instead of placing it behind the CTAs. */
-.hero-home{padding-top:clamp(94px,11svh,118px);padding-bottom:52px;min-height:max(100svh,740px)}
-.hero-copy{flex:none;width:100%}
-.hero-bed-stage{position:relative;width:100%;min-height:240px;flex:1;margin-top:32px}
-@media(min-width:768px){.hero-home{min-height:max(100svh,800px)}.hero-bed-stage{min-height:300px}}
-@media(max-width:420px){.hero-copy{padding-inline:20px}.hero-bed-stage{min-height:250px}}
-
+@media(max-width:699px){.hero-atmosphere{background-image:url('/scene/valley-companions-v2-mobile-fallback.jpg')}}
 
 /* Flux glass is local to the controls; the landscape remains sharp. */
 .portfolio-glass-header {
@@ -232,6 +226,3 @@ body {
     background: #111923; -webkit-backdrop-filter: none; backdrop-filter: none;
   }
 }
-
-.hero-bed-fallback{position:absolute;inset:0;width:min(82%,420px);height:100%;object-fit:contain;margin:auto;pointer-events:none}
-html[data-hero-scene-ready=true] .hero-bed-fallback{visibility:hidden}
