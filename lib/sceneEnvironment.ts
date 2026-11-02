@@ -1,6 +1,11 @@
 export type ScenePhase = 'predawn' | 'morning' | 'day' | 'dusk' | 'night' | 'deep'
 export type SceneWeather = 'auto' | 'clear' | 'mist' | 'drizzle' | 'storm'
 export type RGB = readonly [number, number, number]
+// Inspired by the original film: champagne flowers against teal-blue shadows.
+export const NIGHT_PALETTE = {
+  gold: [1, .80, .49],
+  cyan: [.35, .79, .90],
+} as const
 export const SCENE_PHASES: { id: ScenePhase; hour: number; en: string; zh: string }[] = [
   { id: 'predawn', hour: 5, en: 'Before dawn', zh: '凌晨' },
   { id: 'morning', hour: 7, en: 'Morning', zh: '清晨' },
@@ -46,7 +51,7 @@ function recentRain(timestamp: number, from: number, to: number) {
 }
 type LightKey = { h: number; night: number; brightness: number; tint: RGB; warmth: number }
 const LIGHT: LightKey[] = [
-  { h: 0, night: 1, brightness: .34, tint: [27, 41, 71], warmth: 0 },
+  { h: 0, night: 1, brightness: .30, tint: [23, 43, 53], warmth: 0 },
   { h: 4, night: 1, brightness: .44, tint: [53, 49, 81], warmth: .08 },
   { h: 6, night: .08, brightness: .81, tint: [157, 154, 174], warmth: .26 },
   { h: 8, night: 0, brightness: 1, tint: [255, 223, 175], warmth: .2 },
@@ -54,8 +59,8 @@ const LIGHT: LightKey[] = [
   { h: 16, night: 0, brightness: .98, tint: [249, 225, 187], warmth: .13 },
   { h: 18, night: .05, brightness: .79, tint: [226, 161, 120], warmth: .4 },
   { h: 20, night: .75, brightness: .44, tint: [58, 61, 99], warmth: .08 },
-  { h: 22, night: 1, brightness: .34, tint: [27, 41, 71], warmth: 0 },
-  { h: 24, night: 1, brightness: .34, tint: [27, 41, 71], warmth: 0 },
+  { h: 22, night: 1, brightness: .30, tint: [23, 43, 53], warmth: 0 },
+  { h: 24, night: 1, brightness: .30, tint: [23, 43, 53], warmth: 0 },
 ]
 /** Warm cloud light peaks around sunset and fades before the late-night sky. */
 export function sunsetAt(hour: number) {

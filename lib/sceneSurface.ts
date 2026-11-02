@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { companionLightPulse } from './sceneEnvironment'
+import { companionLightPulse, NIGHT_PALETTE } from './sceneEnvironment'
 
 // One texture pass moves the photographed clouds and water, with separate foliage motion and nocturnal emission.
 export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElement, plants: HTMLCanvasElement, details: HTMLCanvasElement) {
@@ -15,6 +15,7 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
   plate.generateMipmaps = regions.generateMipmaps = meadow.generateMipmaps = accents.generateMipmaps = false
   const uniforms = {
     plate: { value: plate }, regions: { value: regions }, meadow: { value: meadow }, details: { value: accents },
+    flowerGold: { value: new THREE.Vector3(...NIGHT_PALETTE.gold) }, flowerCyan: { value: new THREE.Vector3(...NIGHT_PALETTE.cyan) },
     componentPulse: { value: new THREE.Vector2(1, 1) }, sunset: { value: 0 },
     glowOnly: { value: 0 }, night: { value: 0 },
     time: { value: 0 }, rain: { value: 0 }, runoff: { value: 0 }, fall: { value: 0 },
@@ -27,6 +28,7 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
       varying vec2 uvScene;
       uniform sampler2D plate, regions, meadow, details;
       uniform vec2 componentPulse;
+      uniform vec3 flowerGold, flowerCyan;
       uniform float time, rain, runoff, fall, glowOnly, night, sunset;
       vec4 photo(vec2 p) { return texture2D(plate, clamp(p,vec2(.001),vec2(.999))); }
       vec3 evening(vec3 c, vec2 p) {
@@ -57,8 +59,12 @@ export function createSceneSurface(image: HTMLImageElement, mask: HTMLCanvasElem
           vec2 devices=texture2D(details,plantUV).rg;
           float blink=1.+devices.r*(componentPulse.x-1.)+devices.g*(componentPulse.y-1.);
           float emission=(foliage.g*.85+foliage.b*.9)*shimmer*night*blink;
-          vec3 hue=mix(vec3(1.,.72,.28),vec3(.5,.88,1.),
-                       smoothstep(.8,.98,sin(p.x*240.+p.y*113.)*.5+.5)*.28);
+          // Cool accents follow the plate's pale/blue petals, rather than a patterned overlay.
+          vec3 petal=photo(plantUV).rgb;
+          float cyan=smoothstep(.02,.14,petal.b-petal.r*.82)*.90;
+          vec3 hue=mix(flowerGold,flowerCyan,cyan);
+          // The companions retain their own amber material, independent of the flower palette.
+          hue=mix(hue,vec3(1.,.72,.28),max(devices.r,devices.g));
           gl_FragColor=vec4(hue*emission,1.);
           return;
         }

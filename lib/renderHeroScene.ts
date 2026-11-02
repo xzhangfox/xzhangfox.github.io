@@ -1,6 +1,6 @@
 import layouts from './sceneSkyline.json'
 import { createSceneSurface } from './sceneSurface'
-import { approach, catTailAngle, companionLightPulse, clamp, lightAt, type SceneEnvironment } from './sceneEnvironment'
+import { approach, catTailAngle, companionLightPulse, clamp, lightAt, NIGHT_PALETTE, type SceneEnvironment } from './sceneEnvironment'
 
 type Drop = { x: number; y: number; r: number; age: number; wait: number; speed: number; seed: number; trail: { x: number; y: number }[] }
 type Rain = { x: number; y: number; speed: number; depth: number }
@@ -148,7 +148,9 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
       const average = neighbors.reduce((sum, n) => sum + (colors[n] + colors[n + 1] + colors[n + 2]) / 3, 0) / 4
       const tip = clamp((Math.max(colors[i], colors[i + 1], colors[i + 2]) - 150) / 95) * clamp((luma - average + 8) / 55)
       v[i] = Math.max(leaf, nearby * .85) * 255
-      let emission = clamp(leaf * .09 + tip * Math.max(leaf, nearby) * .95)
+      // Keep bright flower tips; reduce uniform yellow fill, especially on distant slopes.
+      const distanceFade = .58 + .42 * clamp((y / mask.height - .5) / .38)
+      let emission = clamp((leaf * .025 + tip * Math.max(leaf, nearby) * .80) * distanceFade)
       const component = components[i / 4]
       if (component > 0) {
         const r = colors[i], g = colors[i + 1], b = colors[i + 2]
@@ -167,7 +169,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoEleme
     for (let i = 0; i < vegetation.data.length; i += 4) {
       vegetation.data[i] = blurred[i]; vegetation.data[i + 2] = blurred[i + 1]
       const glow = clamp((vegetation.data[i + 1] * .85 + vegetation.data[i + 2] * .9) / 255) * 255
-      emission.data[i] = glow; emission.data[i + 1] = glow * .72; emission.data[i + 2] = glow * .28; emission.data[i + 3] = 255
+      const t = clamp((colors[i + 2] / 255 - colors[i] / 255 * .82 - .02) / .12)
+      const cyan = components[i / 4] > 0 ? 0 : t * t * (3 - 2 * t) * .90
+      const gold = components[i / 4] > 0 ? [1, .72, .28] : NIGHT_PALETTE.gold
+      for (let c = 0; c < 3; c++) emission.data[i + c] = glow * (gold[c] * (1 - cyan) + NIGHT_PALETTE.cyan[c] * cyan)
+      emission.data[i + 3] = 255
     }
     pcx.putImageData(vegetation, 0, 0); ec.putImageData(emission, 0, 0)
     detailContext.putImageData(detailPixels, 0, 0)
