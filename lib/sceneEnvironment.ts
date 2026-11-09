@@ -1,11 +1,6 @@
 export type ScenePhase = 'predawn' | 'morning' | 'day' | 'dusk' | 'night' | 'deep'
 export type SceneWeather = 'auto' | 'clear' | 'mist' | 'drizzle' | 'storm'
 export type RGB = readonly [number, number, number]
-// Inspired by the original film: champagne flowers against teal-blue shadows.
-export const NIGHT_PALETTE = {
-  gold: [1, .80, .49],
-  cyan: [.35, .79, .90],
-} as const
 export const SCENE_PHASES: { id: ScenePhase; hour: number; en: string; zh: string }[] = [
   { id: 'predawn', hour: 5, en: 'Before dawn', zh: '凌晨' },
   { id: 'morning', hour: 7, en: 'Morning', zh: '清晨' },
@@ -67,18 +62,6 @@ export function sunsetAt(hour: number) {
   const h = ((hour % 24) + 24) % 24
   return smooth((h - 16.25) / 1.25) * (1 - smooth((h - 19.25) / 1.25))
 }
-/** Two soft, staggered indicator blinks; no animation at the reduced-motion time of zero. */
-export function companionLightPulse(seconds: number, kitten = false) {
-  const age = ((Math.max(0, seconds) % (kitten ? 31 : 23)) - (kitten ? 13 : 7))
-  if (age < 0 || age > 2) return 1
-  return 1 - .58 * Math.exp(-2 * Math.pow((age - .55) / .18, 2)) - .4 * Math.exp(-2 * Math.pow((age - 1.1) / .22, 2))
-}
-/** A short, eased tail gesture between long resting intervals. */
-export function catTailAngle(seconds: number) {
-  const age = Math.max(0, seconds) % 29 - 6
-  if (age <= 0 || age >= 5) return 0
-  return Math.sin(age * 2.1) * .32 * smooth(age / .8) * smooth((5 - age) / 1.2)
-}
 export function lightAt(hour: number) {
   const h = ((hour % 24) + 24) % 24
   const end = LIGHT.findIndex((v, i) => i > 0 && h <= v.h)
@@ -90,7 +73,7 @@ export function lightAt(hour: number) {
 }
 export interface SceneEnvironment {
   hour: number; phase: ScenePhase; weather: Exclude<SceneWeather, 'auto'>; rain: number
-  fog: number; wetness: number; stream: number; waterfall: number; preview: boolean
+  fog: number; wetness: number; preview: boolean
   light: ReturnType<typeof lightAt>
 }
 export function environmentAt(date: Date, previewHour: number | null = null, weather: SceneWeather = 'auto'): SceneEnvironment {
@@ -101,8 +84,7 @@ export function environmentAt(date: Date, previewHour: number | null = null, wea
   const fog = weather === 'clear' ? 0 : clamp(dawn * .65 + rain * .18 + (weather === 'mist' ? .6 : 0), 0, .9)
   return {
     hour, phase: phaseAt(hour), weather: rain > .5 ? 'storm' : rain > .02 ? 'drizzle' : fog > .35 ? 'mist' : 'clear',
-    rain, fog, wetness: recentRain(stamp, 0, 180), stream: recentRain(stamp, 8, 55),
-    waterfall: recentRain(stamp, 24, 110), preview: previewHour !== null || weather !== 'auto', light: lightAt(hour),
+    rain, fog, wetness: recentRain(stamp, 0, 180), preview: previewHour !== null || weather !== 'auto', light: lightAt(hour),
   }
 }
 /** Exponential response is frame-rate independent and leaves water after rain stops. */

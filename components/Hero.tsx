@@ -1,161 +1,32 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { ArrowDown, ArrowUpRight } from 'lucide-react'
 import { scrollToSection } from '@/lib/scrollToSection'
-import { motion } from 'framer-motion'
 import { useLanguage } from '@/lib/i18n'
 
 export default function Hero() {
   const { t, language } = useLanguage()
-  const TITLES = t.hero.titles
-  const [titleIndex, setTitleIndex] = useState(0)
-  const [displayText, setDisplayText] = useState('')
-  const [isDeleting, setIsDeleting] = useState(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
-
-  useEffect(() => {
-    setTitleIndex(0)
-    setDisplayText('')
-    setIsDeleting(false)
-  }, [language])
-
-  useEffect(() => {
-    const current = TITLES[titleIndex]
-    if (!isDeleting && displayText === current) {
-      timerRef.current = setTimeout(() => setIsDeleting(true), 2400)
-      return
-    }
-    if (isDeleting && displayText === '') {
-      setIsDeleting(false)
-      setTitleIndex((i) => (i + 1) % (TITLES.length - 1))
-      return
-    }
-    const speed = isDeleting ? 35 : 65
-    timerRef.current = setTimeout(() => {
-      setDisplayText(isDeleting ? current.slice(0, displayText.length - 1) : current.slice(0, displayText.length + 1))
-    }, speed)
-    return () => clearTimeout(timerRef.current)
-  }, [displayText, isDeleting, titleIndex, TITLES])
-
-  const nameChars = t.nav.name.split('')
-
   return (
-    <section data-home-hero className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden">
-
-      {/* Gradient overlay: darken edges, fade to bg-bg at bottom */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          zIndex: 1,
-          background: [
-            'linear-gradient(to bottom,',
-            '  rgba(10,10,10,0.35) 0%,',
-            '  rgba(10,10,10,0.15) 28%,',
-            '  rgba(10,10,10,0.22) 58%,',
-            '  rgba(10,10,10,0.50) 90%,',
-            '  rgba(10,10,10,1.00) 100%',
-            ')',
-          ].join(' '),
-        }}
-      />
-
-      {/* Content */}
-      <div className="relative text-center px-6 max-w-5xl mx-auto -translate-y-6 md:-translate-y-10" style={{ zIndex: 2 }}>
-        {/* Subtle dark vignette behind text for readability */}
-        <div
-          className="absolute pointer-events-none"
-          style={{
-            inset: '-60px -80px',
-            background: 'radial-gradient(ellipse 50% 50% at 50% 50%, rgba(10,10,10,0.62) 0%, rgba(10,10,10,0.22) 55%, transparent 100%)',
-          }}
-        />
-        {/* Location label */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.2 }}
-          className="flex items-center justify-center gap-3 mb-8"
-        >
-          <span className="w-8 h-px bg-gold/60" />
-          <span className="section-label text-gold/80">{t.hero.badge}</span>
-          <span className="w-8 h-px bg-gold/60" />
-        </motion.div>
-
-        {/* Name */}
-        <h1
-          className="text-[clamp(3.5rem,11vw,8.5rem)] font-bold leading-none tracking-[0.08em] mb-6 select-none uppercase"
-          style={{ filter: 'drop-shadow(0 2px 24px rgba(0,0,0,0.8)) drop-shadow(0 0 48px rgba(0,0,0,0.6))' }}
-        >
-          {nameChars.map((char, i) => (
-            <motion.span
-              key={i}
-              initial={{ opacity: 0, y: 40 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.7, delay: 0.4 + i * 0.045, ease: [0.22, 1, 0.36, 1] }}
-              className={char === ' ' ? 'inline-block w-8' : 'inline-block gold-gradient'}
-            >
-              {char}
-            </motion.span>
-          ))}
+    <section data-home-hero className="sky-hero">
+      <div className="sky-hero-content">
+        <p className="sky-eyebrow">{language === 'zh' ? 'AI 工程师' : 'AI ENGINEER'} <span aria-hidden="true">/</span> {language === 'zh' ? '尔湾，加州' : 'IRVINE, CA'}</p>
+        <h1 className="sky-name" aria-label="Xi Zhang">
+          <span data-sky-word>XI</span><span data-sky-word>ZHANG</span>
         </h1>
-
-        {/* Typewriter */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.4, delay: 1.0 }}
-          className="h-8 flex items-center justify-center mb-8"
-        >
-          <span className="text-lg md:text-xl text-white/90 font-mono tracking-wide" style={{ textShadow: '0 2px 20px rgba(0,0,0,0.9), 0 0 40px rgba(0,0,0,0.7)' }}>
-            {displayText}
-            <span className="inline-block w-0.5 h-5 bg-gold ml-0.5 animate-pulse-gold" />
-          </span>
-        </motion.div>
-
-        {/* Description */}
-        <motion.p
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 1.1, ease: [0.22, 1, 0.36, 1] }}
-          className="text-base md:text-lg text-white/85 max-w-xl mx-auto leading-relaxed mb-12"
-          style={{ textShadow: '0 2px 16px rgba(0,0,0,0.9)' }}
-        >
-          {t.hero.description}
-        </motion.p>
-
-        {/* CTAs */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 1.3, ease: [0.22, 1, 0.36, 1] }}
-          className="flex items-center justify-center gap-4 flex-wrap"
-        >
-          <button
-            onClick={() => scrollToSection('#projects')}
-            className="px-7 py-3 bg-gold text-black font-semibold text-sm rounded-xl hover:bg-gold-light transition-all duration-200 hover:scale-105 active:scale-95"
-          >
-            {t.hero.viewProjects}
+        <p className="sky-intro">{language === 'zh' ? '让想法，穿过技术，成为现实。' : 'Turning ideas into things that matter.'}</p>
+        <p className="sky-description">{t.hero.description}</p>
+        <div className="sky-actions">
+          <button className="sky-primary" onClick={() => scrollToSection('#projects')}>
+            {t.hero.viewProjects}<ArrowUpRight size={16} aria-hidden="true" />
           </button>
-          <button
-            onClick={() => document.querySelector('#contact')?.scrollIntoView({ behavior: 'smooth' })}
-            className="portfolio-glass-action px-7 py-3 text-gold font-semibold text-sm rounded-xl transition-colors duration-200"
-          >
+          <button className="sky-secondary" onClick={() => scrollToSection('#contact')}>
             {t.hero.getInTouch}
           </button>
-        </motion.div>
+        </div>
       </div>
-
-      {/* Scroll indicator */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.6, delay: 2.0 }}
-        className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
-        style={{ zIndex: 2 }}
-      >
-        <span className="section-label text-white/30">{t.hero.scroll}</span>
-        <div className="w-px h-12 bg-gradient-to-b from-gold/50 to-transparent" />
-      </motion.div>
+      <button className="sky-scroll" onClick={() => scrollToSection('#about')} aria-label={language === 'zh' ? '了解更多' : 'Explore more'}>
+        <span>{t.hero.scroll}</span><ArrowDown size={14} aria-hidden="true" />
+      </button>
     </section>
   )
 }

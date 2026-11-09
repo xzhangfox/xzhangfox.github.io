@@ -10,7 +10,6 @@ export default function HeroAtmosphere() {
   const { language } = useLanguage()
   const zh = language === 'zh'
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
   const controlRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const engine = useRef<SceneController | null>(null)
@@ -30,14 +29,14 @@ export default function HeroAtmosphere() {
   const Icon = environment.rain > .02 ? CloudRain : environment.fog > .35 ? CloudFog : environment.light.night > .6 ? Moon : Sun
 
   useEffect(() => {
-    const canvas = canvasRef.current, video = videoRef.current
-    if (!canvas || !video) return
+    const canvas = canvasRef.current
+    if (!canvas) return
     const media = matchMedia('(prefers-reduced-motion: reduce)')
     let preference: string | null = null
     try { preference = localStorage.getItem('portfolio-scene-motion') } catch { /* Optional preference. */ }
     const initialReduced = preference === 'reduced' || (preference !== 'full' && media.matches)
     setReduced(initialReduced); setNow(new Date())
-    engine.current = createHeroScene(canvas, video, environmentAt(new Date()), initialReduced)
+    engine.current = createHeroScene(canvas, environmentAt(new Date()), initialReduced)
     const interval = window.setInterval(() => setNow(new Date()), 15000)
     const onMotion = () => {
       let stored: string | null = null
@@ -50,12 +49,14 @@ export default function HeroAtmosphere() {
     const hero = document.querySelector('[data-home-hero]')
     const observer = new IntersectionObserver(([entry]) => {
       const active = entry.isIntersecting
+      document.documentElement.dataset.heroActive = String(active)
       engine.current?.setVisible(active); setVisible(active)
       if (!active) setOpen(false)
     }, { threshold: 0 })
     if (hero) observer.observe(hero)
     return () => {
       clearInterval(interval); observer.disconnect(); engine.current?.destroy(); engine.current = null
+      delete document.documentElement.dataset.heroActive
       media.removeEventListener('change', onMotion); document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])
@@ -84,13 +85,12 @@ export default function HeroAtmosphere() {
     <>
       <div className="hero-atmosphere" aria-hidden="true">
         <canvas ref={canvasRef} className="hero-atmosphere-canvas" />
-        <video ref={videoRef} loop muted playsInline preload="none" className="hidden" src="/videos/hero-bg.mp4" />
       </div>
       <div className="scene-controls" ref={controlRef} hidden={!visible || !now}>
         {open && (
           <section className="scene-panel" id="scene-options" role="dialog" aria-label={zh ? '光影与天气' : 'Light & weather'}>
             <div className="scene-panel-head">
-              <div><h2>{zh ? '同一片天空' : 'Under the same sky'}</h2><p>{zh ? '山谷有自己的时间与天气。' : 'One valley. Its own time and weather.'}</p></div>
+              <div><h2>{zh ? '玻璃之外' : 'Beyond the glass'}</h2><p>{zh ? '一扇随时间与天气变化的天空窗口。' : 'A little window into the passing sky.'}</p></div>
               <button type="button" className="scene-close" aria-label={zh ? '关闭场景设置' : 'Close scene settings'} onClick={() => { setOpen(false); triggerRef.current?.focus() }}><X size={16} aria-hidden="true" /></button>
             </div>
             <fieldset>
@@ -111,7 +111,7 @@ export default function HeroAtmosphere() {
             </label>
             <label className="scene-motion"><input type="checkbox" checked={reduced} onChange={event => toggleReduced(event.target.checked)} /><span>{zh ? '减少动效' : 'Reduce motion'}</span></label>
             <button type="button" className="scene-restore" onClick={restore} disabled={!environment.preview}>{zh ? '恢复当地时间与自然天气' : 'Use local time & natural weather'}</button>
-            <p className="scene-note">{zh ? '天气为氛围模拟，不读取定位。雨停后溪流、瀑布与湿润反光会缓慢回落。' : 'Atmospheric weather, without location access. Water and wet surfaces linger after the rain.'}</p>
+            <p className="scene-note">{zh ? '跟随你的当地时间。天气为氛围模拟，不读取定位；雨停后，水珠与滑痕会慢慢消退。' : 'Your local time, with atmospheric weather. No location access. Droplets and their traces slowly fade after rain.'}</p>
           </section>
         )}
         <button ref={triggerRef} type="button" className="scene-trigger" aria-expanded={open} aria-controls="scene-options" onClick={() => setOpen(value => !value)}>

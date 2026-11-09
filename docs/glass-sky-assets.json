@@ -1,0 +1,14 @@
+{
+  "tool": "built-in image_gen",
+  "mode": "generate",
+  "use_case": "photorealistic-natural",
+  "prompt": "Use case: photorealistic-natural. Asset type: transparent cloud layer for an animated website sky, no text or UI. Generate a wide panoramic 3:2 isolated collection of natural fair-weather cumulus clouds, genuinely transparent background with soft alpha edges. Several broad connected cottony cloud formations drift from lower left through center to upper right, with large transparent gaps between them; balanced airy coverage about 50 percent of frame. Seen from the ground looking upward, realistic sunlight from upper left, luminous ivory white cloud tops and very subtle cool dove-gray shaded undersides. Large rounded billowing volumes, fine soft vapor fringes, beautiful natural photographic detail, calm summer afternoon. No landscape, horizon, ground, objects, people, stars, sun disc, rain, text, borders, watermark, blue rectangle or opaque sky. All non-cloud areas must be transparent, including the gaps between clouds; no cropped rectangular cloud photograph. High-quality photographic VFX cloud plate.",
+  "source_file": "exec-f9912e42-71c8-4fb7-860a-5792d8e756cd.png",
+  "saved_path": "public/scene/glass-clouds-v1.webp",
+  "size": [
+    1536,
+    1024
+  ],
+  "alpha_preserved": true,
+  "optimization": "WebP quality 88, method 6; original alpha retained"
+}

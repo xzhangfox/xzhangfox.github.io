@@ -1,448 +1,394 @@
-import layouts from './sceneSkyline.json'
-import { createSceneSurface } from './sceneSurface'
-import { approach, catTailAngle, companionLightPulse, clamp, lightAt, NIGHT_PALETTE, type SceneEnvironment } from './sceneEnvironment'
+import * as THREE from 'three'
+import { approach, clamp, mix, smooth, type SceneEnvironment, type RGB } from './sceneEnvironment'
+import { createApertureField, createWetHistory, dropStats, glassDrop, stepGlassWater, type GlassDrop } from './glassPhysics'
 
-type Drop = { x: number; y: number; r: number; age: number; wait: number; speed: number; seed: number; trail: { x: number; y: number }[] }
-type Rain = { x: number; y: number; speed: number; depth: number }
 export interface SceneController {
-  update: (environment: SceneEnvironment, reduced: boolean) => void
-  setVisible: (visible: boolean) => void
-  destroy: () => void
+  update(environment: SceneEnvironment, reduced: boolean): void
+  setVisible(visible: boolean): void
+  destroy(): void
 }
-// Geometry is registered separately for the complete desktop and portrait compositions.
-const NOISE = (n: number) => { const r = Math.sin(n * 97.13 + 113.79) * 43758.54; return r - Math.floor(r) }
+const MAX_DROPS = 96
+const vertex = 'varying vec2 vUv; void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}'
+const noise = `
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+float noise2(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+1.),f.x),f.y);}
+float fbm(vec2 p){return noise2(p)*.57+noise2(p*2.03+17.)*.28+noise2(p*4.11+31.)*.15;}`
+const skyFragment = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D clouds;
+uniform vec3 topColor,bottomColor,cloudColor;
+uniform float time,aspect,night,rain,sunset;
+${noise}
+vec4 cloud(vec2 p){p.x=1.-abs(mod(p.x,2.)-1.);return texture2D(clouds,clamp(p,vec2(.001),vec2(.999)));}
+void main(){
+  vec2 p=vUv;
+  vec3 sky=mix(bottomColor,topColor,pow(p.y,.65));
+  float haze=pow(1.-p.y,3.);
+  sky+=vec3(.04,.025,.015)*haze*(1.-night);
+  // Two photographic layers have different distances and wind speeds. The camera stays fixed.
+  vec4 c=cloud(vec2(p.x*aspect/1.7+time*.009+.14,p.y*.75+.23+sin(time*.012)*.014));
+  vec4 farCloud=cloud(vec2(p.x*aspect/2.9-time*.003+.85,p.y*.68+.24));
+  float density=c.a*(1.-night*.45);
+  float detail=dot(c.rgb,vec3(.299,.587,.114));
+  vec3 shade=mix(cloudColor*vec3(.62,.68,.77),cloudColor,smoothstep(.32,.98,detail));
+  shade=mix(shade,vec3(.27,.32,.40),rain*.78);
+  sky=mix(sky,shade,density*mix(.98,.68,night));
+  sky=mix(sky,cloudColor*.92,farCloud.a*.10*(1.-density));
+  // Sparse points and a soft, slowly rotating galactic haze live behind the cloud layer.
+  float a=time*.00012;vec2 q=(p-.5)*vec2(aspect,1.);
+  q=mat2(cos(a),-sin(a),sin(a),cos(a))*q;
+  vec2 grid=q*125.,cell=floor(grid),f=fract(grid)-.5;
+  float seed=hash(cell),star=1.-smoothstep(.018,.14,length(f));
+  star*=step(.962,seed)*(.65+.35*sin(seed*155.+time*.4)*sin(seed*155.+time*.4));
+  float band=exp(-pow((q.y-q.x*.44-.10)*4.,2.))*fbm(q*5.+3.);
+  sky+=(vec3(.78,.86,1.)*star*1.3+vec3(.19,.22,.35)*band*.48)*night*(1.-density*.6)*(1.-rain);
+  float moon=exp(-length((p-vec2(.77,.76))*vec2(aspect,1.))*18.);
+  sky+=vec3(.12,.16,.23)*moon*night*(1.-density)*(1.-rain);
+  sky=mix(sky,vec3(.27,.33,.40)*mix(1.,.25,night),rain*.55);
+  gl_FragColor=vec4(sky,1.);
+}`
+const blurFragment = `
+varying vec2 vUv;
+uniform sampler2D source;
+uniform vec2 stepSize;
+void main(){
+ vec3 c=texture2D(source,vUv).rgb*.227027;
+ c+=(texture2D(source,vUv+stepSize*1.384615).rgb+texture2D(source,vUv-stepSize*1.384615).rgb)*.316216;
+ c+=(texture2D(source,vUv+stepSize*3.230769).rgb+texture2D(source,vUv-stepSize*3.230769).rgb)*.070270;
+ gl_FragColor=vec4(c,1.);
+}`
+const dropVertex = `
+attribute vec4 droplet;
+attribute float dropMode;
+uniform vec2 resolution;
+varying vec2 local,screen;
+varying float mode;
+void main(){
+ local=position.xy;mode=dropMode;
+ vec2 extent=vec2(droplet.z,droplet.z*droplet.w);
+ vec2 p=droplet.xy+position.xy*extent;
+ screen=p/resolution;
+ gl_Position=vec4(p/resolution*2.-1.,0.,1.);
+}`
+const dropFragment = `
+precision highp float;
+varying vec2 local,screen;
+varying float mode;
+uniform sampler2D letters;
+uniform float scrollOffset;
+void main(){
+ // Surface tension keeps the bottom round, with a narrower shoulder as the bead slides.
+ vec2 p=vec2(local.x/(.91-.12*local.y),local.y);
+ float r2=dot(p,p);if(r2>1.)discard;
+ float z=sqrt(max(.001,1.-r2));
+ vec3 normal=normalize(vec3(p*.88,z));
+ float coverage=1.-smoothstep(.87,1.,r2);
+ float opening=texture2D(letters,vec2(screen.x,screen.y-scrollOffset)).a;
+ if(mode<.5)coverage*=1.-opening;
+ if(mode>1.5&&mode<2.5)coverage*=opening;
+ gl_FragColor=vec4(normal.xy*.5+.5,z,coverage);
+}`
+const glassFragment = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D clearSky,softSky,letters,windowField,water,traces;
+uniform vec2 resolution;
+uniform vec3 milk;
+uniform float fog,night,scrollOffset,insetDepth;
+${noise}
+float aperture(vec2 p){p.y-=scrollOffset;return texture2D(letters,clamp(p,vec2(0.),vec2(1.))).a;}
+vec4 windowSurface(vec2 p){p.y-=scrollOffset;return texture2D(windowField,clamp(vec2(p.x,1.-p.y),vec2(0.),vec2(1.)));}
+vec3 pane(vec2 p){
+ float window=aperture(p),trail=texture2D(traces,vec2(p.x,p.y-scrollOffset)).r;
+ vec2 rough=vec2(hash(floor(p*resolution)),hash(floor(p*resolution)+13.))-.5;
+ vec3 blur=texture2D(softSky,p+rough/resolution*1.5).rgb;
+ float breath=fbm(p*vec2(3.,2.)+7.);
+ float opacity=.77+fog*(.06+breath*.07)-trail*(.035+fog*.13);
+ vec3 frost=mix(blur,milk,opacity);
+ frost+=(hash(p*resolution)-.5)*.012*(1.-night*.45);
+ vec3 view=texture2D(clearSky,p).rgb;
+ vec4 boundary=windowSurface(p);float distance=(boundary.r-.5)*64.;
+ vec2 normal=normalize(boundary.gb*2.-1.+vec2(.00001));
+ // Only the inside of the opening has thickness. There is no raised outer bevel.
+ float upper=clamp(dot(normal,vec2(.44,.90)),0.,1.);
+ float bottom=clamp(-normal.y,0.,1.);
+ float thickness=insetDepth*(.45+upper*.65);
+ float wall=1.-smoothstep(thickness-.45,thickness+.65,distance);
+ vec3 recess=frost*(.89-upper*.24+bottom*.09);
+ recess=mix(recess,view,.10);
+ float occlusion=exp(-max(0.,distance-thickness)/(insetDepth*.85))*upper*.18;
+ vec3 opening=mix(view*(1.-occlusion),recess,wall);
+ return mix(frost,opening,window);
+}
+void main(){
+ vec2 p=vUv;vec4 drop=texture2D(water,p);
+ vec3 color=pane(p);
+ if(drop.a>.001){
+   vec2 n=drop.rg*2.-1.;float z=drop.b;
+   // Thick water bends the underlying aperture and magnifies a little of the distant sky.
+   vec3 normal=normalize(vec3(n,z));
+   vec3 transmitted=refract(vec3(0.,0.,-1.),normal,1./1.333);
+   vec2 bent=clamp(p+transmitted.xy*(.006+z*.018),vec2(.001),vec2(.999));
+   vec3 lens=pane(bent);
+   lens=mix(lens,texture2D(clearSky,bent).rgb,.17*(1.-aperture(bent)));
+   float fresnel=.02037+.97963*pow(1.-z,5.);
+   vec3 reflectionSky=texture2D(clearSky,clamp(p+n*.12+vec2(0.,.08),vec2(.001),vec2(.999))).rgb;
+   lens=mix(lens,reflectionSky,fresnel*.72);
+   float glint=pow(max(0.,dot(normal,normalize(vec3(-.45,.62,.64)))),34.);
+   float reflection=pow(max(0.,dot(normal,normalize(vec3(-.55,.73,.4)))),8.);
+   lens+=vec3(.91,.96,1.)*(glint*.57+reflection*.06)*mix(1.,.50,night);
+   lens+=vec3(.65,.79,.92)*pow(max(0.,-normal.y),6.)*.15*z;
+   color=mix(color,lens,drop.a*.95);
+ }
+ // Condensation consists of very small beads, rather than a uniform fog overlay.
+ vec2 g=p*resolution/8.,cell=floor(g),f=fract(g)-.5;
+ float seed=hash(cell),micro=(1.-smoothstep(.02,.13,length(f-vec2(seed-.5,hash(cell+8.)-.5)*.5)));
+ float condensation=fog*step(.71,seed)*(1.-texture2D(traces,vec2(p.x,p.y-scrollOffset)).r*.9)*(1.-aperture(p));
+ color+=micro*condensation*.055;
+ gl_FragColor=vec4(color,1.);
+}`
 
-// ponytail: Texture displacement animates this fixed viewpoint; walking through the valley
-// would require authored depth/3D geometry instead of a single photographic plate.
-export function createHeroScene(canvas: HTMLCanvasElement, video: HTMLVideoElement, initial: SceneEnvironment, reduced: boolean): SceneController | null {
-  const ctx = canvas.getContext('2d', { alpha: false })
-  if (!ctx) return null
-  let layout = layouts.desktop
-  let SKY = new Path2D(layout.sky), GROUND = new Path2D(), WATER = new Path2D(layout.water), FALL = new Path2D(layout.fall)
-  let surface: ReturnType<typeof createSceneSurface> = null, surfaceSource: HTMLImageElement | null = null
-  let emissionFallback: HTMLCanvasElement | null = null
-  let cameraScale = 1, cameraX = 0, cameraY = 0
-  const backing = document.createElement('canvas'), frost = document.createElement('canvas'), skyLayer = document.createElement('canvas'), skyMask = document.createElement('canvas')
-  const scene = backing.getContext('2d'), glass = frost.getContext('2d'), sky = skyLayer.getContext('2d'), maskContext = skyMask.getContext('2d')
-  if (!scene || !glass || !sky || !maskContext) return null
-  const desktop = new Image(), portrait = new Image(), desktopFallback = new Image(), portraitFallback = new Image(), nightSky = new Image(), wideNightSky = new Image(), tailImage = new Image()
-  let master = desktop, fallback = desktopFallback
-  let env = initial, quiet = reduced, disposed = false, visible = true, pageVisible = !document.hidden
-  let width = 1, height = 1, dpr = 1, scale = 1, ox = 0, oy = 0, frame = 0, previous = 0, elapsed = 0
-  let hour = env.hour, rain = env.rain, fog = env.fog, wet = env.wetness, runoff = env.stream, fall = env.waterfall
-  let painted = false, videoWanted = false
-  let drops: Drop[] = [], streaks: Rain[] = []
-  desktop.src = layouts.desktop.reference; portrait.src = layouts.mobile.reference
-  desktopFallback.src = '/scene/valley-companions-v2-fallback.jpg'; portraitFallback.src = '/scene/valley-companions-v2-mobile-fallback.jpg'
-  nightSky.src = '/scene/night-sky.webp'; wideNightSky.src = '/scene/night-sky-wide.webp'; tailImage.src = '/scene/robot-cat-tail.webp'
-  const world = (c: CanvasRenderingContext2D) => { c.transform(cameraScale, 0, 0, cameraScale, cameraX, cameraY) }
-  function drawTail(time: number, glow: number | null = null, sunset = 0) {
-    scene!.save(); world(scene!)
-    scene!.translate(layout.tail[0], layout.tail[1]); scene!.rotate(catTailAngle(time)); scene!.scale(layout.tail[2], layout.tail[2])
-    if (glow === null) {
-      if (tailImage.complete && tailImage.naturalWidth) {
-        scene!.imageSmoothingEnabled = true; scene!.imageSmoothingQuality = 'high'
-        if (sunset > .001) scene!.filter = 'sepia(' + sunset * .6 + ') saturate(' + (1 + sunset * .3) + ') brightness(' + (1 - sunset * .2) + ')'
-        scene!.beginPath(); scene!.rect(0, -28, 28, 33); scene!.clip()
-        scene!.drawImage(tailImage, -2, -21, 22, 23)
-      }
-    } else {
-      scene!.globalCompositeOperation = 'screen'
-      const halo = scene!.createRadialGradient(19, -20, 0, 19, -20, 4.2)
-      halo.addColorStop(0, 'rgba(255,186,72,' + glow * .7 + ')'); halo.addColorStop(1, 'rgba(255,164,43,0)')
-      scene!.fillStyle = halo; scene!.fillRect(14, -25, 10, 10)
-      scene!.fillStyle = 'rgba(255,225,159,' + glow * .7 + ')'; scene!.beginPath(); scene!.arc(19, -20, .8, 0, Math.PI * 2); scene!.fill()
+// Continuous palettes across midnight; colors describe the sky, rather than tinting an old landscape.
+const SKY: { h: number; top: RGB; bottom: RGB; cloud: RGB; milk: RGB }[] = [
+  {h:0,top:[.025,.045,.11],bottom:[.13,.20,.34],cloud:[.42,.51,.68],milk:[.105,.145,.22]},
+  {h:4,top:[.09,.08,.20],bottom:[.37,.31,.47],cloud:[.48,.44,.60],milk:[.23,.24,.34]},
+  {h:6,top:[.44,.57,.73],bottom:[.94,.78,.69],cloud:[1,.90,.85],milk:[.82,.83,.85]},
+  {h:8,top:[.25,.59,.82],bottom:[.70,.85,.92],cloud:[1,.98,.94],milk:[.82,.89,.91]},
+  {h:12,top:[.16,.53,.82],bottom:[.55,.78,.92],cloud:[1,1,1],milk:[.84,.90,.92]},
+  {h:16,top:[.28,.56,.78],bottom:[.81,.80,.81],cloud:[1,.96,.88],milk:[.85,.88,.90]},
+  {h:18.5,top:[.29,.27,.48],bottom:[.96,.53,.43],cloud:[1,.76,.65],milk:[.79,.73,.78]},
+  {h:20.5,top:[.06,.07,.19],bottom:[.26,.23,.40],cloud:[.43,.42,.60],milk:[.20,.22,.33]},
+  {h:22,top:[.025,.045,.11],bottom:[.13,.20,.34],cloud:[.42,.51,.68],milk:[.105,.145,.22]},
+  {h:24,top:[.025,.045,.11],bottom:[.13,.20,.34],cloud:[.42,.51,.68],milk:[.105,.145,.22]},
+]
+function paletteAt(hour: number) {
+  const h=((hour%24)+24)%24, index=Math.max(1,SKY.findIndex((s,i)=>i>0&&h<=s.h))
+  const a=SKY[index-1], b=SKY[index], t=smooth((h-a.h)/(b.h-a.h))
+  const color=(key:'top'|'bottom'|'cloud'|'milk')=>a[key].map((v,i)=>mix(v,b[key][i],t)) as [number,number,number]
+  return {top:color('top'),bottom:color('bottom'),cloud:color('cloud'),milk:color('milk')}
+}
+
+export function createHeroScene(canvas: HTMLCanvasElement, initial: SceneEnvironment, reduced: boolean): SceneController {
+  let env=initial, quiet=reduced, visible=true, disposed=false, lost=false
+  let width=1,height=1,dpr=1,elapsed=0,previous=0,frame=0,rain=env.rain,fog=env.fog,wet=env.wetness,spawn=0
+  let drops:GlassDrop[]=[],field=createApertureField(new Uint8Array(1),1,1)
+  let wetHistory=createWetHistory(1,1),trailImage:ImageData|null=null
+  const stats=dropStats()
+  const cloudImage=new Image();cloudImage.src='/scene/glass-clouds-v1.webp'
+  const mask=document.createElement('canvas'), trail=document.createElement('canvas'), scratch=document.createElement('canvas'),fieldCanvas=document.createElement('canvas')
+  const maskCtx=mask.getContext('2d')!, trailCtx=trail.getContext('2d')!, scratchCtx=scratch.getContext('2d')!
+  let renderer:THREE.WebGLRenderer|null=null
+  try { renderer=new THREE.WebGLRenderer({canvas,alpha:false,antialias:false,depth:false,stencil:false,powerPreference:'low-power'}) } catch { /* Canvas fallback below. */ }
+  const gpu=renderer
+  const cloudTexture=new THREE.Texture(cloudImage), letterTexture=new THREE.CanvasTexture(mask), traceTexture=new THREE.CanvasTexture(trail)
+  let fieldTexture=new THREE.DataTexture(field.pixels,1,1,THREE.RGBAFormat)
+  for(const texture of [cloudTexture,letterTexture,traceTexture]) {texture.minFilter=texture.magFilter=THREE.LinearFilter;texture.generateMipmaps=false}
+  const target=()=>new THREE.WebGLRenderTarget(1,1,{depthBuffer:false,stencilBuffer:false,minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter})
+  const skyTarget=target(),blurA=target(),blurB=target(),waterTarget=target()
+  const skyUniforms={clouds:{value:cloudTexture},topColor:{value:new THREE.Vector3()},bottomColor:{value:new THREE.Vector3()},cloudColor:{value:new THREE.Vector3()},time:{value:0},aspect:{value:1},night:{value:0},rain:{value:0},sunset:{value:0}}
+  const blurUniforms={source:{value:skyTarget.texture},stepSize:{value:new THREE.Vector2()}}
+  const glassUniforms={clearSky:{value:skyTarget.texture},softSky:{value:blurB.texture},letters:{value:letterTexture},windowField:{value:fieldTexture},water:{value:waterTarget.texture},traces:{value:traceTexture},resolution:{value:new THREE.Vector2()},milk:{value:new THREE.Vector3()},fog:{value:0},night:{value:0},scrollOffset:{value:0},insetDepth:{value:5}}
+  const skyMaterial=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:skyFragment,uniforms:skyUniforms,depthTest:false,depthWrite:false})
+  const blurMaterial=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:blurFragment,uniforms:blurUniforms,depthTest:false,depthWrite:false})
+  const glassMaterial=new THREE.ShaderMaterial({vertexShader:vertex,fragmentShader:glassFragment,uniforms:glassUniforms,depthTest:false,depthWrite:false})
+  const plane=new THREE.PlaneGeometry(2,2),scene=new THREE.Scene(),camera=new THREE.Camera(),mesh=new THREE.Mesh(plane,skyMaterial)
+  scene.add(mesh)
+  const instances=new Float32Array(MAX_DROPS*4),modes=new Float32Array(MAX_DROPS),dropGeometry=new THREE.InstancedBufferGeometry()
+  dropGeometry.setIndex(plane.index);dropGeometry.setAttribute('position',plane.getAttribute('position'))
+  const instanceAttribute=new THREE.InstancedBufferAttribute(instances,4).setUsage(THREE.DynamicDrawUsage)
+  dropGeometry.setAttribute('droplet',instanceAttribute)
+  const modeAttribute=new THREE.InstancedBufferAttribute(modes,1).setUsage(THREE.DynamicDrawUsage);dropGeometry.setAttribute('dropMode',modeAttribute)
+  const dropMaterial=new THREE.ShaderMaterial({vertexShader:dropVertex,fragmentShader:dropFragment,uniforms:{resolution:{value:new THREE.Vector2()},letters:{value:letterTexture},scrollOffset:{value:0}},depthTest:false,depthWrite:false})
+  const dropScene=new THREE.Scene(),dropMesh=new THREE.Mesh(dropGeometry,dropMaterial);dropMesh.frustumCulled=false;dropScene.add(dropMesh)
+  const fallback=gpu?null:canvas.getContext('2d'), fallbackSky=document.createElement('canvas'), fallbackSoft=document.createElement('canvas'),fallbackCut=document.createElement('canvas'),fallbackInverse=document.createElement('canvas')
+  const fallbackCtx=fallbackSky.getContext('2d')!,softCtx=fallbackSoft.getContext('2d')!
+
+  function bead(anywhere=true,dew=false) {
+    const seed=Math.random(),r=dew?1.7+Math.pow(seed,3)*6:1.3+Math.pow(seed,2.8)*9
+    for(let i=0;i<12;i++){
+      const x=Math.random()*width,y=anywhere?Math.random()*height:-r*2
+      if(field.sample(x,y)<-r*.45)return glassDrop(x,y,r,seed)
     }
-    scene!.restore()
+    return null
   }
-  function prepareSurface(source: HTMLImageElement) {
-    if (surfaceSource === source) return
-    surface?.destroy(); surface = null; surfaceSource = source
-    const mask = document.createElement('canvas'); mask.width = layout.width; mask.height = layout.height
-    const m = mask.getContext('2d')!
-    m.fillStyle = '#000'; m.fillRect(0, 0, mask.width, mask.height)
-    m.fillStyle = '#f00'; m.fill(SKY)
-    m.fillStyle = '#0f0'; m.fill(WATER)
-    m.strokeStyle = '#00f'; m.lineWidth = layout.fallWidth; m.lineCap = 'round'; m.stroke(FALL)
-    // Keep moving reflections on cool/white water, excluding warm grass and dark boulders.
-    const pixels = m.getImageData(0, 0, mask.width, mask.height)
-    const photo = document.createElement('canvas'); photo.width = mask.width; photo.height = mask.height
-    const pc = photo.getContext('2d')!; pc.drawImage(source, 0, 0, mask.width, mask.height)
-    const colors = pc.getImageData(0, 0, mask.width, mask.height).data
-    for (let i = 0; i < pixels.data.length; i += 4) if (pixels.data[i + 1]) {
-      const r = colors[i], g = colors[i + 1], b = colors[i + 2]
-      const cool = clamp((b / Math.max(1, r) - .76) / .22) * clamp((Math.min(r, g, b) - 55) / 85)
-      pixels.data[i + 1] *= cool
+  function seedDrops(){drops=[];for(let i=0;i<Math.round(rain*58+fog*32);i++){const d=bead(true,rain<.02);if(d)drops.push(d)}spawn=0}
+  function textMask(){
+    const w=Math.round(width*dpr),h=Math.round(height*dpr)
+    // WebGL immutable texture storage must be released before a canvas changes dimensions.
+    if(mask.width!==w||mask.height!==h)letterTexture.dispose()
+    mask.width=w;mask.height=h
+    const hero=document.querySelector('[data-home-hero]')?.getBoundingClientRect()
+    const words:{left:number;right:number;top:number;height:number;inkTop:number;inkHeight:number}[]=[]
+    for(const word of document.querySelectorAll<HTMLElement>('[data-sky-word]')) {
+      const rect=word.getBoundingClientRect(),style=getComputedStyle(word),font=style.font
+      const top=rect.top-(hero?.top??0)
+      // The aperture follows the real heading layout and loaded font at every viewport size.
+      scratch.width=Math.ceil((rect.width+24)*dpr);scratch.height=Math.ceil((rect.height+12)*dpr)
+      scratchCtx.scale(dpr,dpr);scratchCtx.font=font;scratchCtx.textAlign='center';scratchCtx.textBaseline='alphabetic';scratchCtx.fillStyle='#fff'
+      scratchCtx.letterSpacing=style.letterSpacing
+      const metrics=scratchCtx.measureText(word.innerText),baseline=(rect.height+metrics.actualBoundingBoxAscent-metrics.actualBoundingBoxDescent)/2
+      words.push({left:rect.left,right:rect.right,top,height:rect.height,inkTop:top+baseline-metrics.actualBoundingBoxAscent,inkHeight:metrics.actualBoundingBoxAscent+metrics.actualBoundingBoxDescent})
+      scratchCtx.transform(1,0,-.10,1,rect.height*.05+12,0)
+      scratchCtx.fillText(word.innerText,rect.width/2,baseline)
+      maskCtx.drawImage(scratch,rect.left*dpr-12*dpr,top*dpr)
     }
-    for (let i = 0; i < pixels.data.length; i += 4) if (pixels.data[i + 2]) {
-      const r = colors[i], g = colors[i + 1], b = colors[i + 2]
-      pixels.data[i + 2] *= clamp((Math.min(r, g, b) - 90) / 95) * clamp((b / Math.max(1, r) - .76) / .22)
-    }
-    // Keep the hard geometry for foliage classification, but give cloud advection a distance field.
-    // The 128px smooth buffer exceeds the maximum 66px cloud travel, so samples cannot cross terrain.
-    const cloudPixels = new Uint8ClampedArray(pixels.data), distance = new Float32Array(mask.width * mask.height)
-    const w = mask.width, h = mask.height, diagonal = Math.SQRT2
-    for (let n = 0; n < distance.length; n++) {
-      const i = n * 4, r = colors[i], g = colors[i + 1], b = colors[i + 2]
-      const skyColor = (b > r + 12 && b > g * 1.015 && b > 110) || (Math.min(r, g, b) > 170 && b > r * .72 && g > r * .8)
-      distance[n] = pixels.data[i] > 200 && skyColor ? 20000 : 0
-    }
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const n = y * w + x
-      let d = distance[n]
-      if (x) d = Math.min(d, distance[n - 1] + 1)
-      if (y) {
-        d = Math.min(d, distance[n - w] + 1)
-        if (x) d = Math.min(d, distance[n - w - 1] + diagonal)
-        if (x + 1 < w) d = Math.min(d, distance[n - w + 1] + diagonal)
-      }
-      distance[n] = d
-    }
-    for (let y = h - 1; y >= 0; y--) for (let x = w - 1; x >= 0; x--) {
-      const n = y * w + x
-      let d = distance[n]
-      if (x + 1 < w) d = Math.min(d, distance[n + 1] + 1)
-      if (y + 1 < h) {
-        d = Math.min(d, distance[n + w] + 1)
-        if (x) d = Math.min(d, distance[n + w - 1] + diagonal)
-        if (x + 1 < w) d = Math.min(d, distance[n + w + 1] + diagonal)
-      }
-      distance[n] = d
-      const t = clamp(d / 128)
-      cloudPixels[n * 4] = Math.round(255 * t * t * (3 - 2 * t))
-    }
-    m.putImageData(new ImageData(cloudPixels, w, h), 0, 0)
-    // RGB packs a soft foliage mask, sharp flower emissions, and their optical bloom.
-    const plants = document.createElement('canvas'); plants.width = mask.width; plants.height = mask.height
-    const pcx = plants.getContext('2d')!, vegetation = pcx.createImageData(mask.width, mask.height)
-    const leafAt = (i: number) => {
-      const r = colors[i], g = colors[i + 1], b = colors[i + 2]
-      return Math.max(clamp((g - b - 12) / 38) * clamp((r - b - 12) / 42),
-        clamp((g - r + 12) / 28) * clamp((g - b - 12) / 35)) * clamp((g - 45) / 65)
-    }
-    // Tiny registered optical footprints seed only the native amber pixels in each component.
-    const components = new Float32Array(mask.width * mask.height)
-    // Red/green identify the two devices; blue carries static sunset sky coverage.
-    const details = document.createElement('canvas'); details.width = mask.width; details.height = mask.height
-    const detailContext = details.getContext('2d')!, detailPixels = detailContext.createImageData(mask.width, mask.height)
-    for (const [lightIndex, [cx, cy, rx, ry]] of layout.lights.entries()) {
-      for (let y = Math.max(0, Math.floor(cy - ry * 1.4)); y <= Math.min(mask.height - 1, Math.ceil(cy + ry * 1.4)); y++) {
-        for (let x = Math.max(0, Math.floor(cx - rx * 1.4)); x <= Math.min(mask.width - 1, Math.ceil(cx + rx * 1.4)); x++) {
-          const spot = clamp((1.4 - Math.hypot((x - cx) / rx, (y - cy) / ry)) * 2.5)
-          components[y * mask.width + x] = Math.max(components[y * mask.width + x], spot)
-          const channel = (y * mask.width + x) * 4 + (lightIndex < 2 ? 0 : 1)
-          detailPixels.data[channel] = Math.max(detailPixels.data[channel], Math.round(spot * 255))
+    // Warp the actual silhouette once, with bilinear alpha. CPU collisions and GPU edges now agree.
+    // Drawing fractional scanline strips independently creates horizontal seams at high DPR.
+    const source=maskCtx.getImageData(0,0,w,h).data,warped=maskCtx.createImageData(w,h)
+    for(const word of words){
+      const row=words.filter(other=>Math.abs(other.top-word.top)<2)
+      const inkTop=Math.min(...row.map(item=>item.inkTop)),inkHeight=Math.max(...row.map(item=>item.inkTop+item.inkHeight))-inkTop
+      const amplitude=clamp(inkHeight*.075,4,12)*dpr
+      for(let y=Math.max(0,Math.floor(word.top*dpr));y<Math.min(h,(word.top+word.height)*dpr);y++){
+        const t=(y/dpr-inkTop)/inkHeight
+        // Two straight creases align across the row; the three bands keep their normal letter shape.
+        const shift=-amplitude*(clamp((t-.32)/.035)-clamp((t-.62)/.035))
+        for(let x=Math.max(0,Math.floor((word.left-20)*dpr));x<Math.min(w,(word.right+20)*dpr);x++){
+          const sx=x-shift,ix=Math.floor(sx),f=sx-ix
+          if(ix<0||ix+1>=w)continue
+          const i=(y*w+x)*4,sa=(y*w+ix)*4+3
+          warped.data[i]=warped.data[i+1]=warped.data[i+2]=255
+          warped.data[i+3]=source[sa]*(1-f)+source[sa+4]*f
         }
       }
     }
-    for (let y = 0; y < mask.height; y++) for (let x = 0; x < mask.width; x++) {
-      const i = (y * mask.width + x) * 4, v = vegetation.data
-      v[i + 3] = 255; detailPixels.data[i + 3] = 255
-      const skyEdge = clamp(distance[i / 4] / 12)
-      detailPixels.data[i + 2] = Math.round(255 * skyEdge * skyEdge * (3 - 2 * skyEdge))
-      if (pixels.data[i] > 80 || pixels.data[i + 1] > 30 || pixels.data[i + 2] > 30) continue
-      const neighbors = [Math.max(0, i - 12), Math.min(colors.length - 4, i + 12),
-        Math.max(0, i - mask.width * 12), Math.min(colors.length - 4, i + mask.width * 12)]
-      const leaf = leafAt(i), nearby = neighbors.reduce((sum, n) => sum + leafAt(n), 0) / 4
-      const luma = (colors[i] + colors[i + 1] + colors[i + 2]) / 3
-      const average = neighbors.reduce((sum, n) => sum + (colors[n] + colors[n + 1] + colors[n + 2]) / 3, 0) / 4
-      const tip = clamp((Math.max(colors[i], colors[i + 1], colors[i + 2]) - 150) / 95) * clamp((luma - average + 8) / 55)
-      v[i] = Math.max(leaf, nearby * .85) * 255
-      // Keep bright flower tips; reduce uniform yellow fill, especially on distant slopes.
-      const distanceFade = .58 + .42 * clamp((y / mask.height - .5) / .38)
-      let emission = clamp((leaf * .025 + tip * Math.max(leaf, nearby) * .80) * distanceFade)
-      const component = components[i / 4]
-      if (component > 0) {
-        const r = colors[i], g = colors[i + 1], b = colors[i + 2]
-        // No silhouette exclusion: the surrounding meadow keeps its continuous natural emission.
-        const amber = clamp((r - g - 10) / 40) * clamp((g - b - 25) / 60) * clamp((r - 140) / 80)
-        emission = Math.max(emission, amber * component * 2.2)
-      }
-      v[i + 1] = clamp(emission) * 255
+    maskCtx.putImageData(warped,0,0)
+    if(fallback){
+      fallbackInverse.width=w;fallbackInverse.height=h
+      const inverse=fallbackInverse.getContext('2d')!;inverse.fillStyle='#000';inverse.fillRect(0,0,w,h)
+      inverse.globalCompositeOperation='destination-out';inverse.drawImage(mask,0,0)
     }
-    pcx.putImageData(vegetation, 0, 0)
-    const soft = document.createElement('canvas'); soft.width = mask.width; soft.height = mask.height
-    const sc = soft.getContext('2d')!; sc.filter = 'blur(3px)'; sc.drawImage(plants, 0, 0)
-    const blurred = sc.getImageData(0, 0, mask.width, mask.height).data
-    emissionFallback = document.createElement('canvas'); emissionFallback.width = mask.width; emissionFallback.height = mask.height
-    const ec = emissionFallback.getContext('2d')!, emission = ec.createImageData(mask.width, mask.height)
-    for (let i = 0; i < vegetation.data.length; i += 4) {
-      vegetation.data[i] = blurred[i]; vegetation.data[i + 2] = blurred[i + 1]
-      const glow = clamp((vegetation.data[i + 1] * .85 + vegetation.data[i + 2] * .9) / 255) * 255
-      const t = clamp((colors[i + 2] / 255 - colors[i] / 255 * .82 - .02) / .12)
-      const cyan = components[i / 4] > 0 ? 0 : t * t * (3 - 2 * t) * .90
-      const gold = components[i / 4] > 0 ? [1, .72, .28] : NIGHT_PALETTE.gold
-      for (let c = 0; c < 3; c++) emission.data[i + c] = glow * (gold[c] * (1 - cyan) + NIGHT_PALETTE.cyan[c] * cyan)
-      emission.data[i + 3] = 255
-    }
-    pcx.putImageData(vegetation, 0, 0); ec.putImageData(emission, 0, 0)
-    detailContext.putImageData(detailPixels, 0, 0)
-    detailContext.filter = 'blur(2px)'; detailContext.drawImage(details, 0, 0); detailContext.filter = 'none'
-    surface = createSceneSurface(source, mask, plants, details)
-    canvas.dataset.surface = surface ? 'webgl' : 'canvas'
+    fieldCanvas.width=Math.ceil(width);fieldCanvas.height=Math.ceil(height)
+    const fc=fieldCanvas.getContext('2d')!;fc.drawImage(mask,0,0,fieldCanvas.width,fieldCanvas.height)
+    const pixels=fc.getImageData(0,0,fieldCanvas.width,fieldCanvas.height).data,alpha=new Uint8Array(fieldCanvas.width*fieldCanvas.height)
+    for(let i=0;i<alpha.length;i++)alpha[i]=pixels[i*4+3]
+    field=createApertureField(alpha,fieldCanvas.width,fieldCanvas.height,1)
+    fieldTexture.dispose();fieldTexture=new THREE.DataTexture(field.pixels,field.width,field.height,THREE.RGBAFormat)
+    fieldTexture.minFilter=fieldTexture.magFilter=THREE.LinearFilter;fieldTexture.needsUpdate=true
+    glassUniforms.windowField.value=fieldTexture;glassUniforms.insetDepth.value=clamp((words[0]?.height??160)*.020,1.7,4.2)
+    for(const drop of drops)if(drop.mode==='rim')drop.mode=field.sample(drop.x,drop.y)>0?'cavity':'glass'
+    drops=drops.filter(d=>d.mode!=='glass'||field.sample(d.x,d.y)<0)
+    letterTexture.needsUpdate=true
   }
-  const canAnimate = () => visible && pageVisible && !quiet && !disposed
-  function syncVideo() {
-    const light = lightAt(hour)
-    const want = canAnimate() && light.night * (1 - light.sunset * .98) > .02
-    if (want === videoWanted) return
-    videoWanted = want
-    if (want) void video.play().catch(() => { canvas.dataset.videoFallback = 'true' })
-    else video.pause()
+  function resize(){
+    width=window.innerWidth;height=window.innerHeight;dpr=Math.min(devicePixelRatio||1,width<700?1.5:1.25)
+    textMask();traceTexture.dispose();trail.width=Math.round(width*.5);trail.height=Math.round(height*.5)
+    wetHistory=createWetHistory(trail.width,trail.height);trailImage=new ImageData(wetHistory.pixels,trail.width,trail.height)
+    trailCtx.fillStyle='#000';trailCtx.fillRect(0,0,trail.width,trail.height);traceTexture.needsUpdate=true
+    fallbackSky.width=Math.ceil(width*.65);fallbackSky.height=Math.ceil(height*.65);fallbackSoft.width=48;fallbackSoft.height=48
+    fallbackCut.width=mask.width;fallbackCut.height=mask.height
+    if(gpu){
+      gpu.setPixelRatio(dpr);gpu.setSize(width,height,false)
+      skyTarget.setSize(Math.ceil(width*.7),Math.ceil(height*.7))
+      blurA.setSize(Math.max(24,Math.ceil(width/24)),Math.max(24,Math.ceil(height/24)));blurB.setSize(blurA.width,blurA.height)
+      waterTarget.setSize(Math.ceil(width*dpr),Math.ceil(height*dpr))
+    }else{canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr)}
+    glassUniforms.resolution.value.set(width*dpr,height*dpr);dropMaterial.uniforms.resolution.value.set(width,height)
+    seedDrops();paint()
   }
-  function resize() {
-    width = window.innerWidth; height = window.innerHeight
-    // Cap both device ratio and total backing pixels; avoids enormous buffers on 4K phones.
-    dpr = Math.min(window.devicePixelRatio || 1, width < 700 ? 1.25 : 1.5, Math.sqrt(2_200_000 / (width * height)))
-    backing.width = canvas.width = Math.round(width * dpr); backing.height = canvas.height = Math.round(height * dpr)
-    frost.width = Math.max(1, Math.round(width * dpr * .35)); frost.height = Math.max(1, Math.round(height * dpr * .35))
-    ctx!.setTransform(dpr, 0, 0, dpr, 0, 0); scene!.setTransform(dpr, 0, 0, dpr, 0, 0)
-    glass!.setTransform(dpr * .35, 0, 0, dpr * .35, 0, 0)
-    const nextLayout = width < 700 ? layouts.mobile : layouts.desktop
-    if (layout !== nextLayout) { surface?.destroy(); surface = null; surfaceSource = null }
-    layout = nextLayout
-    master = width < 700 ? portrait : desktop; fallback = width < 700 ? portraitFallback : desktopFallback
-    SKY = new Path2D(layout.sky); WATER = new Path2D(layout.water); FALL = new Path2D(layout.fall)
-    GROUND = new Path2D('M0 0H' + layout.width + 'V' + layout.height + 'H0Z'); GROUND.addPath(SKY)
-    scale = Math.max(width / layout.width, height / layout.height) * 1.085
-    ox = (width - layout.width * scale) * .5; oy = (height - layout.height * scale) * .5
-    skyLayer.width = skyMask.width = layout.width; skyLayer.height = skyMask.height = layout.height
-    // Feather the horizon optically; weather and stars must never form a cut-out ridge.
-    maskContext!.filter = 'blur(7px)'; maskContext!.fillStyle = '#fff'; maskContext!.fill(SKY); maskContext!.filter = 'none'
-    canvas.dataset.layout = width < 700 ? 'portrait' : 'landscape'
-    drops = []
-    streaks = Array.from({ length: width < 700 ? 100 : 220 }, () => ({ x: Math.random() * width, y: Math.random() * height, speed: .5 + Math.random(), depth: Math.random() }))
-    render(0)
+  function waterStep(dt:number){
+    spawn+=dt*(rain*9+fog*.8)
+    while(spawn>1){if(drops.length<MAX_DROPS){const d=bead(Math.random()<.75,rain<.02);if(d)drops.push(d)}spawn--}
+    stepGlassWater(drops,field,rain,fog,dt,stats,(x,y,toX,toY,r)=>{
+      wetHistory.deposit(x*.5,y*.5,toX*.5,toY*.5,Math.max(.65,r*.165))
+    })
+    wetHistory.advance(dt,fog>.2?38:18);if(trailImage)trailCtx.putImageData(trailImage,0,0)
+    drops=drops.filter(d=>d.y<height+d.r*3&&d.r>1&&d.age<d.life)
+    traceTexture.needsUpdate=true
   }
-  function haze(x: number, y: number, rx: number, ry: number, opacity: number, color = '201,215,222', target = scene!) {
-    if (opacity < .001) return
-    target.save(); target.translate(x, y); target.scale(rx, ry)
-    const g = target.createRadialGradient(0, 0, 0, 0, 0, 1)
-    g.addColorStop(0, 'rgba(' + color + ',' + opacity + ')'); g.addColorStop(1, 'rgba(' + color + ',0)')
-    target.fillStyle = g; target.fillRect(-1, -1, 2, 2); target.restore()
+  function fallbackPaint(colors:ReturnType<typeof paletteAt>){
+    if(!fallback)return
+    const w=fallbackSky.width,h=fallbackSky.height,rgb=(c:RGB)=>`rgb(${c.map(v=>Math.round(v*255)).join(',')})`
+    const gradient=fallbackCtx.createLinearGradient(0,0,0,h);gradient.addColorStop(0,rgb(colors.top));gradient.addColorStop(1,rgb(colors.bottom))
+    fallbackCtx.fillStyle=gradient;fallbackCtx.fillRect(0,0,w,h)
+    if(cloudImage.complete&&cloudImage.naturalWidth){
+      const x=-(elapsed*5)%(w*1.5);fallbackCtx.drawImage(cloudImage,x,-h*.05,w*1.5,h*1.1);fallbackCtx.drawImage(cloudImage,x+w*1.5,-h*.05,w*1.5,h*1.1)
+      fallbackCtx.globalCompositeOperation='multiply';fallbackCtx.fillStyle=rgb(colors.cloud);fallbackCtx.fillRect(0,0,w,h);fallbackCtx.globalCompositeOperation='source-over'
+    }
+    softCtx.drawImage(fallbackSky,0,0,48,48)
+    fallback.setTransform(dpr,0,0,dpr,0,0);fallback.filter='blur(40px)';fallback.drawImage(fallbackSoft,-80,-80,width+160,height+160);fallback.filter='none'
+    fallback.globalAlpha=.78;fallback.fillStyle=rgb(colors.milk);fallback.fillRect(0,0,width,height);fallback.globalAlpha=1
+    const c=fallbackCut.getContext('2d')!
+    c.globalCompositeOperation='source-over';c.clearRect(0,0,fallbackCut.width,fallbackCut.height)
+    c.drawImage(fallbackSky,0,0,fallbackCut.width,fallbackCut.height);c.globalCompositeOperation='destination-in';c.drawImage(mask,0,0)
+    c.save();c.globalCompositeOperation='source-atop';c.shadowColor='#172c3f55';c.shadowBlur=4*dpr;c.shadowOffsetX=1.2*dpr;c.shadowOffsetY=2.5*dpr;c.drawImage(fallbackInverse,0,0);c.restore()
+    fallback.drawImage(fallbackCut,0,-window.scrollY,width,height)
+    for(const d of drops){
+      const y=d.y-window.scrollY;if(d.mode==='cavity'&&field.sample(d.x,d.y)<0)continue
+      fallback.save();fallback.beginPath();fallback.ellipse(d.x,y,d.r,d.r*(d.mode==='rim'?1.35:1.12),0,0,Math.PI*2);fallback.clip()
+      fallback.drawImage(canvas,(d.x-d.r*.8)*dpr,(y-d.r*.8)*dpr,d.r*1.6*dpr,d.r*1.6*dpr,d.x-d.r,y-d.r,d.r*2,d.r*2)
+      const g=fallback.createRadialGradient(d.x-d.r*.28,y-d.r*.4,0,d.x,y,d.r);g.addColorStop(0,'#ffffff90');g.addColorStop(.25,'#ffffff08');g.addColorStop(.82,'#142f4c04');g.addColorStop(1,'#163b5130');fallback.fillStyle=g;fallback.fillRect(d.x-d.r,y-d.r*1.6,d.r*2,d.r*3.2);fallback.restore()
+    }
   }
-  function render(dt: number) {
-    if (disposed || !width) return
-    const moving = canAnimate()
-    if (moving) {
-      const delta = (env.hour - hour + 36) % 24 - 12
-      hour = (hour + delta * (1 - Math.exp(-dt / 2)) + 24) % 24
-      rain = approach(rain, env.rain, 4, dt); fog = approach(fog, env.fog, 7, dt)
-      // Lens responds first, ground next, stream later, distant waterfall last.
-      wet = clamp(wet + rain * dt / 35 - (1 - rain) * dt / 480)
-      wet = Math.max(wet, env.wetness)
-      runoff = approach(runoff, Math.max(env.stream, rain * .8), rain > runoff ? 75 : 240, dt)
-      fall = approach(fall, Math.max(env.waterfall, runoff * .85), runoff > fall ? 150 : 420, dt)
-    } else if (quiet) {
-      hour = env.hour; rain = env.rain; fog = env.fog
-      wet = Math.max(wet, env.wetness); runoff = env.stream; fall = env.waterfall
+  function paint(){
+    if(disposed||lost)return
+    const colors=paletteAt(env.hour),night=env.light.night
+    const glassLight=colors.milk[0]*.2126+colors.milk[1]*.7152+colors.milk[2]*.0722,dark=glassLight<.42
+    const root=document.documentElement
+    if(root.dataset.skyDark!==String(dark))root.dataset.skyDark=String(dark)
+    for(const [key,color]of [['--sky-ink',dark?'#e3eaf3':glassLight<.65?'#0f2437':'#263e4e'],['--sky-muted',dark?'#b6c7dc':glassLight<.65?'#142a3c':'#30495b']]){
+      if(root.style.getPropertyValue(key)!==color)root.style.setProperty(key,color)
     }
-    // The viewpoint is locked; only clouds, water and the small scene details animate.
-    cameraScale = scale; cameraX = ox; cameraY = oy
-    const light = lightAt(hour), clouds = clamp(rain * .95 + fog * .14)
-    const source = master.complete && master.naturalWidth ? master : fallback.complete && fallback.naturalWidth ? fallback : null
-    scene!.fillStyle = '#090e18'; scene!.fillRect(0, 0, width, height)
-    if (source) {
-      prepareSurface(source)
-      const animated = surface?.render(quiet ? 0 : elapsed, rain, runoff, fall, light.sunset)
-      scene!.save(); world(scene!)
-      scene!.drawImage(animated || source, 0, 0, layout.width, layout.height)
-      scene!.restore()
-      drawTail(quiet ? 0 : elapsed, null, light.sunset)
-      scene!.save(); scene!.globalCompositeOperation = 'multiply'
-      const tint = light.tint.map(v => Math.round(v)).join(',')
-      scene!.fillStyle = 'rgba(' + tint + ',' + (.08 + light.night * .28) + ')'; scene!.fillRect(0, 0, width, height)
-      scene!.restore()
-      scene!.fillStyle = 'rgba(4,9,20,' + clamp(1 - light.brightness + clouds * .18) + ')'; scene!.fillRect(0, 0, width, height)
-    }
-    // The existing night movie is used only above the registered skyline.
-    sky!.clearRect(0, 0, layout.width, layout.height)
-    if (light.night > .001 && (video.readyState >= 2 || (width < 700 ? nightSky : wideNightSky).naturalWidth)) {
-      sky!.globalAlpha = light.night * (1 - light.sunset * .98) * (1 - clouds * .98)
-      // Only upper crops are sampled from the old movie; its observer/equipment cannot enter the scene.
-      const skyBottom = layout.height * .73
-      const zoom = Math.max(layout.width / 560, skyBottom / 300)
-      const dx = (layout.width - 560 * zoom) * .5
-      if (width >= 700) {
-        // A wide upper crop preserves the original star scale and excludes all equipment below y=400.
-        if (video.readyState >= 2) {
-          const ratio = video.videoWidth / 1280
-          sky!.drawImage(video, 0, 0, video.videoWidth, 400 * ratio, 0, 0, layout.width, layout.height * .75)
-        } else sky!.drawImage(wideNightSky, 0, 0, layout.width, layout.height * .75)
-      } else if (video.readyState >= 2) {
-        const ratio = video.videoWidth / 1280
-        sky!.drawImage(video, 360 * ratio, 0, 560 * ratio, 300 * ratio, dx, 0, 560 * zoom, 300 * zoom)
-      } else sky!.drawImage(nightSky, dx, 0, 560 * zoom, 300 * zoom)
-      sky!.globalAlpha = 1
-    }
-    if (light.warmth > .01) haze(layout.width * .67, layout.height * .63, layout.width * .53, layout.height * .43, light.warmth * (light.sunset > .1 ? .22 : .45), light.sunset > .1 ? '255,117,57' : '255,184,111', sky!)
-    for (let i = 0; i < 5; i++) {
-      const x = ((i * layout.width * .26 + elapsed * (2.3 + i * .3)) % (layout.width * 1.4)) - layout.width * .2
-      haze(x, layout.height * (.13 + i * .045), layout.width * .22, layout.height * .06, (.015 + clouds * .10) * (1 - light.night * .4), '201,215,222', sky!)
-    }
-    sky!.globalCompositeOperation = 'destination-in'; sky!.drawImage(skyMask, 0, 0); sky!.globalCompositeOperation = 'source-over'
-    scene!.save(); world(scene!); scene!.drawImage(skyLayer, 0, 0); scene!.restore()
-    // Cloud cover affects the whole air column with a continuous gradient, not a clipped sky tile.
-    const overcast = scene!.createLinearGradient(0, 0, 0, height)
-    overcast.addColorStop(0, 'rgba(21,35,57,' + clouds * .78 + ')')
-    overcast.addColorStop(.6, 'rgba(60,77,94,' + clouds * .44 + ')')
-    overcast.addColorStop(1, 'rgba(70,85,97,' + clouds * .08 + ')')
-    scene!.fillStyle = overcast; scene!.fillRect(0, 0, width, height)
-    // Wet rock/grass retains darker diffuse color with low grazing reflections.
-    scene!.save(); world(scene!); scene!.clip(GROUND, 'evenodd')
-    scene!.fillStyle = 'rgba(10,24,35,' + wet * .15 + ')'; scene!.fillRect(0, 0, layout.width, layout.height)
-    for (let i = 0; i < 27; i++) {
-      const x = layout.width * (.08 + NOISE(i) * .87), y = layout.height * (.73 + NOISE(i + 90) * .27)
-      scene!.strokeStyle = 'rgba(192,207,212,' + wet * (.015 + NOISE(i + 30) * .045) + ')'
-      scene!.lineWidth = .5; scene!.beginPath(); scene!.moveTo(x, y); scene!.lineTo(x + 3 + NOISE(i + 2) * 7, y - 1); scene!.stroke()
-    }
-    scene!.restore()
-    // Rain rings share the same registered channel and camera as the flowing texture.
-    scene!.save(); world(scene!); scene!.clip(WATER)
-    if (rain > .01) for (let i = 0; i < (width < 700 ? 22 : 40); i++) {
-      const age = (elapsed * .7 + NOISE(i + 29)) % 1, r = age * (3 + NOISE(i + 44) * 8)
-      scene!.strokeStyle = 'rgba(219,235,242,' + (1 - age) * rain * .32 + ')'; scene!.lineWidth = .65
-      scene!.beginPath(); scene!.ellipse(layout.width * (.73 + NOISE(i + 4) * .27), layout.height * (.67 + NOISE(i + 5) * .33), r, r * .22, 0, 0, Math.PI * 2); scene!.stroke()
-    }
-    scene!.restore()
-    scene!.save(); world(scene!)
-    const fallEnd = width < 700 ? [592, 880] : [946, 464]
-    haze(fallEnd[0], fallEnd[1], 12 + fall * 15, 6 + fall * 8, (.035 + fall * .1) * (1 - light.night * .5), light.sunset > .1 ? '244,192,147' : '201,215,222')
-    scene!.restore()
-    // Emission is added after night shading, then seen through the same mist/rain as the terrain.
-    if (light.night > .001) {
-      const glow = surface?.glow(quiet ? 0 : elapsed, light.night * (1 - rain * .45))
-      if (glow || emissionFallback) {
-        scene!.save(); world(scene!); scene!.globalCompositeOperation = 'screen'
-        if (!glow) scene!.globalAlpha = light.night * (1 - rain * .45)
-        scene!.drawImage(glow || emissionFallback!, 0, 0, layout.width, layout.height); scene!.restore()
-      }
-    }
-    if (light.night > .001) drawTail(quiet ? 0 : elapsed, light.night * (1 - rain * .45) * companionLightPulse(quiet ? 0 : elapsed, true))
-    // Three depth bands of valley mist; foreground objects stay legible.
-    if (fog > .02) for (let i = 0; i < 3; i++) {
-      haze(ox + layout.width * (.30 + i * .18 + Math.sin(elapsed * .035 + i) * .018) * scale, oy + layout.height * (.69 + i * .029) * scale,
-        layout.width * .24 * scale, layout.height * (.028 + i * .014) * scale, fog * (.16 - i * .02) * (1 - light.night * .65))
-    }
-    if (rain > .005) {
-      for (const r of streaks) {
-        if (moving) {
-          r.y += dt * (190 + rain * 500) * r.speed; r.x -= dt * (8 + rain * 45) * r.speed
-          if (r.y > height + 30) { r.y = -30; r.x = Math.random() * width }
-          if (r.x < -20) r.x = width + 20
-        }
-        scene!.strokeStyle = 'rgba(192,212,228,' + rain * (.045 + r.depth * .12) + ')'
-        scene!.lineWidth = r.depth > .75 ? .85 : .45; scene!.beginPath(); scene!.moveTo(r.x, r.y)
-        scene!.lineTo(r.x + rain * (2 + r.depth * 5), r.y - (6 + rain * 19) * r.speed); scene!.stroke()
-      }
-      haze(width * .8, height * .55, width * .45, height * .35, rain * .065, '119,140,162')
-    }
-    ctx!.drawImage(backing, 0, 0, backing.width, backing.height, 0, 0, width, height)
-    const dew = fog > .35 && rain < .05, lensTarget = rain > .03 || dew
-    if (moving && lensTarget && drops.length < (width < 700 ? 15 : 30) && Math.random() < dt * (dew ? .55 : 1 + rain * 3)) {
-      let x = Math.random() * width, y = Math.random() * height * .85
-      if (x > width * .28 && x < width * .72 && y > height * .3 && y < height * .65) x = Math.random() < .5 ? width * .12 : width * .88
-      drops.push({ x, y, r: (dew ? 1.5 : 2.5) + Math.random() * (dew ? 3.5 : 5), age: 0,
-        wait: dew ? 10 + Math.random() * 18 : 2 + Math.random() * 7, speed: 0, seed: Math.random() * 6, trail: [] })
-    }
-    if (moving) {
-      for (let a = 0; a < drops.length; a++) for (let b = drops.length - 1; b > a; b--) {
-        const x = drops[a], y = drops[b]
-        if (Math.hypot(x.x - y.x, x.y - y.y) < (x.r + y.r) * .5) {
-          x.r = Math.min(13, Math.hypot(x.r, y.r)); x.wait = Math.min(x.wait, x.age + 1); x.speed = Math.max(x.speed, y.speed); drops.splice(b, 1)
-        }
-      }
-      drops = drops.filter(d => {
-        d.age += dt
-        if (!lensTarget) d.age += dt * .6
-        if (d.age > d.wait) {
-          d.speed = Math.min(dew ? 15 : 65, d.speed + dt * (dew ? 1.4 : 7))
-          if (d.trail.length === 0 || Math.hypot(d.x - d.trail[d.trail.length - 1].x, d.y - d.trail[d.trail.length - 1].y) > 2) {
-            d.trail.push({ x: d.x, y: d.y }); if (d.trail.length > 22) d.trail.shift()
-          }
-          d.y += d.speed * dt; d.x += Math.sin(d.y * .04 + d.seed) * dt * 2
-        }
-        return d.y < height + 30 && d.age < 75
-      })
-    }
-    if (dew) {
-      glass!.clearRect(0, 0, width, height); glass!.save()
-      glass!.filter = 'blur(9px)'; glass!.drawImage(backing, 0, 0, backing.width, backing.height, 0, 0, width, height); glass!.filter = 'none'
-      glass!.globalCompositeOperation = 'destination-in'
-      const mask = glass!.createRadialGradient(width * .5, height * .4, width * .13, width * .5, height * .5, width * .65)
-      mask.addColorStop(0, 'rgba(255,255,255,0)'); mask.addColorStop(1, 'rgba(255,255,255,' + fog * .38 + ')')
-      glass!.fillStyle = mask; glass!.fillRect(0, 0, width, height)
-      glass!.globalCompositeOperation = 'destination-out'; glass!.lineCap = 'round'
-      for (const d of drops) if (d.trail.length > 1) {
-        glass!.beginPath(); glass!.moveTo(d.trail[0].x, d.trail[0].y); d.trail.forEach(p => glass!.lineTo(p.x, p.y))
-        glass!.lineWidth = d.r * 1.1; glass!.strokeStyle = 'rgba(0,0,0,.8)'; glass!.stroke()
-      }
-      glass!.restore(); ctx!.drawImage(frost, 0, 0, frost.width, frost.height, 0, 0, width, height)
-    }
-    for (const d of drops) {
-      const r = d.r * Math.min(1, d.age / .2), ry = r * (1 + Math.min(1, d.speed / 35) * .6)
-      if (r < .2) continue
-      ctx!.save(); ctx!.beginPath(); ctx!.ellipse(d.x, d.y, r * .78, ry, 0, 0, Math.PI * 2); ctx!.clip()
-      const sampleX = clamp((d.x - r * .8) * dpr, 0, backing.width - 1), sampleY = clamp((d.y - r * .8) * dpr, 0, backing.height - 1)
-      const sampleW = Math.max(1, Math.min(r * 1.6 * dpr, backing.width - sampleX)), sampleH = Math.max(1, Math.min(r * 1.6 * dpr, backing.height - sampleY))
-      ctx!.drawImage(backing, sampleX, sampleY, sampleW, sampleH, d.x - r, d.y - ry, r * 2, ry * 2)
-      ctx!.fillStyle = 'rgba(180,215,235,.045)'; ctx!.fill(); ctx!.restore()
-      ctx!.beginPath(); ctx!.ellipse(d.x, d.y, r * .78, ry, 0, 0, Math.PI * 2)
-      ctx!.strokeStyle = 'rgba(211,230,244,.16)'; ctx!.lineWidth = .6; ctx!.stroke()
-      ctx!.beginPath(); ctx!.ellipse(d.x - r * .18, d.y - r * .45, r * .2, r * .07, -.5, 0, Math.PI * 2)
-      ctx!.fillStyle = 'rgba(245,250,255,.35)'; ctx!.fill()
-    }
-    // Diagnostic attributes are also useful to verify pauses/reduced-motion without screenshots.
-    canvas.dataset.phase = env.phase; canvas.dataset.weather = env.weather
-    canvas.dataset.wetness = wet.toFixed(3); canvas.dataset.stream = runoff.toFixed(3); canvas.dataset.waterfall = fall.toFixed(3)
-    canvas.dataset.renderTime = elapsed.toFixed(2)
-    canvas.dataset.cameraScale = cameraScale.toFixed(6); canvas.dataset.cameraX = cameraX.toFixed(3); canvas.dataset.cameraY = cameraY.toFixed(3)
-    canvas.dataset.nightGlow = light.night.toFixed(3); canvas.dataset.sunset = light.sunset.toFixed(3)
-    canvas.dataset.tailReady = String(tailImage.complete && !!tailImage.naturalWidth)
-    canvas.dataset.tailAngle = catTailAngle(quiet ? 0 : elapsed).toFixed(4)
-    canvas.dataset.robotPulse = companionLightPulse(quiet ? 0 : elapsed).toFixed(4); canvas.dataset.catPulse = companionLightPulse(quiet ? 0 : elapsed, true).toFixed(4)
-    if (!painted && source) { canvas.dataset.ready = 'true'; painted = true }
-    syncVideo()
+    skyUniforms.topColor.value.set(...colors.top);skyUniforms.bottomColor.value.set(...colors.bottom);skyUniforms.cloudColor.value.set(...colors.cloud)
+    skyUniforms.time.value=quiet?0:elapsed;skyUniforms.aspect.value=width/height;skyUniforms.night.value=night;skyUniforms.rain.value=rain
+    glassUniforms.milk.value.set(...colors.milk);glassUniforms.fog.value=fog;glassUniforms.night.value=night;glassUniforms.scrollOffset.value=window.scrollY/height
+    dropMaterial.uniforms.scrollOffset.value=window.scrollY/height
+    if(gpu){
+      mesh.material=skyMaterial;gpu.setClearColor(0,1);gpu.setRenderTarget(skyTarget);gpu.render(scene,camera)
+      mesh.material=blurMaterial;blurUniforms.source.value=skyTarget.texture;blurUniforms.stepSize.value.set(3/blurA.width,0);gpu.setRenderTarget(blurA);gpu.render(scene,camera)
+      blurUniforms.source.value=blurA.texture;blurUniforms.stepSize.value.set(0,3/blurA.height);gpu.setRenderTarget(blurB);gpu.render(scene,camera)
+      drops.forEach((d,i)=>{instances[i*4]=d.x;instances[i*4+1]=height-d.y+window.scrollY;instances[i*4+2]=d.r;instances[i*4+3]=d.mode==='rim'?1.1+Math.min(1,d.held)*.4:1+clamp(d.vy/180)*.35;modes[i]=d.mode==='glass'?0:d.mode==='rim'?1:d.mode==='cavity'?2:3})
+      dropGeometry.instanceCount=drops.length;instanceAttribute.needsUpdate=modeAttribute.needsUpdate=true
+      gpu.setClearColor(0,0);gpu.setRenderTarget(waterTarget);gpu.render(dropScene,camera)
+      mesh.material=glassMaterial;gpu.setClearColor(0,1);gpu.setRenderTarget(null);gpu.render(scene,camera)
+    }else fallbackPaint(colors)
+    Object.assign(canvas.dataset,{ready:'true',renderer:gpu?'webgl':'canvas',phase:env.phase,weather:env.weather,renderTime:(quiet?0:elapsed).toFixed(3),drops:String(drops.length),slides:String(stats.slides),merges:String(stats.merges),rimContacts:String(stats.contacts),detached:String(stats.detached),landings:String(stats.landings),rimDrops:String(drops.filter(d=>d.mode==='rim').length),cavityDrops:String(drops.filter(d=>d.mode==='cavity').length),fog:fog.toFixed(3),rain:rain.toFixed(3),wetness:wet.toFixed(3),paused:String(!active())})
+    canvas.style.opacity='1'
+    if(root.dataset.skyRendered!=='true')root.dataset.skyRendered='true'
   }
-  function tick(now: number) {
-    frame = 0
-    if (!canAnimate()) return
-    const limit = width < 700 ? 1000 / 20 : 1000 / 30
-    if (now - previous >= limit) {
-      const dt = Math.min(.12, (now - previous) / 1000); previous = now; elapsed += dt
-      render(dt)
-      // Static daytime clear skies also have moving clouds and water; cap, never run at display Hz.
-    }
-    frame = requestAnimationFrame(tick)
+  function active(){return !disposed&&!lost&&visible&&!document.hidden&&!quiet}
+  function tick(now:number){
+    frame=0;if(!active())return
+    // Thirty frames per second is enough for wind and water, without running a full-screen effect at 120 Hz.
+    if(now-previous<1000/(gpu?30:15)){frame=requestAnimationFrame(tick);return}
+    const dt=Math.min(.08,(now-previous)/1000);previous=now;elapsed+=dt
+    rain=approach(rain,env.rain,2.5,dt);fog=approach(fog,env.fog,3,dt);wet=approach(wet,Math.max(rain,env.wetness),rain>wet?12:100,dt)
+    waterStep(dt);paint();frame=requestAnimationFrame(tick)
   }
-  function start() {
-    syncVideo()
-    if (canAnimate() && !frame) { previous = performance.now(); frame = requestAnimationFrame(tick) }
-    if (quiet && visible && pageVisible) render(0)
-  }
-  function pause() { cancelAnimationFrame(frame); frame = 0; video.pause(); videoWanted = false }
-  function visibility() { pageVisible = !document.hidden; if (pageVisible) start(); else pause() }
-  const images = [desktop, portrait, desktopFallback, portraitFallback, nightSky, wideNightSky, tailImage]
-  images.forEach(image => { image.onload = () => { if (!disposed) { render(0); start() } } })
-  desktop.onerror = portrait.onerror = () => { if (!disposed) { canvas.dataset.assetFallback = 'true'; render(0); start() } }
-  video.addEventListener('loadeddata', start)
-  window.addEventListener('resize', resize)
-  document.addEventListener('visibilitychange', visibility)
-  resize(); start()
+  function schedule(){if(frame)cancelAnimationFrame(frame);frame=0;previous=performance.now();if(active())frame=requestAnimationFrame(tick)}
+  const onResize=()=>{resize();schedule()},onVisibility=()=>{canvas.dataset.paused=String(!active());schedule()}
+  const onScroll=()=>{if(quiet&&visible)paint()}
+  const onLoss=(event:Event)=>{event.preventDefault();lost=true;canvas.style.opacity='0';canvas.dataset.renderer='fallback';delete document.documentElement.dataset.skyRendered;schedule()}
+  const onRestore=()=>{lost=false;cloudTexture.needsUpdate=letterTexture.needsUpdate=traceTexture.needsUpdate=true;resize();schedule()}
+  cloudImage.onload=()=>{cloudTexture.needsUpdate=true;canvas.dataset.clouds='ready';paint()}
+  cloudImage.onerror=()=>{canvas.dataset.clouds='fallback';paint()}
+  window.addEventListener('resize',onResize);document.addEventListener('visibilitychange',onVisibility)
+  window.addEventListener('scroll',onScroll,{passive:true})
+  canvas.addEventListener('webglcontextlost',onLoss);canvas.addEventListener('webglcontextrestored',onRestore)
+  let layoutObserver:ResizeObserver|null=null
+  const content=document.querySelector('.sky-hero-content');if(content){layoutObserver=new ResizeObserver(()=>{textMask();paint()});layoutObserver.observe(content)}
+  document.fonts.ready.then(()=>{if(!disposed){textMask();paint()}})
+  resize();schedule()
   return {
-    update(next, reduce) {
-      env = next; quiet = reduce; drops = quiet ? [] : drops
-      if (quiet) { pause(); if (visible && pageVisible) render(0) } else start()
+    update(next,nextReduced){
+      const changed=next.weather!==env.weather;env=next;quiet=nextReduced
+      if(quiet){rain=env.rain;fog=env.fog;wet=Math.max(wet,rain,env.wetness)}
+      if(changed&&(env.rain>.02||env.fog>.2)){rain=env.rain;fog=env.fog;if(drops.length<10)seedDrops()}
+      paint();schedule()
     },
-    setVisible(value) {
-      visible = value; canvas.dataset.paused = String(!value)
-      if (value) start(); else pause()
-    },
-    destroy() {
-      disposed = true; pause(); surface?.destroy(); images.forEach(image => { image.onload = image.onerror = null })
-      video.removeEventListener('loadeddata', start); window.removeEventListener('resize', resize)
-      document.removeEventListener('visibilitychange', visibility)
-      backing.width = backing.height = frost.width = frost.height = skyLayer.width = skyLayer.height = skyMask.width = skyMask.height = 1
+    setVisible(next){visible=next;canvas.dataset.paused=String(!active());if(next)paint();schedule()},
+    destroy(){
+      disposed=true;if(frame)cancelAnimationFrame(frame);layoutObserver?.disconnect()
+      window.removeEventListener('resize',onResize);document.removeEventListener('visibilitychange',onVisibility)
+      window.removeEventListener('scroll',onScroll)
+      canvas.removeEventListener('webglcontextlost',onLoss);canvas.removeEventListener('webglcontextrestored',onRestore)
+      cloudImage.onload=cloudImage.onerror=null
+      for(const t of [cloudTexture,letterTexture,traceTexture,fieldTexture,skyTarget,blurA,blurB,waterTarget])t.dispose()
+      for(const m of [skyMaterial,blurMaterial,glassMaterial,dropMaterial])m.dispose();dropGeometry.dispose();plane.dispose();gpu?.dispose()
+      delete document.documentElement.dataset.skyDark
+      delete document.documentElement.dataset.skyRendered
+      document.documentElement.style.removeProperty('--sky-ink');document.documentElement.style.removeProperty('--sky-muted')
     },
   }
 }
